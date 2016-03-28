@@ -1,0 +1,8 @@
+*~
+*.hi
+*.o
+/dist
+*#
+TAGS
+/.stack-work
+

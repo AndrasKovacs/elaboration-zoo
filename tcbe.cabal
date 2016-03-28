@@ -1,0 +1,23 @@
+name:                tcbe
+version:             0.1.0.0
+synopsis:            Dependent type checking by evaluation
+homepage:            http://github.com/AndrasKovacs/tcbe
+license:             BSD3
+license-file:        LICENSE
+author:              András Kovács
+maintainer:          puttamalac@gmail.com
+copyright:           2016 András Kovács
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable tcbe
+  main-is:             Main.hs
+  other-modules:       TCBE.Syntax
+  ghc-options:         -rtsopts -O2 -fllvm
+  build-depends:       base, containers, megaparsec, mtl, unordered-containers
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/AndrasKovacs/tcbe

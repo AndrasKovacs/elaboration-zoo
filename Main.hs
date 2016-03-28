@@ -285,6 +285,5 @@ nfShare =
   (cons $: "t" $: "x" $:      
    (nil $: "t"))))))
 
-main = print $ isRight $ infer0' nfShare
-
+-- main = print $ isRight $ infer0' nfShare
 

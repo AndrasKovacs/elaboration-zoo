@@ -13,7 +13,7 @@ cabal-version:       >=1.10
 
 executable tcbe
   main-is:             Main.hs
-  other-modules:       TCBE.Syntax
+  other-modules:       TCBE.Syntax, Minimal
   ghc-options:         -rtsopts -O2 -fllvm
   build-depends:       base, containers, megaparsec, mtl, unordered-containers
   default-language:    Haskell2010

@@ -28,9 +28,27 @@ Some ideas to be explored:
   - Sigma types or hard-coded inductive types with eliminators
   - Bidirectional type checking: on first thought, propagation of type information
     could be handled really well here.
-  - Alternative variable binding: since there is no substitution, nameful (non-de-Bruijn)
-    variables could be relatively convenient.
+  - Alternative variable binding:
+
+     - since there is no substitution, nameful (non-de-Bruijn)
+       variables could be relatively convenient.
+
+     - Try to do de Bruijn indices instead of levels
+
+     - Using Bound's term lifting trick?
+
   - Handling of substitutions and constraints
+
+  - Deferring substitutions of "top-level" variables, or at least annotating
+    values with tags that denote a place where a "top-level" variable was
+    substituted out. This lets equality checks skip recursing further,
+    and produces better error messages.
+
+      - Possible impl: add Bind
+
+      - Efficient equality check: on values instead of terms.
+      - Need equality check between Val and TC too, then
+  
 
 -}
 

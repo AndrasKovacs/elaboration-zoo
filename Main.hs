@@ -189,9 +189,6 @@ fromRaw = go HM.empty 0 where
   go m d  (S.App f x)   = App (go m d f) (go m d x)
   go m d  S.Star        = Star
   
-instance IsString RawTerm where
-  fromString = S.Var
-  
 v = S.Var
 lam = S.Lam
 pi = S.Pi

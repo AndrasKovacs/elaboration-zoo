@@ -173,12 +173,19 @@ normal terms when quoted. Can we duplicate work by quoting the same `Type` or `V
 multiple times, when checking for term equality? Well, we can. But note that:
 
   - 'eval' lets us share work up to whnf, and only computation under lambdas will
-     be redone each time. This is often enough sharing.
+    be redone each time. This is often enough sharing.
+
   - We can actually share full normal form reduction by eval-ing, quoting and evaling again
     before insertion into context. The last eval is a bit tricky since we're operating under
     an environment, but it can be done and it's indeed done in Main.hs in this project. However,
     using full normal form sharing all the time has a considerable overhead (though of course
     normal forms too are only computed at all if forced). Benchmarks are warranted.
+
+  - We could also reduce to nf and cache the syntactic nf term along with the size of context
+    in which it was reduced. This should allow us to check alpha equivalence without actually
+    reallocating terms (I haven't yet tried this). If we cache values instead of terms,
+    shifting is done by "quote", and then alpha equality is just simple equality. Overall,
+    I think "virtual" shifting would be much faster. 
 -}
 
 infer :: Cxt -> Term -> Check TC

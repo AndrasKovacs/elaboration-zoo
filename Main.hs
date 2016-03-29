@@ -54,8 +54,8 @@ data Val
   | VStar
 
 data TC
-  = Embed Type
-  | TPi Type (Val -> Check TC)
+  = Ret Type
+  | CheckPi Type (Val -> Check TC)
 
 type Type = Val
 type Cxt = ([Type], [Val], Int)
@@ -74,20 +74,23 @@ cxt0 = ([], [], 0)
 lookupTy :: Cxt -> Int -> Type
 lookupTy (ts, vs, d) i = ts !! (d - i - 1)
 
+lookupVal :: Cxt -> Int -> Type
+lookupVal (ts, vs, d) i = vs !! (d - i - 1)
+
 ($$) :: Val -> Val -> Val
 ($$) (VLam _ f) x = f x
 ($$) f          x = VApp f x
 infixl 9 $$
 
-runTC :: Int -> TC -> Check Term
-runTC d' (Embed ty) = pure $ quote' d' ty
-runTC d' (TPi a b)  = Pi (quote' d' a) <$> (runTC (d' + 1) =<< b (VVar d'))
+runTC :: Cxt -> TC -> Check Term
+runTC (_, _, d) = go d where
+  go d (Ret ty)      = pure $ quote' d ty
+  go d (CheckPi a b) = Pi (quote' d a) <$> (go (d + 1) =<< b (VVar d))
 
 showTC :: Cxt -> TC -> String
-showTC c tc = show $ runTC (size c) tc
+showTC cxt tc = show $ runTC cxt tc
 
 size (a, b, c) = c
-
 
 {- Note:
 
@@ -95,8 +98,6 @@ Without nfEval, types in the environment are cached up to whnf.
 With nfEval, types should be fully cached.
 
 -}
-
-
 
 quote :: Cxt -> Val -> Term
 quote (_, _, d) = quote' d
@@ -116,7 +117,22 @@ eval (ts, vs, d) = go vs d where
     App f x -> go vs d f $$ go vs d x
     Lam a t -> VLam (go vs d a) $ \v -> go (v:vs) (d + 1) t
     Pi  a t -> VPi  (go vs d a) $ \v -> go (v:vs) (d + 1) t  
-    Star    -> VStar
+    Star    -> VStar    
+
+valEq :: Int -> Val -> Val -> Bool
+valEq d a b = go d a b where
+  go d (VVar i)   (VVar i')    = i == i'
+  go d (VApp f x) (VApp f' x') = go d f f' && go d x x'
+  go d (VPi  a t) (VPi  a' t') = go d a a' && go (d + 1) (t (VVar d)) (t' (VVar d))
+  go d (VLam a t) (VLam a' t') = go d a a' && go (d + 1) (t (VVar d)) (t' (VVar d))  
+  go d VStar      VStar        = True
+  go _ _          _            = False
+
+tcEq :: Cxt -> Val -> TC -> Check Bool
+tcEq (_, _, d) = go d where
+  go d (VPi a t) (CheckPi a' t') = 
+    (&&) (valEq d a a') <$> (go (d + 1) (t (VVar d)) =<< (t' (VVar d)))
+  go d t (Ret t') = pure (valEq d t t')    
 
 -- Input is a normal term!
 unquote :: Cxt -> Term -> Val
@@ -132,35 +148,40 @@ unquote (ts, vs, d) = go [] d where
 nfEval :: Cxt -> Term -> Val
 nfEval cxt = unquote cxt . quote cxt . eval cxt
 
-check :: Cxt -> Term -> Term -> Check ()
+check :: Cxt -> Term -> Type -> Check ()
 check cxt t ty = do
-  tt <- runTC (size cxt) =<< infer cxt t
-  unless (tt == ty) $ do
+  let ty' = quote cxt ty
+  -- tt <- runTC cxt =<< infer cxt t
+  
+  tt <- infer cxt t
+  check <- tcEq cxt ty tt
+
+  unless check $ do
     throwError $ printf
       "Can't match expected type for %s: %s with actual type: %s in context: %s"
-      (show t) (show ty) (show tt) (unlines $ map show $ quoteCxt cxt)      
+      (show t) (show ty') (show $ runTC cxt tt) (unlines $ map show $ quoteCxt cxt)      
 
 infer :: Cxt -> Term -> Check TC
 infer cxt = \case
-  Var i   -> pure $ Embed (lookupTy cxt i)
-  Star    -> pure $ Embed VStar
+  Var i   -> pure $ Ret (lookupTy cxt i)
+  Star    -> pure $ Ret VStar
   Lam a t -> do
-    check cxt a Star    
+    check cxt a VStar    
     let a' = eval cxt a
-    pure $ TPi a' $ \v -> infer ((a', v) <: cxt) t
+    pure $ CheckPi a' $ \v -> infer ((a', v) <: cxt) t
   Pi a b -> do
-    check cxt a Star
-    check (eval cxt a <:: cxt) b Star
-    pure $ Embed VStar
+    check cxt a VStar
+    check (eval cxt a <:: cxt) b VStar
+    pure $ Ret VStar
   App f x -> do
     tf <- infer cxt f
     case tf of
-      TPi a b -> do
-        check cxt x (quote cxt a)
+      CheckPi a b -> do
+        check cxt x a
         b (eval cxt x)
-      Embed (VPi a b) -> do
-        check cxt x (quote cxt a)
-        pure $ Embed $ b (eval cxt x)
+      Ret (VPi a b) -> do
+        check cxt x a
+        pure $ Ret $ b (eval cxt x)
       _ -> throwError $
              printf "Can't apply non-function: %s when checking %s"
              (showTC cxt tf) (show $ App f x)
@@ -171,12 +192,12 @@ quoteCxt (t:ts, v:vs, d) = (quote cxt' t, quote cxt' v) : quoteCxt cxt'
 quoteCxt ([], [], 0) = []
 
 infer0 :: Term -> Check Term
-infer0 = runTC 0 <=< infer cxt0
+infer0 = runTC cxt0 <=< infer cxt0
 -- Raw
 --------------------------------------------------------------------------------
 
 infer0' :: RawTerm -> Either String Term
-infer0' t = runTC 0 =<< infer cxt0 (fromRaw t)
+infer0' t = runTC cxt0 =<< infer cxt0 (fromRaw t)
 
 eval0 :: RawTerm -> Either String Term
 eval0 t = quote cxt0 (eval cxt0 $ fromRaw t) <$ infer0' t
@@ -270,7 +291,6 @@ test = all (isRight . infer0') [
 
 hundredK = mul $: ten $: (mul $: hundred $: hundred)
 
-
 nfShare =
   let' "t" star (nfun $: hundredK) $
   lam "x" "t" $
@@ -282,5 +302,5 @@ nfShare =
   (cons $: "t" $: "x" $:      
    (nil $: "t"))))))
 
--- main = print $ isRight $ infer0' nfShare
+main = print $ isRight $ infer0' nfShare
 

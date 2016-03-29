@@ -1,5 +1,5 @@
 
-{-# language BangPatterns, LambdaCase #-}
+{-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
 import Prelude hiding (pi)
 import Control.Monad.Except
@@ -140,8 +140,8 @@ infer cxt = \case
     check cxt ty VStar
     let ty' = eval cxt ty
     check cxt t ty'
-    pure $ Ret ty'    
-  App (Lam Nothing t) x -> do
+    pure $ Ret ty'
+  App (Lam Nothing t) x -> do   -- This lets us use Lam-s as simple inferred Let-s.
     tx <- tcVal cxt =<< infer cxt x
     infer ((tx, eval cxt x) <: cxt) t    
   App f x -> do

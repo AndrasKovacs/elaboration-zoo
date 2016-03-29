@@ -1,5 +1,5 @@
 
-{-# LANGUAGE RecursiveDo, PatternGuards, OverloadedStrings #-}
+{-# LANGUAGE RecursiveDo, PatternGuards, OverloadedStrings, LambdaCase #-}
 
 module TCBE.Syntax (RawTerm(..)) where
 
@@ -54,38 +54,38 @@ instance IsString RawTerm where
 
 
 
-test = mdo  
-  spaces <- rule $ (E.symbol ' ' *> spaces) <|> pure ()
+-- test = mdo  
+--   spaces <- rule $ (E.symbol ' ' *> spaces) <|> pure ()
 
-  let lexeme p = p <* spaces
-      symbol   = lexeme . E.symbol
-      word     = lexeme . E.word
-      parens p = symbol '(' *> p <* symbol ')'
+--   let lexeme p = p <* spaces
+--       symbol   = lexeme . E.symbol
+--       word     = lexeme . E.word
+--       parens p = symbol '(' *> p <* symbol ')'
       
-  ident <- mdo
-    go <- rule $ ((:) <$> satisfy isAlpha <*> go) <|> ((:[]) <$> satisfy isAlpha)
-    pure $ lexeme go
+--   ident <- mdo
+--     go <- rule $ ((:) <$> satisfy isAlpha <*> go) <|> ((:[]) <$> satisfy isAlpha)
+--     pure $ lexeme go
 
-  var   <- rule $ Var <$> ident    
-  star  <- rule $ Star <$ symbol '*'
+--   var   <- rule $ Var <$> ident    
+--   star  <- rule $ Star <$ symbol '*'
 
-  -- arr   <- rule $ Arr <$> pterm <*> (word "->" *> term)
-  -- pi    <- rule $ parens (Pi  <$> ident <* symbol ':' <*> term) <*> (word "->" *> term)
-  -- lam   <- rule $ parens (Lam <$> ident <* symbol ':' <*> term) <*> (word "." *> term)
+--   -- arr   <- rule $ Arr <$> pterm <*> (word "->" *> term)
+--   -- pi    <- rule $ parens (Pi  <$> ident <* symbol ':' <*> term) <*> (word "->" *> term)
+--   -- lam   <- rule $ parens (Lam <$> ident <* symbol ':' <*> term) <*> (word "." *> term)
 
-  -- pi    <- rule $ parens (Pi <$> ident <* symbol ':' <*> term) <*> (word "->" *> term)
+--   -- pi    <- rule $ parens (Pi <$> ident <* symbol ':' <*> term) <*> (word "->" *> term)
 
 
-  term  <- rule $ var <|> star  
-  arr   <- rule $ Arr  <$> term  <*> (word "->" *> (arr <|> var <|> star))
-  ilam  <- rule $ ILam <$> ident <*> (word "." *> (ilam <|> var <|> star <|> arr))
+--   term  <- rule $ var <|> star  
+--   arr   <- rule $ Arr  <$> term  <*> (word "->" *> (arr <|> var <|> star))
+--   ilam  <- rule $ ILam <$> ident <*> (word "." *> (ilam <|> var <|> star <|> arr))
 
-  -- pterm  <- rule $ star <|> var <|> parens term  
-  -- npterm <- rule $ star <|> var <|> arr <|> pi <|> lam <|> ilam
+--   -- pterm  <- rule $ star <|> var <|> parens term  
+--   -- npterm <- rule $ star <|> var <|> arr <|> pi <|> lam <|> ilam
   
-  -- term   <- rule $ (App <$> term <*> pterm) <|> npterm
+--   -- term   <- rule $ (App <$> term <*> pterm) <|> npterm
   
-  pure ilam
+--   pure ilam
   
 
 

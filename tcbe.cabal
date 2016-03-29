@@ -18,19 +18,6 @@ executable tcbe
   build-depends:       base, containers, Earley, mtl, unordered-containers
   default-language:    Haskell2010
 
-executable tcbe-minimal
-  main-is:             Main.hs
-  other-modules:       Minimal
-  ghc-options:         -rtsopts -O2 -fllvm
-  build-depends:       base
-  default-language:    Haskell2010
-
-executable tcbe-bidirectional
-  main-is:             Bidirectional.hs
-  ghc-options:         -rtsopts -O2 -fllvm
-  build-depends:       base
-  default-language:    Haskell2010                       
-
 source-repository head
   type:     git
   location: https://github.com/AndrasKovacs/tcbe

@@ -23,7 +23,7 @@ which is not the case with type checkers that substitute into terms under binder
 recursing on them. For this reason, it could be worthwhile to investigate this algorithm
 in a formal (Agda, Coq) setting too.
 
-Some ideas to be explored:
+Some ideas and todos:
 
   - Sigma types or hard-coded inductive types with eliminators
   - Bidirectional type checking: on first thought, propagation of type information
@@ -48,6 +48,9 @@ Some ideas to be explored:
 
       - Efficient equality check: on values instead of terms.
       - Need equality check between Val and TC too, then
+
+  - "Infer" and "Check" should also return elaborated terms with annotations removed
+     and implicit lambda arg types filled in
   
 
 -}
@@ -151,13 +154,19 @@ runTC (_, _, d) = go d where
 quote :: Cxt -> Val -> Term
 quote (_, _, d) = quote' d
 
+-- Note: it seems to me that eta-expansion can be done by
+-- passing in eta-expanded vars instead of plain old "VVar d"-s
+-- everywhere. The VVar-s are the neutral variables both in context
+-- and inside terms, so if we keep them expanded that should be enough.
+-- TODO: write eta-expansion function
+
 quote' :: Int -> Val -> Term
 quote' d = \case
   VVar i   -> Var i
   VApp f x -> App (quote' d f) (quote' d x)
   VLam a t -> Lam (quote' d a) (quote' (d + 1) (t (VVar d)))
   VPi  a b -> Pi  (quote' d a) (quote' (d + 1) (b (VVar d)))
-  VStar    -> Star
+  VStar    -> Star  
 
 eval :: Cxt -> Term -> Val
 eval (ts, vs, d) = go vs d where

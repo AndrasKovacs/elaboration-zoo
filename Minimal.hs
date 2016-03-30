@@ -23,36 +23,43 @@ which is not the case with type checkers that substitute into terms under binder
 recursing on them. For this reason, it could be worthwhile to investigate this algorithm
 in a formal (Agda, Coq) setting too.
 
-Some ideas and todos:
+Ideas, todos, notes:
 
   - Sigma types or hard-coded inductive types with eliminators
   - Bidirectional type checking: on first thought, propagation of type information
-    could be handled really well here.
+    could be handled really well here. (DONE in Bidirectiona.hs)
   - Alternative variable binding:
 
-     - since there is no substitution, nameful (non-de-Bruijn)
-       variables could be relatively convenient.
+     - nameful (non-de-Bruijn) vars
 
-     - Try to do de Bruijn indices instead of levels
+     - de Bruijn indices instead of levels
 
      - Using Bound's term lifting trick?
 
-  - Handling of substitutions and constraints
+  - Handling of substitutions and constraints arising from unification
+
+  - Various ways to cache normal forms of context entries:
+      - eval, quote, then unquote (DONE in Main.hs)
+      - eval, quote, then store Term along with the level in which it was quoted
+        -- TODO: non-allocating equality check of Term-s on different levels?
 
   - Deferring substitutions of "top-level" variables, or at least annotating
     values with tags that denote a place where a "top-level" variable was
     substituted out. This lets equality checks skip recursing further,
     and produces better error messages.
 
-      - Possible impl: add Bind
+      - Efficient equality check: on values/TC instead of terms (DONE in Main.hs, 2x speedup)
 
-      - Efficient equality check: on values instead of terms.
-      - Need equality check between Val and TC too, then
+  - Quote using eta-expanded VVar-s
+
+  - Extend Val to support multiple options for unfolding and rewriting (depth, unfold/nounfold etc.)
+
+  - First try equality checks on renamed, but not normalized Term-s (reason: raw Term-s in sources are
+    fairly rigidly bounded in size by human programming practice).
 
   - "Infer" and "Check" should also return elaborated terms with annotations removed
      and implicit lambda arg types filled in
   
-
 -}
 
 {-# language BangPatterns, LambdaCase #-}
@@ -212,7 +219,8 @@ multiple times, when checking for term equality? Well, we can. But note that:
     in which it was reduced. This should allow us to check alpha equivalence without actually
     reallocating terms (I haven't yet tried this). If we cache values instead of terms,
     shifting is done by "quote", and then alpha equality is just simple equality. Overall,
-    I think "virtual" shifting would be much faster. 
+    I think "virtual" shifting would be much faster.
+
 -}
 
 infer :: Cxt -> Term -> Check TC

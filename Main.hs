@@ -20,7 +20,7 @@ import Debug.Trace
 data Term
   = Var !Int
   | App Term Term
-  | Lam Term Term
+  | Lam Term Term        
   | Pi Term Term
   | Star
   deriving (Eq)

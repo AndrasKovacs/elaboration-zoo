@@ -110,6 +110,15 @@ eval (ts, vs, d) = go vs d where
     Pi  a t -> VPi  (go vs d a) $ \v -> go (v:vs) (d + 1) t
     Star    -> VStar
 
+
+eta :: Int -> Type -> Val
+eta d (VPi a b) = VLam (Just (eta d a)) $ \v -> eta (d + 1) (b (VVar d)) $$ v
+eta d _         = _
+
+  
+-- etaExpand :: Int -> Type -> Type
+-- etaExpand d (VPi a b) = VLam (Just a) $ \v -> etaExpand (d + 1)
+
 check :: Cxt -> Term -> Type -> Check ()
 check cxt t ty = case (t, ty) of
   (Lam Nothing t, VPi a b) -> do

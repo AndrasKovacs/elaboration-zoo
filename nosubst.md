@@ -70,7 +70,7 @@ quote d = \case
 
 Now, we might want to try performing type checking under this environment, thereby allowing us to directly normalize open terms using `quote` and `eval`. Let's define the context for type checking and some operations:
 
-```
+```haskell
 type Type = Val
 type Cxt  = ([Val], [Type], Int)
 
@@ -87,7 +87,7 @@ Our context contains `[Val]` and the `Int` depth needed for `eval/quote`, and it
 
 Our key functions shall have the following types:
 
-```
+```haskell
 type TM = Either String
 check :: Cxt -> Term -> Term -> TM () -- check cxt term expectedType
 infer :: Cxt -> Term -> TM ?
@@ -132,7 +132,7 @@ However, if we try to generalize this rule in order to make all substitutions di
 
 So let's make some sort of semantic value for type checking itself, and return that from `infer`:
 
-```
+```haskell
 data Infer
   = Ok Type
   | InferLam Type (Val -> TM Infer)
@@ -181,19 +181,11 @@ Essentially, we postpone checking lambdas until there's either an argument that 
 
 Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. 
 
-It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point, reachable through fully stable references. We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and without substitution we don't have to worry much about variable capture either. 
+A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/PostMinimal.hs). 
 
+It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point, reachable through stable references. When we put something into the context, by default the rest of the term already has the right (and the same!) `Var`-s pointing to it. 
 
+We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and we can mix explicit names and de Bruijn levels as we like. 
 
--- TODO
-
-
-
-
-
-
-
-
-
-
+If we ditch de Bruijn names altogether, we still only need a moderate amount of extra effort to implement alpha equality; an example can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Nameful.hs). Since there's no substitution, there's no risk of capture, and no need for renaming. 
 

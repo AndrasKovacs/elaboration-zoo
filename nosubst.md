@@ -2,7 +2,7 @@
 
 *Summary: interleaving normalization-by-evaluation and type checking gets us an algorithm that is extremely efficient, simple and obviously structurally recursive.*
 
-In the well-known [Simply Easy!](https://www.andres-loeh.de/LambdaPi/LambdaPi.pdf) tutorial, a minimal dependent type checker is presented that uses NBE (normalization by evaluation) with a [HOAS](https://en.wikipedia.org/wiki/Higher-order_abstract_syntax) representation for terms. However, as Danny Gratzer [remarked](http://jozefg.bitbucket.org/posts/2014-11-22-bidir.html), it "kinda sucks" that we still have to use explicit substitution when going under binders. Fortunately, it turns out we can get rid of substitution altogether.
+In the well-known [Simply Easy!](https://www.andres-loeh.de/LambdaPi/LambdaPi.pdf) tutorial, a minimal dependent type checker is presented that uses NBE (normalization by evaluation) with a [HOAS](https://en.wikipedia.org/wiki/Higher-order_abstract_syntax) representation for terms. However, as Danny Gratzer [remarked](http://jozefg.bitbucket.org/posts/2014-11-22-bidir.html) bemoaned, we still have to use explicit substitution when going under binders. Fortunately, it turns out we can get rid of substitution altogether.
 
 Consider a simple dependent language with variables as de Bruijn levels:
 

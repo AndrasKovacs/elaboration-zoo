@@ -137,7 +137,7 @@ So let's make some sort of semantic value for type checking itself:
 ```haskell
 data Infer
   = Ok Type
-  | InferLam Type (Val -> TM Infer)
+  | IPi Type (Val -> TM Infer)
 ```
 
 The plan is to return `Infer` from infer, and also write a `quote` function for `Infer` which possibly yields a `Term`. Without further ado:
@@ -160,14 +160,14 @@ infer cxt@(vs, ts, d) = \case
   Lam a t -> do
     check cxt a Star
     let a' = eval vs d a
-    pure $ InferLam a' $ \v -> infer ((v, a') <: cxt) t
+    pure $ IPi a' $ \v -> infer ((v, a') <: cxt) t
   Pi a b -> do
     check cxt a Star
     check (eval vs d a <:: cxt) b Star
     pure $ Ok VStar
   App f x -> 
     infer cxt f >>= \case
-      InferLam a b -> do
+      IPi a b -> do
         check cxt x (quote d a)
         b (eval vs d x)
       Ok (VPi a b) -> do
@@ -179,7 +179,7 @@ infer cxt@(vs, ts, d) = \case
 infer0 = quoteInfer 0 <=< infer ([], [], 0)
 ```
 
-Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `InferLam` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
+Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `IPi` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
 
 Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. This makes me wonder if my trick could be put to interesting use in Agda when modeling type checkers (of course in Agda one would have to use some different `Val` without positivity issues).
 

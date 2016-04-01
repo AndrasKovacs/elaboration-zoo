@@ -120,7 +120,7 @@ infer cxt@(vs, ts, d) = \case
     -- ?? now we should return a VPi Type (Val -> Val)`, but we simply don't have `Val -> Val`.
 ```
     
-`Lam` is indeed at the heart of the issue. Traditionally, we check lambdas by checking the body with a neutral variable substituted in, then abstracting over that variable after the checking is finished. In contrast, if we have a lambda immediately applied to an argument, couldn't we just skip one round of instantiation and abstraction, and check the lambda body with the actual argument being stored in the environment?
+`Lam` is indeed at the heart of the issue. We might check lambdas by checking the body with a neutral variable substituted in, then abstracting over that variable after the checking is finished. However, if we have a lambda immediately applied to an argument, maybe we could skip one round of instantiation and abstraction, and check the lambda body with the actual argument being stored in the environment:
 
 ```haskell
 infer cxt@(vs, ts, d) (App (Lam a t) x) = do
@@ -130,7 +130,7 @@ infer cxt@(vs, ts, d) (App (Lam a t) x) = do
   infer ((eval vs d x, a') <: cxt) t
 ```
       
-However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be applied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 
+However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be supplied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 
 
 So let's make some sort of semantic value for type inference itself:
 

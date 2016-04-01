@@ -93,7 +93,7 @@ check :: Cxt -> Term -> Term -> TM () -- check cxt term expectedType
 infer :: Cxt -> Term -> TM ?
 ```
 
-Notice the question mark in `infer`. I put it there because neither `Type` nor `Term` (which also denotes types) are viable.
+Notice the question mark in `infer`. I put it there because neither `Type` nor `Term` (which also denotes types here) are viable.
 
 If we return `Term` we must use substitution in the `App` case:
 

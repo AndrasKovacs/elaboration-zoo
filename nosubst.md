@@ -140,7 +140,7 @@ data Infer
   | IPi Type (Val -> TM Infer)
 ```
 
-The plan is to return `Infer` from infer, and also write a `quote` function for `Infer` which possibly yields a `Term`. Without further ado:
+The plan is to return `Infer` from `infer`, and also write a `quote` function for `Infer` which possibly yields a `Term`. Without further ado:
 
 ```haskell
 quoteInfer :: Int -> Infer -> TM Term

@@ -124,8 +124,10 @@ infer cxt@(vs, ts, d) = \case
 
 ```haskell
 infer cxt@(vs, ts, d) (App (Lam a t) x) = do
-  check cxt x a
-  infer ((eval vs d x, eval vs d a) : cxt) t
+  check cxt a Star
+  let a' = eval vs d a
+  check cxt x (quote d a')
+  infer ((eval vs d x, a') <: cxt) t
 ```
       
 However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be applied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 

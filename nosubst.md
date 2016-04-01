@@ -56,7 +56,7 @@ quote = go 0 where
 
 `quote . eval` performs normalization by evaluation, returning the normal form of a term. 
 
-Let us observe that although `eval` and `quote` work in empty contexts, they could easily work in open contexts as well. We just have to lift out the environment and depth parameters from the `go` functions:
+Let us observe that although `eval` and `quote` work in empty contexts, they could easily work in non-empty ones as well. We just have to lift out the environment and depth parameters from the `go` functions:
 
 ```haskell
 eval :: [Val] -> Int -> Term -> Val

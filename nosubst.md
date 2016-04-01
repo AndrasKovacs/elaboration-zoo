@@ -8,11 +8,11 @@ Consider a simple dependent language with variables as de Bruijn levels:
 
 ```haskell
 data Term
-  = Var !Int       ^ -- de Bruijn levels
+  = Var !Int       -- ^ de Bruijn levels
   | App Term Term  
-  | Lam Term Term  ^ -- Lam a t ~ \(x : a) -> t
-  | Pi Term Term   ^ -- Pi a b ~ (x : a) -> b
-  | Star           ^ -- The type of types (we also have (* : *) now)
+  | Lam Term Term  -- ^ Lam a t ~ \(x : a) -> t
+  | Pi Term Term   -- ^ Pi a b ~ (x : a) -> b
+  | Star           -- ^ The type of types (we also have (* : *) now)
   deriving (Eq)
 ```
 
@@ -88,16 +88,17 @@ Our context contains `[Val]` and the `Int` depth needed for `eval/quote`, and it
 Our key functions shall have the following types:
 
 ```
-type Check = Either String
-check :: Cxt -> Term -> Term -> Check () -- check cxt term expectedType
-infer :: Cxt -> Term -> Check ?
+type TM = Either String
+check :: Cxt -> Term -> Term -> TM () -- check cxt term expectedType
+infer :: Cxt -> Term -> TM ?
 ```
 
 Notice the question mark in `infer`. I put it there because neither `Type` nor `Term` (which also denotes types) are viable.
 
 If we return `Term` we must use substitution in the `App` case:
 
-infer :: Cxt -> Term -> Check Term
+```haskell
+infer :: Cxt -> Term -> TM Term
 infer cxt@(vs, ts, d) = \case
   App f x -> do
     infer cxt f >>= \case
@@ -105,18 +106,19 @@ infer cxt@(vs, ts, d) = \case
         check cxt x a
         -- ?? we must substitute "x" into "b" now, but it's too late: "b" is a dumb "Term"
       _      -> Left "can't apply non-function"
+```
     
 And we can't return `Type` at all, because of the `Lam` case:
 
 ```haskell
-infer :: Cxt -> Term -> Check Type
+infer :: Cxt -> Term -> TM Type
 infer cxt@(vs, ts, d) = \case
   Lam a t -> do
     check cxt a Star
     let a' = eval vs d a
     tt <- infer (a' <:: cxt) t
     -- ?? now we should return a VPi Type (Val -> Val)`, but we simply don't have `Val -> Val`.
-```haskell
+```
     
 `Lam` is indeed at the heart of the issue. Traditionally, we check lambdas by checking the body with a neutral variable substituted in, then abstracting over that variable after the checking is finished. In contrast, if we have a lambda immediately applied to an argument, couldn't we just skip one round of instantiation and abstraction, and check the lambda body with the actual argument being stored in the environment?
 
@@ -131,39 +133,39 @@ However, if we try to generalize this rule in order to make all substitutions di
 So let's make some sort of semantic value for type checking itself, and return that from `infer`:
 
 ```
-data TC
+data Infer
   = Ok Type
-  | CheckLam Type (Val -> Check TC)
+  | InferLam Type (Val -> TM Infer)
 ```
 
-The plan is to return `TC` from infer, and also write a `quote` function for `TC` which possibly yields a `Term`. Without further ado:
+The plan is to return `Infer` from infer, and also write a `quote` function for `Infer` which possibly yields a `Term`. Without further ado:
 
 ```haskell
-quoteTC :: Int -> TC -> Check Term
-quoteTC d = \case
+quoteInfer :: Int -> Infer -> TM Term
+quoteInfer d = \case
   Ok ty        -> pure $ quote d ty
-  CheckLam a b -> Pi (quote d a) <$> (quoteTC (d + 1) =<< b (VVar d))
+  InferLam a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
   
-check :: Cxt -> Term -> Term -> Check ()
+check :: Cxt -> Term -> Term -> TM ()
 check cxt@(_, _, d) t expect = do
-  tt <- quoteTC d =<< infer cxt t
+  tt <- quoteInfer d =<< infer cxt t
   unless (tt == expect) $ Left "type mismatch"
 
-infer :: Cxt -> Term -> Check TC
+infer :: Cxt -> Term -> TM Infer
 infer cxt@(vs, ts, d) = \case
   Var i   -> pure $ Ok (ts !! (d - i - 1))
   Star    -> pure $ Ok VStar
   Lam a t -> do
     check cxt a Star
     let a' = eval vs d a
-    pure $ CheckLam a' $ \v -> infer ((v, a') <: cxt) t
+    pure $ InferLam a' $ \v -> infer ((v, a') <: cxt) t
   Pi a b -> do
     check cxt a Star
     check (eval vs d a <:: cxt) b Star
     pure $ Ok VStar
   App f x -> 
     infer cxt f >>= \case
-      CheckLam a b -> do
+      InferLam a b -> do
         check cxt x (quote d a)
         b (eval vs d x)
       Ok (VPi a b) -> do
@@ -172,14 +174,16 @@ infer cxt@(vs, ts, d) = \case
       _ -> Left "Can't apply non-function"
       
 -- infer in the empty context
-infer0 = quoteTC 0 <=< infer ([], [], 0)
+infer0 = quoteInfer 0 <=< infer ([], [], 0)
 ```
 
-Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteTC` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `CheckLam` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
+Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `InferLam` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
 
 Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. 
 
 It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point, reachable through fully stable references. We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and without substitution we don't have to worry much about variable capture either. 
+
+
 
 -- TODO
 

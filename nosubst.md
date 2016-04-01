@@ -1,0 +1,199 @@
+#### Dependent type checking without substitution
+
+*Summary: interleaving normalization-by-evaluation and type checking gets us an algorithm that is extremely efficient, simple and obviously structurally recursive.*
+
+In the well-known [Simply Easy!](http://strictlypositive.org/Easy.pdf) tutorial, a minimal dependent type checker is presented that uses NBE (normalization by evaluation) with a HOAS representation for terms. However, as Danny Gratzer [remarked](http://jozefg.bitbucket.org/posts/2014-11-22-bidir.html), it "kinda sucks" that we still have to use explicit substitution when going under binders. Fortunately, it turns out we can get rid of substitution altogether.
+
+Consider a simple dependent language with variables as de Bruijn levels:
+
+```haskell
+data Term
+  = Var !Int       -- ^ de Bruijn levels
+  | App Term Term  
+  | Lam Term Term  -- ^ Lam a t ~ \(x : a) -> t
+  | Pi Term Term   -- ^ Pi a b ~ (x : a) -> b
+  | Star           -- ^ The type of types (we also have (* : *) now)
+  deriving (Eq)
+```
+
+And a HOAS for its semantic values (for simplicity, I'm not explicitly indicating that it's necessarily normal by using neutral values with spines):
+
+```haskell
+data Val
+  = VVar !Int
+  | VApp Val Val
+  | VLam Val (Val -> Val)
+  | VPi  Val (Val -> Val)
+  | VStar
+```
+
+We also have `eval` and `quote` mapping between the two representations:
+
+```haskell
+
+-- Apply Val-s
+($$) :: Val -> Val -> Val
+($$) (VLam _ f) x = f x
+($$) f          x = VApp f x
+
+-- Here, we store the current depth (de Bruijn level) in "d"
+eval :: Term -> Val
+eval = go [] 0 where
+  go env d (Var i)   = env !! (d - i - 1)
+  go env d (App f x) = go env d f $$ go env d x
+  go env d (Lam a t) = VLam (go env d a) $ \v -> go (v:env) (d + 1) t
+  go env d (Pi  a b) = VPi  (go env d a) $ \v -> go (v:env) (d + 1) b
+  go env d Star      = VStar
+
+quote :: Val -> Term
+quote = go 0 where
+  go d (VVar i)   = VVar i
+  go d (VApp f x) = App (go d f) (go d x)
+  go d (VLam a t) = Lam (go d a) (go (d + 1) (t (VVar d)))
+  go d (VPi  a b) = Pi  (go d a) (go (d + 1) (b (VVar d)))
+  go d VStar      = Star
+```
+
+`quote . eval` performs normalization by evaluation, returning the normal form of a term. 
+
+Let us observe that although `eval` and `quote` work in empty contexts, they could easily work in open contexts as well. We just have to lift out the environment and depth parameters from the `go` functions:
+
+```haskell
+eval :: [Val] -> Int -> Term -> Val
+eval vs d = \case
+  -- as before
+
+quote :: Int -> Val -> Term
+quote d = \case
+  -- as before
+```
+
+Now, we might want to try performing type checking under this environment, thereby allowing us to directly normalize open terms using `quote` and `eval`. Let's define the context for type checking and some operations:
+
+```
+type Type = Val
+type Cxt  = ([Val], [Type], Int)
+
+(<:) :: (Val, Type) -> Cxt -> Cxt
+(<:) (v, t) (vs, ts, d) = (v:vs, t:ts, d + 1)
+
+(<::) :: Type -> Cxt -> Cxt
+(<::) t (vs, ts, d) = (VVar d:vs, t:ts, d + 1)
+```
+
+Our context contains `[Val]` and the `Int` depth needed for `eval/quote`, and it also contains a `Type` environment, which carries the types of the corresponding `Val`-s. The `Int` depth is always the same as the size of the context.
+
+`(<:)` simply adds a value and type, while `(<::)` passes in a neutral variable as value.
+
+Our key functions shall have the following types:
+
+```
+type TM = Either String
+check :: Cxt -> Term -> Term -> TM () -- check cxt term expectedType
+infer :: Cxt -> Term -> TM ?
+```
+
+Notice the question mark in `infer`. I put it there because neither `Type` nor `Term` (which also denotes types) are viable.
+
+If we return `Term` we must use substitution in the `App` case:
+
+```haskell
+infer :: Cxt -> Term -> TM Term
+infer cxt@(vs, ts, d) = \case
+  App f x -> do
+    infer cxt f >>= \case
+      Pi a b -> do
+        check cxt x a
+        -- ?? we must substitute "x" into "b" now, but it's too late: "b" is a dumb "Term"
+      _      -> Left "can't apply non-function"
+```
+    
+And we can't return `Type` at all, because of the `Lam` case:
+
+```haskell
+infer :: Cxt -> Term -> TM Type
+infer cxt@(vs, ts, d) = \case
+  Lam a t -> do
+    check cxt a Star
+    let a' = eval vs d a
+    tt <- infer (a' <:: cxt) t
+    -- ?? now we should return a VPi Type (Val -> Val)`, but we simply don't have `Val -> Val`.
+```
+    
+`Lam` is indeed at the heart of the issue. Traditionally, we check lambdas by checking the body with a neutral variable substituted in, then abstracting over that variable after the checking is finished. In contrast, if we have a lambda immediately applied to an argument, couldn't we just skip one round of instantiation and abstraction, and check the lambda body with the actual argument being stored in the environment?
+
+```haskell
+infer cxt@(vs, ts, d) (App (Lam a t) x) = do
+  check cxt x a
+  infer ((eval vs d x, eval vs d a) : cxt) t
+```
+      
+However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be applied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 
+
+So let's make some sort of semantic value for type checking itself, and return that from `infer`:
+
+```
+data Infer
+  = Ok Type
+  | InferLam Type (Val -> TM Infer)
+```
+
+The plan is to return `Infer` from infer, and also write a `quote` function for `Infer` which possibly yields a `Term`. Without further ado:
+
+```haskell
+quoteInfer :: Int -> Infer -> TM Term
+quoteInfer d = \case
+  Ok ty        -> pure $ quote d ty
+  InferLam a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
+  
+check :: Cxt -> Term -> Term -> TM ()
+check cxt@(_, _, d) t expect = do
+  tt <- quoteInfer d =<< infer cxt t
+  unless (tt == expect) $ Left "type mismatch"
+
+infer :: Cxt -> Term -> TM Infer
+infer cxt@(vs, ts, d) = \case
+  Var i   -> pure $ Ok (ts !! (d - i - 1))
+  Star    -> pure $ Ok VStar
+  Lam a t -> do
+    check cxt a Star
+    let a' = eval vs d a
+    pure $ InferLam a' $ \v -> infer ((v, a') <: cxt) t
+  Pi a b -> do
+    check cxt a Star
+    check (eval vs d a <:: cxt) b Star
+    pure $ Ok VStar
+  App f x -> 
+    infer cxt f >>= \case
+      InferLam a b -> do
+        check cxt x (quote d a)
+        b (eval vs d x)
+      Ok (VPi a b) -> do
+        check cxt x (quote d a)
+        pure $ Ok $ b (eval vs d x)
+      _ -> Left "Can't apply non-function"
+      
+-- infer in the empty context
+infer0 = quoteInfer 0 <=< infer ([], [], 0)
+```
+
+Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `InferLam` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
+
+Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. 
+
+It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point, reachable through fully stable references. We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and without substitution we don't have to worry much about variable capture either. 
+
+
+
+-- TODO
+
+
+
+
+
+
+
+
+
+
+

@@ -1,5 +1,13 @@
+{-
 
-{-# language BangPatterns, LambdaCase #-}
+This version doesn't use de Bruijn names.
+The only significant change from dB is that we need to implement
+alpha equality explicitly
+
+-}
+
+
+{-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
 import Prelude hiding (pi)
 import Control.Monad

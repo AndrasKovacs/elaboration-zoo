@@ -132,7 +132,7 @@ infer cxt@(vs, ts, d) (App (Lam a t) x) = do
       
 However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be applied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 
 
-So let's make some sort of semantic value for type checking itself, and return that from `infer`:
+So let's make some sort of semantic value for type checking itself:
 
 ```haskell
 data Infer
@@ -181,7 +181,7 @@ infer0 = quoteInfer 0 <=< infer ([], [], 0)
 
 Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `InferLam` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
 
-Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. 
+Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. This makes me wonder if my trick could be put to interesting use in Agda when modeling type checkers. 
 
 A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/PostMinimal.hs). 
 
@@ -190,4 +190,6 @@ It seems to me that there are huge advantages to this scheme. First - although I
 We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and we can mix explicit names and de Bruijn levels as we like. 
 
 If we ditch de Bruijn names altogether, we still only need a moderate amount of extra effort to implement alpha equality; an example can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Nameful.hs). Since there's no substitution, there's no risk of capture, and no need for renaming. 
+
+We're also not obligated to store HOAS values in the environment, or only store those. We can store raw `Term`-s as well for a variety of purposes (error reporting, checking equality without reduction), and we can access these `Term`-s through `VVar`-s from any extended context, and `eval` or process them. 
 

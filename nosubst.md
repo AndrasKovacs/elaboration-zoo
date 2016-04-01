@@ -187,7 +187,7 @@ Note too that we do not store `Infer` values anywhere, and it never leads to wor
 
 A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/PostMinimal.hs). 
 
-It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point, reachable through stable references. When we put something into the context, by default the rest of the term already has the right (and the same!) `Var`-s pointing to it. 
+It seems to me that there are huge advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point. When we put something into the context, by default the rest of the term already has the right `Var`-s pointing to it. 
 
 We're also quite free to handle "free" or "bound" variables as we like, since here there's no fundamental difference between them, and we can mix explicit names and de Bruijn levels as we like. 
 

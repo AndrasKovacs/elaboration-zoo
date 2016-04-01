@@ -132,7 +132,7 @@ infer cxt@(vs, ts, d) (App (Lam a t) x) = do
       
 However, if we try to generalize this rule in order to make all substitutions disappear, it gets a bit ugly, and we still can't return `Type`, because often there is no argument to be applied, and we're left with a plain lambda, and as we've seen we can't infer `Type` from that. 
 
-So let's make some sort of semantic value for type checking itself:
+So let's make some sort of semantic value for type inference itself:
 
 ```haskell
 data Infer

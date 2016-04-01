@@ -21,7 +21,7 @@ data Val
 
 data Infer
   = Ok Type
-  | InferLam Type (Val -> TM Infer)
+  | IPi Type (Val -> TM Infer)
 
 type Type  = Val
 type Cxt   = ([Val], [Type], Int)
@@ -44,7 +44,7 @@ infixl 9 $$
 quoteInfer :: Int -> Infer -> TM Term
 quoteInfer d = \case
   Ok ty        -> pure $ quote d ty
-  InferLam a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
+  IPi a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
 
 eval :: [Val] -> Int -> Term -> Val
 eval vs d = \case
@@ -74,14 +74,14 @@ infer cxt@(vs, ts, d) = \case
   Lam a t -> do
     check cxt a Star
     let a' = eval vs d a
-    pure $ InferLam a' $ \v -> infer ((v, a') <: cxt) t
+    pure $ IPi a' $ \v -> infer ((v, a') <: cxt) t
   Pi a b -> do
     check cxt a Star
     check (eval vs d a <:: cxt) b Star
     pure $ Ok VStar
   App f x ->
     infer cxt f >>= \case
-      InferLam a b -> do
+      IPi a b -> do
         check cxt x (quote d a)
         b (eval vs d x)
       Ok (VPi a b) -> do

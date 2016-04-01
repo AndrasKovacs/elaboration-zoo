@@ -181,9 +181,7 @@ infer0 = quoteInfer 0 <=< infer ([], [], 0)
 
 Essentially, we postpone checking lambdas until there's either an argument that can be recorded in the environment, or if there are no such arguments, we can use `quoteInfer` to plug in neutral `VVar`-s into all of the remaining binders. In the `App` case, we either supply the argument to the `IPi` continuation, or proceed as usual with the `VPi` extracted from `Ok`. And that's it!
 
-Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. This makes me wonder if my trick could be put to interesting use in Agda when modeling type checkers (of course in Agda one would have to use some different `Val` without positivity issues).
-
-Note too that we do not store `Infer` values anywhere, and it never leads to work duplication. 
+Note that we only ever evaluate type checked terms, as we should, and we recurse on subterms without modifying them in any way. This makes me wonder if my trick could be put to interesting use in Agda (of course in Agda one would have to use a different `Val`, because the current one has positivity issues).
 
 A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Minimal.hs). 
 

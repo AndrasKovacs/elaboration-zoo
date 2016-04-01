@@ -145,8 +145,8 @@ The plan is to return `Infer` from infer, and also write a `quote` function for 
 ```haskell
 quoteInfer :: Int -> Infer -> TM Term
 quoteInfer d = \case
-  Ok ty        -> pure $ quote d ty
-  InferLam a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
+  Ok ty   -> pure $ quote d ty
+  IPi a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
   
 check :: Cxt -> Term -> Term -> TM ()
 check cxt@(_, _, d) t expect = do

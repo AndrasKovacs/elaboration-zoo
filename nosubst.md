@@ -185,7 +185,7 @@ Note that we only ever evaluate type checked terms, as we should, and we recurse
 
 Note too that we do not store `Infer` values anywhere, and it never leads to work duplication. 
 
-A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/PostMinimal.hs). 
+A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Minimal.hs). 
 
 It seems to me that there are great advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point. When we put something into the context, by default the rest of the term already has the right `Var`-s pointing to it. 
 

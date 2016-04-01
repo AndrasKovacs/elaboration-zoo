@@ -1,11 +1,8 @@
-{-
-
+{-|
 This version doesn't use de Bruijn names.
 The only significant change from dB is that we need to implement
 alpha equality explicitly
-
 -}
-
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
@@ -34,7 +31,7 @@ data Val
 
 data Infer
   = Ok Type
-  | InferLam String Type (Val -> TM Infer)
+  | IPi String Type (Val -> TM Infer)
 
 type Type  = Val
 type Cxt   = (HashMap String Val, HashMap String Type, Int)
@@ -71,8 +68,8 @@ quote = \case
 
 quoteInfer :: Infer -> TM Term
 quoteInfer = \case
-  Ok t           -> pure $ quote t
-  InferLam k a t -> Pi k (quote a) <$> (quoteInfer =<< (t (VVar k)))
+  Ok t      -> pure $ quote t
+  IPi k a t -> Pi k (quote a) <$> (quoteInfer =<< (t (VVar k)))
 
 -- alpha equality
 --------------------------------------------------------------------------------
@@ -80,7 +77,7 @@ quoteInfer = \case
 aeqInfer :: Type -> Infer -> TM Bool
 aeqInfer = go 0 where
   go d t (Ok t') = pure $ aeq d t t'
-  go d (VPi _ a t) (InferLam _ a' t') =
+  go d (VPi _ a t) (IPi _ a' t') =
     (&&) (aeq d a a') <$> (go (d + 1) (t (BVar d)) =<< t' (BVar d))
   go _ _  _ = pure False
 
@@ -108,14 +105,14 @@ infer cxt@(vs, ts, d) = \case
   Lam k a t -> do
     check cxt a VStar
     let a' = eval vs a
-    pure $ InferLam k a' $ \v -> infer ((k, v, a') <: cxt) t
+    pure $ IPi k a' $ \v -> infer ((k, v, a') <: cxt) t
   Pi k a b -> do
     check cxt a VStar
     check ((k, eval vs a) <:: cxt) b VStar
     pure $ Ok VStar
   App f x ->
     infer cxt f >>= \case
-      InferLam k a b -> do
+      IPi k a b -> do
         check cxt x a
         b (eval vs x)
       Ok (VPi k a b) -> do

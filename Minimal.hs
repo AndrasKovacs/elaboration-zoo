@@ -1,77 +1,9 @@
-{-|
-
-Type checking by evaluation.
-
-Below's a type checker for a minimal dependent lambda calculus, much like Morte.
-
-https://hackage.haskell.org/package/morte
-
-This type checker doesn't use substitution at all. Only the "quote" and "eval"
-functions of the "Normalization by Evaluation" technique are used. As a result,
-this implementation is much more efficient and in some ways conceptually
-simpler than exising implementations of minimal dependent LC such as the mentioned
-Morte or LambdaPi (http://strictlypositive.org/Easy.pdf).
-
-The key point of our implementation here is to not only use NBE for terms, but
-interpret type checking itself into semantic values. We do evaluation of types
-and type checking at the same time, carrying around an environment of (semantic values of)
-normal terms and types. As opposed to in LambdaPi, evaluation and quoting depends on the
-current context.
-
-Also, this type checker is obviously structurally recursive on the to-be-checked term,
-which is not the case with type checkers that substitute into terms under binders before
-recursing on them. For this reason, it could be worthwhile to investigate this algorithm
-in a formal (Agda, Coq) setting too.
-
-Ideas, todos, notes:
-
-  - Sigma types or hard-coded inductive types with eliminators
-  - Bidirectional type checking: on first thought, propagation of type information
-    could be handled really well here. (DONE in Bidirectiona.hs)
-  - Alternative variable binding:
-
-     - nameful (non-de-Bruijn) vars
-
-     - de Bruijn indices instead of levels
-
-     - Using Bound's term lifting trick?
-
-  - Handling of substitutions and constraints arising from unification
-
-  - Various ways to cache normal forms of context entries:
-      - eval, quote, then unquote (DONE in Main.hs)
-      - eval, quote, then store Term along with the level in which it was quoted
-        -- TODO: non-allocating equality check of Term-s on different levels?
-
-  - Deferring substitutions of "top-level" variables, or at least annotating
-    values with tags that denote a place where a "top-level" variable was
-    substituted out. This lets equality checks skip recursing further,
-    and produces better error messages.
-
-      - Efficient equality check: on values/TC instead of terms (DONE in Main.hs, 2x speedup)
-
-  - Quote using eta-expanded VVar-s
-
-  - Extend Val to support multiple options for unfolding and rewriting (depth, unfold/nounfold etc.)
-
-  - First try equality checks on renamed, but not normalized Term-s (reason: raw Term-s in sources are
-    fairly rigidly bounded in size by human programming practice).
-
-  - "Infer" and "Check" should also return elaborated terms with annotations removed
-     and implicit lambda arg types filled in
-  
--}
-
 {-# language BangPatterns, LambdaCase #-}
 
 import Prelude hiding (pi)
-import Control.Monad.Except
+import Control.Monad
 import Data.Either
-import Text.Printf
 
--- | Usual dependent LC terms.
--- We use de-Bruijn *levels*, because NBE is simpler
--- with it relative to de-Bruijn indices (or that's what I think).
 data Term
   = Var !Int
   | App Term Term
@@ -79,6 +11,95 @@ data Term
   | Pi Term Term
   | Star
   deriving (Eq)
+
+data Val
+  = VVar !Int
+  | VApp Val Val
+  | VLam Type (Val -> Val)
+  | VPi  Type (Val -> Val)
+  | VStar
+
+data Infer
+  = Ok Type
+  | IPi Type (Val -> TM Infer)
+
+type Type  = Val
+type Cxt   = ([Val], [Type], Int)
+type TM    = Either String
+
+cxt0 :: Cxt
+cxt0 = ([], [], 0)
+
+(<:) :: (Val, Type) -> Cxt -> Cxt
+(<:) (v, t) (vs, ts, d) = (v:vs, t:ts, d + 1)
+
+(<::) :: Type -> Cxt -> Cxt
+(<::) t (vs, ts, d) = (VVar d:vs, t:ts, d + 1)
+
+($$) :: Val -> Val -> Val
+($$) (VLam _ f) x = f x
+($$) f          x = VApp f x
+infixl 9 $$
+
+quoteInfer :: Int -> Infer -> TM Term
+quoteInfer d = \case
+  Ok ty   -> pure $ quote d ty
+  IPi a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
+
+eval :: [Val] -> Int -> Term -> Val
+eval vs d = \case
+  Var i   -> vs !! (d - i - 1)
+  App f x -> eval vs d f $$ eval vs d x
+  Lam a t -> VLam (eval vs d a) $ \v -> eval (v:vs) (d + 1) t
+  Pi  a b -> VPi  (eval vs d a) $ \v -> eval (v:vs) (d + 1) b
+  Star    -> VStar
+
+quote :: Int -> Val -> Term
+quote d = \case
+  VVar i   -> Var i
+  VApp f x -> App (quote d f) (quote d x)
+  VLam a t -> Lam (quote d a) (quote (d + 1) (t (VVar d)))
+  VPi  a b -> Pi  (quote d a) (quote (d + 1) (b (VVar d)))
+  VStar    -> Star
+
+check :: Cxt -> Term -> Term -> TM ()
+check cxt@(_, _, d) t expect = do
+  tt <- quoteInfer d =<< infer cxt t
+  unless (tt == expect) $ Left "type mismatch"
+
+infer :: Cxt -> Term -> TM Infer
+infer cxt@(vs, ts, d) = \case
+  Var i   -> pure $ Ok (ts !! (d - i - 1))
+  Star    -> pure $ Ok VStar
+  Lam a t -> do
+    check cxt a Star
+    let a' = eval vs d a
+    pure $ IPi a' $ \v -> infer ((v, a') <: cxt) t
+  Pi a b -> do
+    check cxt a Star
+    check (eval vs d a <:: cxt) b Star
+    pure $ Ok VStar
+  App f x ->
+    infer cxt f >>= \case
+      IPi a b -> do
+        check cxt x (quote d a)
+        b (eval vs d x)
+      Ok (VPi a b) -> do
+        check cxt x (quote d a)
+        pure $ Ok $ b (eval vs d x)
+      _ -> Left "Can't apply non-function"
+
+
+
+-- Sugar & examples
+--------------------------------------------------------------------------------
+
+-- Be careful with strictness and ill-typed code when writing HOAS terms.
+-- 'infer0' reduces to normal form before checking,
+-- which may lead to nontermination or excessive computation.
+
+-- Of course, the proper way is to define sample code with 'Term' instead of 'Val'.
+-- That's both much lazier and safe.
 
 pretty :: Int -> Term -> ShowS
 pretty prec = go (prec /= 0) where
@@ -101,175 +122,17 @@ pretty prec = go (prec /= 0) where
 instance Show Term where
   showsPrec = pretty
 
--- | Usual HOAS values. We could have used explicit types for neutral
--- values. I ommited them for simplicity.
-data Val
-  = VVar !Int
-  | VApp Val Val
-  | VLam Type (Val -> Val)
-  | VPi  Type (Val -> Val)
-  | VStar
-
--- | TC stands for "type checking". It either returns a normal type,
--- or returns a continuation possibly yielding a Pi type.
-data TC
-  = Ret Type
-  | CheckPi Type (Val -> Check TC)
-
-type Type = Val
-
--- | The context is essentially [(Type, Val)], but we split
--- types and values because it's more efficient to only pass
--- around the list that's needed.
---
--- The 'Int' values carries the length of the lists.
--- We use it to compute lookup indices (which is needed because of
--- our use of de-Bruijn levels).
-type Cxt   = ([Type], [Val], Int)
-type Check = Either String
-
-cxt0 :: Cxt
-cxt0 = ([], [], 0)
-
--- | Append a 'Type'-'Value' pair to the context.
-(<:) :: (Type, Val) -> Cxt -> Cxt
-(<:) (t, v) (ts, vs, d) = (t:ts, v:vs, d + 1)
-
--- | Append a 'Type' to the context and plug in a neutral `VVar`
--- into the value slot. This is useful for quoting values.
-(<::) :: Type -> Cxt -> Cxt
-(<::) t (ts, vs, d) = (t:ts, VVar d:vs, d + 1)
-
--- | Lookup a 'Type' from the context.
-lookupTy :: Cxt -> Int -> Type
-lookupTy (ts, vs, d) i = ts !! (d - i - 1)
-
--- | Apply 'Val's.
-($$) :: Val -> Val -> Val
-($$) (VLam _ f) x = f x
-($$) f          x = VApp f x
-infixl 9 $$
-
--- | Perform a 'TC' in a context, yielding either a
--- syntactic type in normal form or an error.
--- This operation is essentially 'quote' for 'TC'.
-runTC :: Cxt -> TC -> Check Term
-runTC (_, _, d) = go d where
-  go d (Ret ty)      = pure $ quote' d ty
-  go d (CheckPi a b) = Pi (quote' d a) <$> (go (d + 1) =<< b (VVar d))
-
-quote :: Cxt -> Val -> Term
-quote (_, _, d) = quote' d
-
--- Note: it seems to me that eta-expansion can be done by
--- passing in eta-expanded vars instead of plain old "VVar d"-s
--- everywhere. The VVar-s are the neutral variables both in context
--- and inside terms, so if we keep them expanded that should be enough.
--- TODO: write eta-expansion function
-
-quote' :: Int -> Val -> Term
-quote' d = \case
-  VVar i   -> Var i
-  VApp f x -> App (quote' d f) (quote' d x)
-  VLam a t -> Lam (quote' d a) (quote' (d + 1) (t (VVar d)))
-  VPi  a b -> Pi  (quote' d a) (quote' (d + 1) (b (VVar d)))
-  VStar    -> Star  
-
-eval :: Cxt -> Term -> Val
-eval (ts, vs, d) = go vs d where
-  go vs !d = \case
-    Var i   -> vs !! (d - i - 1)
-    App f x -> go vs d f $$ go vs d x
-    Lam a t -> VLam (go vs d a) $ \v -> go (v:vs) (d + 1) t
-    Pi  a t -> VPi  (go vs d a) $ \v -> go (v:vs) (d + 1) t
-    Star    -> VStar
-
-check :: Cxt -> Term -> Term -> Check ()
-check cxt t ty = do
-  tt <- runTC cxt =<< infer cxt t
-  unless (tt == ty) $ do
-    throwError $ printf
-      "Couldn't match expected type %s for term %s with actual type: %s"
-      (show ty) (show t) (show tt)
-
-{- |
-
-In 'infer', the @Lam@ case is most important. Whenever we have a lambda we just
-return a continuation that checks the lambda body. If the lambda is applied to an
-argument, we can resume checking in the @App@ case, pushing the argument into 'CheckPi'.
-
-Note that 'CheckPi' does not introduce work duplication or leaks, because 'TC' values
-aren't stored anywhere. 'CheckPi's are either fully applied and reduce to `Ret t`, or
-partially applied and then reduced to a pi 'Type' by 'runTC'.
-
-We store `Val`-s in the context. `Val` by themselves aren't normal, but they yield
-normal terms when quoted. Can we duplicate work by quoting the same `Type` or `Value`
-multiple times, when checking for term equality? Well, we can. But note that:
-
-  - 'eval' lets us share work up to whnf, and only computation under lambdas will
-    be redone each time. This is often enough sharing.
-
-  - We can actually share full normal form reduction by eval-ing, quoting and evaling again
-    before insertion into context. The last eval is a bit tricky since we're operating under
-    an environment, but it can be done and it's indeed done in Main.hs in this project. However,
-    using full normal form sharing all the time has a considerable overhead (though of course
-    normal forms too are only computed at all if forced). Benchmarks are warranted.
-
-  - We could also reduce to nf and cache the syntactic nf term along with the size of context
-    in which it was reduced. This should allow us to check alpha equivalence without actually
-    reallocating terms (I haven't yet tried this). If we cache values instead of terms,
-    shifting is done by "quote", and then alpha equality is just simple equality. Overall,
-    I think "virtual" shifting would be much faster.
-
--}
-
-infer :: Cxt -> Term -> Check TC
-infer cxt = \case
-  Var i   -> pure $ Ret (lookupTy cxt i)
-  Star    -> pure $ Ret VStar
-  Lam a t -> do
-    check cxt a Star
-    let a' = eval cxt a
-    pure $ CheckPi a' $ \v -> infer ((a', v) <: cxt) t
-  Pi a b -> do
-    check cxt a Star
-    check (eval cxt a <:: cxt) b Star
-    pure $ Ret VStar
-  App f x -> do
-    tf <- infer cxt f
-    case tf of
-      CheckPi a b -> do
-        check cxt x (quote cxt a)
-        b (eval cxt x)
-      Ret (VPi a b) -> do
-        check cxt x (quote cxt a)
-        pure $ Ret $ b (eval cxt x)
-      _ -> throwError $
-             printf "Can't apply non-function type %s when checking term %s"
-             (show $ runTC cxt tf) (show $ App f x)
-
-infer0 :: Term -> Check Term
-infer0 = runTC cxt0 <=< infer cxt0
+infer0 :: Term -> TM Term
+infer0 = quoteInfer 0 <=< infer cxt0
 
 quote0 :: Val -> Term
-quote0 = quote cxt0
+quote0 = quote 0
 
-infer0' :: Val -> Check Term
+infer0' :: Val -> TM Term
 infer0' = infer0 . quote0
 
-eval0' :: Val -> Check Term
-eval0' v = quote cxt0 v <$ infer0 (quote cxt0 v)
-
-
--- HOAS sugar & examples
---------------------------------------------------------------------------------
-
--- Be careful with strictness and ill-typed code.
--- 'infer0' reduces to normal form before checking,
--- which may lead to nontermination or excessive computation.
-
--- Of course, the proper way is to define sample code with 'Term' instead of 'Val'.
--- That's both much lazier and safe.
+eval0' :: Val -> TM Term
+eval0' v = quote0 v <$ infer0 (quote0 v)
 
 pi          = VPi
 lam         = VLam

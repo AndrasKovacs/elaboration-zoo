@@ -30,6 +30,7 @@ data RawTerm
   | ILam !String !RawTerm
   | Pi  !String !RawTerm !RawTerm
   | App !RawTerm !RawTerm
+  | Con !String [RawTerm]
   | Arr !RawTerm !RawTerm
   | Ann !RawTerm !RawTerm
   | Star
@@ -37,7 +38,7 @@ data RawTerm
 
 instance IsString RawTerm where
   fromString = Var
-      
+
 -- lex :: String -> [Token]
 -- lex s = case dropWhile isSpace s of
 --   '(':s -> TOpen  : lex s
@@ -54,19 +55,19 @@ instance IsString RawTerm where
 
 
 
--- test = mdo  
+-- test = mdo
 --   spaces <- rule $ (E.symbol ' ' *> spaces) <|> pure ()
 
 --   let lexeme p = p <* spaces
 --       symbol   = lexeme . E.symbol
 --       word     = lexeme . E.word
 --       parens p = symbol '(' *> p <* symbol ')'
-      
+
 --   ident <- mdo
 --     go <- rule $ ((:) <$> satisfy isAlpha <*> go) <|> ((:[]) <$> satisfy isAlpha)
 --     pure $ lexeme go
 
---   var   <- rule $ Var <$> ident    
+--   var   <- rule $ Var <$> ident
 --   star  <- rule $ Star <$ symbol '*'
 
 --   -- arr   <- rule $ Arr <$> pterm <*> (word "->" *> term)
@@ -76,47 +77,47 @@ instance IsString RawTerm where
 --   -- pi    <- rule $ parens (Pi <$> ident <* symbol ':' <*> term) <*> (word "->" *> term)
 
 
---   term  <- rule $ var <|> star  
+--   term  <- rule $ var <|> star
 --   arr   <- rule $ Arr  <$> term  <*> (word "->" *> (arr <|> var <|> star))
 --   ilam  <- rule $ ILam <$> ident <*> (word "." *> (ilam <|> var <|> star <|> arr))
 
---   -- pterm  <- rule $ star <|> var <|> parens term  
+--   -- pterm  <- rule $ star <|> var <|> parens term
 --   -- npterm <- rule $ star <|> var <|> arr <|> pi <|> lam <|> ilam
-  
+
 --   -- term   <- rule $ (App <$> term <*> pterm) <|> npterm
-  
+
 --   pure ilam
-  
+
 
 
 
 -- term :: Grammar r (Prod r Token Token RawTerm)
 -- term = mdo
 --   star  <- rule $ Star <$ symbol "*"
-  
+
 --   ident <- rule $ (\(TId i) -> Var i) <$> satisfy (\case TId{} -> True; _ -> False)
 
 --   pterm <- rule $ star <|> ident <|> parens term
 
 --   arr   <- rule $ Arr <$> pterm <*> (symbol "->" *> term)
---   -- pi    <- rule $ Pi  <$> 
+--   -- pi    <- rule $ Pi  <$>
 
 --   term  <- rule $ star <|> ident <|> arr
 
 
 --   pure term
-                                                      
-  -- test <- rule $ star <|> (App <$> test <*> star) 
-  -- pure test  
+
+  -- test <- rule $ star <|> (App <$> test <*> star)
+  -- pure test
 
 -- term = mdo
 --   star <- rule $ symbol Star
-  
-  
+
+
 
 -- star = rule $ satisfy (=="*")
--- ident = 
-  
+-- ident =
+
 
 
 
@@ -204,7 +205,7 @@ instance IsString RawTerm where
 --   fromString = Var
 
 
-  
+
 
 
 
@@ -239,7 +240,7 @@ instance IsString RawTerm where
 
 
 -- term p =
---       (Arr <$> term True <*> (symbol "->" *> term False))  
+--       (Arr <$> term True <*> (symbol "->" *> term False))
 --   <|> star
 --   <|> (Var <$> ident)
 
@@ -268,9 +269,9 @@ instance IsString RawTerm where
 -- bind    = parens ((,) <$> ident <* symbol ":"  <*> term)
 
 -- lamPi = do
---   (t,ty) <- bind 
+--   (t,ty) <- bind
 --   (symbol "." *> (Lam t ty <$> term))
---     <|> (symbol "->" *> (Pi t ty <$> term))    
+--     <|> (symbol "->" *> (Pi t ty <$> term))
 
 -- apps = foldl1 App <$> some ((Var <$> ident) <|> star <|> parens term)
 

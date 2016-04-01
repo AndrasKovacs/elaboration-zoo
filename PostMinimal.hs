@@ -19,81 +19,74 @@ data Val
   | VPi  Type (Val -> Val)
   | VStar
 
-type Type  = Val
-type Cxt   = ([Type], [Val], Int)
-type Check = Either String
-
-data TC
+data Infer
   = Ok Type
-  | CheckLam Type (Val -> Check TC)
+  | InferLam Type (Val -> TM Infer)
+
+type Type  = Val
+type Cxt   = ([Val], [Type], Int)
+type TM = Either String
 
 cxt0 :: Cxt
 cxt0 = ([], [], 0)
 
-(<:) :: (Type, Val) -> Cxt -> Cxt
-(<:) (t, v) (ts, vs, d) = (t:ts, v:vs, d + 1)
+(<:) :: (Val, Type) -> Cxt -> Cxt
+(<:) (v, t) (vs, ts, d) = (v:vs, t:ts, d + 1)
 
 (<::) :: Type -> Cxt -> Cxt
-(<::) t (ts, vs, d) = (t:ts, VVar d:vs, d + 1)
-
-lookupTy :: Cxt -> Int -> Type
-lookupTy (ts, vs, d) i = ts !! (d - i - 1)
+(<::) t (vs, ts, d) = (VVar d:vs, t:ts, d + 1)
 
 ($$) :: Val -> Val -> Val
 ($$) (VLam _ f) x = f x
 ($$) f          x = VApp f x
 infixl 9 $$
 
-quoteTC :: Cxt -> TC -> Check Term
-quoteTC (_, _, d) = go d where
-  go d (Ok ty)        = pure $ quote' d ty
-  go d (CheckLam a b) = Pi (quote' d a) <$> (go (d + 1) =<< b (VVar d))
+quoteInfer :: Int -> Infer -> TM Term
+quoteInfer d = \case
+  Ok ty        -> pure $ quote d ty
+  InferLam a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
 
-quote :: Cxt -> Val -> Term
-quote (_, _, d) = quote' d
+eval :: [Val] -> Int -> Term -> Val
+eval vs d = \case
+  Var i   -> vs !! (d - i - 1)
+  App f x -> eval vs d f $$ eval vs d x
+  Lam a t -> VLam (eval vs d a) $ \v -> eval (v:vs) (d + 1) t
+  Pi  a b -> VPi  (eval vs d a) $ \v -> eval (v:vs) (d + 1) b
+  Star    -> VStar
 
-quote' :: Int -> Val -> Term
-quote' d = \case
+quote :: Int -> Val -> Term
+quote d = \case
   VVar i   -> Var i
-  VApp f x -> App (quote' d f) (quote' d x)
-  VLam a t -> Lam (quote' d a) (quote' (d + 1) (t (VVar d)))
-  VPi  a b -> Pi  (quote' d a) (quote' (d + 1) (b (VVar d)))
+  VApp f x -> App (quote d f) (quote d x)
+  VLam a t -> Lam (quote d a) (quote (d + 1) (t (VVar d)))
+  VPi  a b -> Pi  (quote d a) (quote (d + 1) (b (VVar d)))
   VStar    -> Star
 
-eval :: Cxt -> Term -> Val
-eval (ts, vs, d) = go vs d where
-  go vs !d = \case
-    Var i   -> vs !! (d - i - 1)
-    App f x -> go vs d f $$ go vs d x
-    Lam a t -> VLam (go vs d a) $ \v -> go (v:vs) (d + 1) t
-    Pi  a t -> VPi  (go vs d a) $ \v -> go (v:vs) (d + 1) t
-    Star    -> VStar
+check :: Cxt -> Term -> Term -> TM ()
+check cxt@(_, _, d) t expect = do
+  tt <- quoteInfer d =<< infer cxt t
+  unless (tt == expect) $ Left "type mismatch"
 
-check :: Cxt -> Term -> Term -> Check ()
-check cxt t ty = do
-  tt <- quoteTC cxt =<< infer cxt t
-  unless (tt == ty) $ Left "type mismatch"
-
-infer :: Cxt -> Term -> Check TC
-infer cxt@(ts, vs, d) = \case
+infer :: Cxt -> Term -> TM Infer
+infer cxt@(vs, ts, d) = \case
   Var i   -> pure $ Ok (ts !! (d - i - 1))
   Star    -> pure $ Ok VStar
   Lam a t -> do
     check cxt a Star
-    let a' = eval cxt a
-    pure $ CheckLam a' $ \v -> infer ((a', v) <: cxt) t
+    let a' = eval vs d a
+    pure $ InferLam a' $ \v -> infer ((v, a') <: cxt) t
   Pi a b -> do
     check cxt a Star
-    check (eval cxt a <:: cxt) b Star
+    check (eval vs d a <:: cxt) b Star
     pure $ Ok VStar
   App f x ->
     infer cxt f >>= \case
-      CheckLam a b -> do
-        check cxt x (quote cxt a)
-        b (eval cxt x)
+      InferLam a b -> do
+        check cxt x (quote d a)
+        b (eval vs d x)
       Ok (VPi a b) -> do
-        check cxt x (quote cxt a)
-        pure $ Ok $ b (eval cxt x)
+        check cxt x (quote d a)
+        pure $ Ok $ b (eval vs d x)
       _ -> Left "Can't apply non-function"
 
 
@@ -101,7 +94,7 @@ infer cxt@(ts, vs, d) = \case
 -- Sugar & examples
 --------------------------------------------------------------------------------
 
--- Be careful with strictness and ill-typed code when writing HOAS.
+-- Be careful with strictness and ill-typed code when writing HOAS terms.
 -- 'infer0' reduces to normal form before checking,
 -- which may lead to nontermination or excessive computation.
 
@@ -129,17 +122,17 @@ pretty prec = go (prec /= 0) where
 instance Show Term where
   showsPrec = pretty
 
-infer0 :: Term -> Check Term
-infer0 = quoteTC cxt0 <=< infer cxt0
+infer0 :: Term -> TM Term
+infer0 = quoteInfer 0 <=< infer cxt0
 
 quote0 :: Val -> Term
-quote0 = quote cxt0
+quote0 = quote 0
 
-infer0' :: Val -> Check Term
+infer0' :: Val -> TM Term
 infer0' = infer0 . quote0
 
-eval0' :: Val -> Check Term
-eval0' v = quote cxt0 v <$ infer0 (quote cxt0 v)
+eval0' :: Val -> TM Term
+eval0' v = quote0 v <$ infer0 (quote0 v)
 
 pi          = VPi
 lam         = VLam

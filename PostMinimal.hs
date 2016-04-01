@@ -25,7 +25,7 @@ data Infer
 
 type Type  = Val
 type Cxt   = ([Val], [Type], Int)
-type TM = Either String
+type TM    = Either String
 
 cxt0 :: Cxt
 cxt0 = ([], [], 0)
@@ -43,7 +43,7 @@ infixl 9 $$
 
 quoteInfer :: Int -> Infer -> TM Term
 quoteInfer d = \case
-  Ok ty        -> pure $ quote d ty
+  Ok ty   -> pure $ quote d ty
   IPi a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
 
 eval :: [Val] -> Int -> Term -> Val

@@ -4,7 +4,7 @@
 
 In the well-known [Simply Easy!](https://www.andres-loeh.de/LambdaPi/LambdaPi.pdf) tutorial, a minimal dependent type checker is presented that uses NBE (normalization by evaluation) with a [HOAS](https://en.wikipedia.org/wiki/Higher-order_abstract_syntax) representation for terms. However, as Danny Gratzer [bemoaned](http://jozefg.bitbucket.org/posts/2014-11-22-bidir.html), we still have to use explicit substitution when going under binders. Fortunately, it turns out we can get rid of substitution altogether.
 
-Consider a simple dependent language with variables as de Bruijn levels:
+Consider a simple dependent language with variables as de Bruijn levels (but we could switch to de Bruijn indices with minimal effort).
 
 ```haskell
 data Term

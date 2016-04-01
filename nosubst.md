@@ -191,5 +191,8 @@ We're also quite free to handle "free" or "bound" variables as we like, since he
 
 If we ditch de Bruijn names altogether, we still only need a moderate amount of extra effort to implement alpha equality; an example can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Nameful.hs). Since there's no substitution, there's no risk of capture, and no need for renaming. 
 
-We're also not obligated to store HOAS values in the environment, or only store those. We can store raw `Term`-s as well for a variety of purposes (error reporting, checking equality without reduction), and we can access these `Term`-s through `VVar`-s from any extended context, and `eval` or process them. 
+We're also not obligated to store HOAS values in the environment, or only store those. We can store raw `Term`-s as well for a variety of purposes (error reporting, checking equality without reduction), and we can access these `Term`-s through `VVar`-s from any extended context, and `eval` or process them.
+
+Lately I've been reading about [dependent](https://pdfs.semanticscholar.org/0b74/a70ccad7829ad522337f0d3aa2106a59d4ee.pdf) [type inference](https://www.mpi-sws.org/~beta/papers/unicoq.pdf) and [elaboration](http://arxiv.org/pdf/1505.04324v2.pdf), partly because I'd like to understand how it works, partly because I'd like to investiagate whether we can squeeze out more performance, which I believe would be important for adoption of dependently typed magics in practical software development. Next time I'll probably look at higher-order unification, probably still at "toy language" level, and try to find tricks and rationalizations that apply there. 
+
 

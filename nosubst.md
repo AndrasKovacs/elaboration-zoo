@@ -185,7 +185,7 @@ Note that we only ever evaluate type checked terms, as we should, and we recurse
 
 A self-contained source can be found [here](https://github.com/AndrasKovacs/tcbe/blob/master/Minimal.hs). 
 
-It seems to me that there are great advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point. When we put something into the context, by default the rest of the term already has the right `Var`-s pointing to it. 
+It seems to me that there are great advantages to this scheme. First - although I haven't benchmarked yet - this algorithm should be much faster than those with explicit substitutions. Also, I find it very convenient that we have the entire context with values and types at our behest at any point. When we put something into the context, the rest of the term under consideration already contains the right `Var`-s pointing to it. 
 
 We're also quite free to handle free or bound variables, since here there's no fundamental difference between them, and we can mix explicit and de Bruijn names as we like. 
 

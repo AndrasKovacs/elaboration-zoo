@@ -1,14 +1,15 @@
+{-|
+Trying to use first-order closures and Term as much as possible.
+-}
+
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either
-
-import Data.HashMap.Strict (HashMap, (!))
-import qualified Data.HashMap.Strict as HM
-
 import Syntax (RawTerm)
 import qualified Syntax as S
+import qualified Data.HashMap.Strict as HM
 
 data Term
   = Var !Int
@@ -21,51 +22,55 @@ data Term
 data Val
   = VVar !Int
   | VApp Val Val
-  | VLam Type (Val -> Val)
-  | VPi  Type (Val -> Val)
+  | VLam Term [Val] !Int Term
+  | VPi  Term [Val] !Int Term
   | VStar
 
 data Infer
   = Ok Type
-  | IPi Type (Val -> TM Infer)
+  | IPi Term {-# unpack #-} !Cxt Term
 
 type Type  = Val
-type Cxt   = ([Val], [Type], Int)
+type Cxt   = ([Val], [Term], Int)
 type TM    = Either String
 
 cxt0 :: Cxt
 cxt0 = ([], [], 0)
 
-(<:) :: (Val, Type) -> Cxt -> Cxt
+(<:) :: (Val, Term) -> Cxt -> Cxt
 (<:) (v, t) (vs, ts, d) = (v:vs, t:ts, d + 1)
 
-(<::) :: Type -> Cxt -> Cxt
+(<::) :: Term -> Cxt -> Cxt
 (<::) t (vs, ts, d) = (VVar d:vs, t:ts, d + 1)
 
 vapp :: Val -> Val -> Val
-vapp (VLam _ f) x = f x
-vapp f          x = VApp f x
+vapp (VLam _ vs d t) x = whnf (x:vs) (d + 1) t
+vapp f               x = VApp f x
 
 quoteInfer :: Int -> Infer -> TM Term
 quoteInfer d = \case
-  Ok ty   -> pure $ quote d ty
-  IPi a b -> Pi (quote d a) <$> (quoteInfer (d + 1) =<< b (VVar d))
+  Ok ty -> pure $ quote d ty
+  IPi a cxt@(vs, ts, d') b ->
+    Pi (nf vs d d' a) <$> (quoteInfer (d + 1) =<< infer ((VVar d, a) <: cxt) b)
 
-eval :: [Val] -> Int -> Term -> Val
-eval vs d = \case
+whnf :: [Val] -> Int -> Term -> Val
+whnf vs d = \case
   Var i   -> vs !! (d - i - 1)
-  App f x -> eval vs d f `vapp` eval vs d x
-  Lam a t -> VLam (eval vs d a) $ \v -> eval (v:vs) (d + 1) t
-  Pi  a b -> VPi  (eval vs d a) $ \v -> eval (v:vs) (d + 1) b
+  App f x -> whnf vs d f `vapp` whnf vs d x
+  Lam a t -> VLam a vs d t
+  Pi  a b -> VPi  a vs d b
   Star    -> VStar
+
+nf :: [Val] -> Int -> Int -> Term -> Term
+nf vs d d' = quote d . whnf vs d'
 
 quote :: Int -> Val -> Term
 quote d = \case
-  VVar i   -> Var i
-  VApp f x -> App (quote d f) (quote d x)
-  VLam a t -> Lam (quote d a) (quote (d + 1) (t (VVar d)))
-  VPi  a b -> Pi  (quote d a) (quote (d + 1) (b (VVar d)))
-  VStar    -> Star
+  VVar i         -> Var i
+  VApp f x       -> App (quote d f) (quote d x)
+  VLam a vs d' t -> Lam (nf vs d d' a) (quote (d + 1) (whnf (VVar d:vs) (d' + 1) t))
+  VPi  a vs d' b -> Pi  (nf vs d d' a) (quote (d + 1) (whnf (VVar d:vs) (d' + 1) b))
+  VStar          -> Star
 
 check :: Cxt -> Term -> Term -> TM ()
 check cxt@(_, _, d) t expect = do
@@ -74,27 +79,24 @@ check cxt@(_, _, d) t expect = do
 
 infer :: Cxt -> Term -> TM Infer
 infer cxt@(vs, ts, d) = \case
-  Var i   -> pure $ Ok (ts !! (d - i - 1))
+  Var i   -> pure $ Ok $ whnf (drop (d - i) vs) i (ts !! (d - i - 1))
   Star    -> pure $ Ok VStar
   Lam a t -> do
     check cxt a Star
-    let a' = eval vs d a
-    pure $ IPi a' $ \v -> infer ((v, a') <: cxt) t
+    pure $ IPi a cxt t
   Pi a b -> do
     check cxt a Star
-    check (eval vs d a <:: cxt) b Star
+    check (a <:: cxt) b Star
     pure $ Ok VStar
   App f x ->
     infer cxt f >>= \case
-      IPi a b -> do
-        check cxt x (quote d a)
-        b (eval vs d x)
-      Ok (VPi a b) -> do
-        check cxt x (quote d a)
-        pure $ Ok $ b (eval vs d x)
+      IPi a cxt'@(vs', ts', d') b -> do
+        check cxt x (nf vs' d d' a)
+        infer ((whnf vs d x, a) <: cxt') b
+      Ok (VPi a vs' d' b) -> do
+        check cxt x (nf vs' d d' a)
+        pure $ Ok $ whnf (whnf vs d x: vs') (d' + 1) b
       _ -> Left "Can't apply non-function"
-
-
 
 -- Sugar & examples
 --------------------------------------------------------------------------------
@@ -131,8 +133,8 @@ instance Show Term where
 infer0 :: RawTerm -> TM Term
 infer0 = quoteInfer 0 <=< infer cxt0 . fromRaw
 
-eval0 :: RawTerm -> TM Term
-eval0 v = quote 0 (eval [] 0 $ fromRaw v) <$ infer0 v
+nf0 :: RawTerm -> TM Term
+nf0 v = quote 0 (whnf [] 0 $ fromRaw v) <$ infer0 v
 
 pi            = S.Pi
 lam           = S.Lam

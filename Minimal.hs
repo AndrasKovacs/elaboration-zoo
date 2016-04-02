@@ -1,8 +1,14 @@
-{-# language BangPatterns, LambdaCase #-}
+{-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either
+
+import Data.HashMap.Strict (HashMap, (!))
+import qualified Data.HashMap.Strict as HM
+
+import Syntax (RawTerm)
+import qualified Syntax as S
 
 data Term
   = Var !Int
@@ -36,10 +42,9 @@ cxt0 = ([], [], 0)
 (<::) :: Type -> Cxt -> Cxt
 (<::) t (vs, ts, d) = (VVar d:vs, t:ts, d + 1)
 
-($$) :: Val -> Val -> Val
-($$) (VLam _ f) x = f x
-($$) f          x = VApp f x
-infixl 9 $$
+vapp :: Val -> Val -> Val
+vapp (VLam _ f) x = f x
+vapp f          x = VApp f x
 
 quoteInfer :: Int -> Infer -> TM Term
 quoteInfer d = \case
@@ -49,7 +54,7 @@ quoteInfer d = \case
 eval :: [Val] -> Int -> Term -> Val
 eval vs d = \case
   Var i   -> vs !! (d - i - 1)
-  App f x -> eval vs d f $$ eval vs d x
+  App f x -> eval vs d f `vapp` eval vs d x
   Lam a t -> VLam (eval vs d a) $ \v -> eval (v:vs) (d + 1) t
   Pi  a b -> VPi  (eval vs d a) $ \v -> eval (v:vs) (d + 1) b
   Star    -> VStar
@@ -119,69 +124,73 @@ pretty prec = go (prec /= 0) where
   go p Star      = ('*':)
   go p (Pi a b)  = showParen p (go True a . (" -> "++) . go False b)
 
+fromRaw :: RawTerm -> Term
+fromRaw = go HM.empty 0 where
+  go m !d (S.Var v)     = Var (m HM.! v)
+  go m d  (S.Lam v a t) = Lam (go m d a) (go (HM.insert v d m) (d + 1) t)
+  go m d  (S.Pi  v a t) = Pi  (go m d a) (go (HM.insert v d m) (d + 1) t)
+  go m d  (S.App f x)   = App (go m d f) (go m d x)
+  go m d  S.Star        = Star
+
 instance Show Term where
   showsPrec = pretty
 
-infer0 :: Term -> TM Term
-infer0 = quoteInfer 0 <=< infer cxt0
+infer0 :: RawTerm -> TM Term
+infer0 = quoteInfer 0 <=< infer cxt0 . fromRaw
 
-quote0 :: Val -> Term
-quote0 = quote 0
+eval0 :: RawTerm -> TM Term
+eval0 v = quote 0 (eval [] 0 $ fromRaw v) <$ infer0 v
 
-infer0' :: Val -> TM Term
-infer0' = infer0 . quote0
+pi            = S.Pi
+lam           = S.Lam
+star          = S.Star
+forAll a b    = lam a star b
+let' k ty x e = lam k ty e $$ x
+infixl 9 $$
+($$) = S.App
 
-eval0' :: Val -> TM Term
-eval0' v = quote0 v <$ infer0 (quote0 v)
-
-pi          = VPi
-lam         = VLam
-star        = VStar
-forAll      = lam star
-let' ty x e = lam ty e $$ x
-
-(==>) a b = pi a (const b)
+(==>) a b = pi "" a b
 infixr 8 ==>
 
-id'    = forAll $ \a -> lam a $ \x -> x
-const' = forAll $ \a -> forAll $ \b -> lam a $ \x -> lam b $ \_ -> x
+id'    = forAll "a" $ lam "x" "a" $ "x"
+const' = forAll "a" $ forAll "b" $ lam "x" "a" $ lam "y" "b" $ "x"
 
 compose =
-  forAll $ \a ->
-  forAll $ \b ->
-  forAll $ \c ->
-  lam (b ==> c) $ \f ->
-  lam (a ==> b) $ \g ->
-  lam a $ \x ->
-  f $$ (g $$ x)
+  forAll "a" $
+  forAll "b" $
+  forAll "c" $
+  lam "f" ("b" ==> "c") $
+  lam "g" ("a" ==> "b") $
+  lam "x" "a" $
+  "f" $$ ("g" $$ "x")
 
-nat = pi star $ \a -> (a ==> a) ==> a ==> a
+nat = pi "a" star $ ("a" ==> "a") ==> "a" ==> "a"
 
-z = forAll $ \a ->
-    lam (a ==> a) $ \s ->
-    lam a $ \z ->
-    z
+z = forAll "a" $
+    lam "s" ("a" ==> "a") $
+    lam"z" "a"
+    "z"
 
-s = lam nat $ \n ->
-    forAll $ \a ->
-    lam (a ==> a) $ \s ->
-    lam a $ \z ->
-    s $$ (n $$ a $$ s $$ z)
+s = lam "n" nat $
+    forAll "a" $
+    lam "s" ("a" ==> "a") $
+    lam "z" "a" $
+    "s" $$ ("n" $$ "a" $$ "s" $$ "z")
 
 add =
-  lam nat $ \a ->
-  lam nat $ \b ->
-  forAll $ \r ->
-  lam (r ==> r) $ \s ->
-  lam r $ \z ->
-  a $$ r $$ s $$ (b $$ r $$ s $$ z)
+  lam "a" nat $
+  lam "b" nat $
+  forAll "r" $
+  lam "s" ("r" ==> "r") $
+  lam "z" "r" $
+  "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z")
 
 mul =
-  lam nat $ \a ->
-  lam nat $ \b ->
-  forAll $ \r ->
-  lam (r ==> r) $ \s ->
-  a $$ r $$ (b $$ r $$ s)
+  lam "a" nat $
+  lam "b" nat $
+  forAll "r" $
+  lam "s" ("r" ==> "r") $
+  "a" $$ "r" $$ ("b" $$ "r" $$ "s")
 
 two = s $$ (s $$ z)
 five = s $$ (s $$ (s $$ (s $$ (s $$ z))))
@@ -189,45 +198,42 @@ ten = add $$ five $$ five
 hundred = mul $$ ten $$ ten
 
 nFunTy =
-  lam nat $ \n ->
-  n $$ star $$ (lam star $ \t -> star ==> t) $$ star
+  lam "n" nat $
+  "n" $$ star $$ (lam "t" star $ star ==> "t") $$ star
 
 nFun =
-  lam nat $ \n ->
-  lam (nFunTy $$ n) $ \f ->
+  lam "n" nat $
+  lam "f" (nFunTy $$ "n") $
   star
 
-list = forAll $ \a -> pi star $ \r -> (a ==> r ==> r) ==> r ==> r
+list = forAll "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r"
 
-nil  = forAll $ \a -> forAll $ \r -> lam (a ==> r ==> r) $ \c -> lam r $ \n -> n
+nil = forAll "a" $ forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
 
 cons =
-  forAll $ \a ->
-  lam a $ \x ->
-  lam (list $$ a) $ \xs ->
-  forAll $ \r ->
-  lam (a ==> r ==> r) $ \c ->
-  lam r $ \n ->
-  c $$ x $$ (xs $$ r $$ c $$ n)
+   forAll "a" $
+   lam "x" "a" $
+   lam "xs" (list $$ "a") $
+   forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $
+   "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n")
 
 map' =
-  forAll $ \a ->
-  forAll $ \b ->
-  lam (a ==> b) $ \f ->
-  lam (list $$ a) $ \as ->
-  as $$ (list $$ b) $$
-    (lam a $ \x -> lam (list $$ b) $ \xs -> cons $$ b $$ (f $$ x) $$ xs) $$
-    (nil $$ b)
+  forAll "a" $
+  forAll "b" $
+  lam "f" ("a" ==> "b") $
+  lam "as" (list $$ "a") $
+  "as" $$ (list $$ "b") $$
+    (lam "x" "a" $ lam "xs" (list $$ "b") $ cons $$ "b" $$ ("f" $$ "x") $$ "xs") $$
+    (nil $$ "b")
 
-sum' =
-  lam (list $$ nat) $ \xs ->
-  xs $$ nat $$ add $$ z
+sum' = lam "xs" (list $$ nat) $ "xs" $$ nat $$ add $$ z
 
 natList = let c = cons $$ nat; n = nil $$ nat in
   c $$ z $$ (c $$ five $$ (c $$ ten $$ n))
 
-test = all (isRight . infer0')
+test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
+
 
 

@@ -1,5 +1,5 @@
 {-|
-As effectfully pointed out, infering types for annotated lambdas is the only place
+As 'effectfully' pointed out, infering types for annotated lambdas is the only place
 where we need substitution or closures. If we only check but not infer lambdas, there's
 no need for Infer.
 

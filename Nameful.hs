@@ -2,6 +2,10 @@
 This version doesn't use de Bruijn names.
 The only significant change from dB is that we need to implement
 alpha equality explicitly
+
+Note: it seems that this algorithm is similar to Coquand's:
+http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.50.8898
+
 -}
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}

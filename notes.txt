@@ -1,0 +1,8 @@
+
+- First-order closures for Val-s seem the best idea
+- Unfolding and rewrites on closures
+- Non-reducing equality checks on closures
+- How to infer unreduced Term and Type at the same time ("Glued" representation)
+- Globals vs locals (scope closures everywhere a good idea?)
+
+

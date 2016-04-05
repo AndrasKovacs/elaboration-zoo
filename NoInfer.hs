@@ -9,6 +9,8 @@ https://www.reddit.com/r/dependent_types/comments/4cvbkm/dependent_type_checking
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
+module NoInfer where
+
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either

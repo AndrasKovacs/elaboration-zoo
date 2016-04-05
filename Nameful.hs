@@ -10,6 +10,8 @@ http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.50.8898
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
+module Nameful where
+
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either

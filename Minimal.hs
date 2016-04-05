@@ -1,5 +1,7 @@
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
+module Minimal where
+
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either
@@ -227,6 +229,5 @@ natList = let c = cons $$ nat; n = nil $$ nat in
 test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
-
 
 

@@ -4,6 +4,8 @@ Trying to use first-order closures and Term as much as possible.
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
+module Closure where
+
 import Prelude hiding (pi)
 import Control.Monad
 import Data.Either

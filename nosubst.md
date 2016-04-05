@@ -1,5 +1,7 @@
 #### Dependent type checking without substitution
 
+Update: I learned of several important things in the related [reddit discussion](https://www.reddit.com/r/dependent_types/comments/4cvbkm/dependent_type_checking_without_substitution/), and I will revise the content below when I have the time.
+
 *Summary: interleaving normalization-by-evaluation and type checking gets us an algorithm that is extremely efficient, simple and obviously structurally recursive.*
 
 In the well-known [Simply Easy!](https://www.andres-loeh.de/LambdaPi/LambdaPi.pdf) tutorial, a minimal dependent type checker is presented that uses NbE (normalization by evaluation) with a [HOAS](https://en.wikipedia.org/wiki/Higher-order_abstract_syntax) representation for terms. However, as Danny Gratzer [bemoaned](http://jozefg.bitbucket.org/posts/2014-11-22-bidir.html), we still have to use explicit substitution when going under binders. Fortunately, it turns out we can get rid of substitution altogether - at least in the following small language.

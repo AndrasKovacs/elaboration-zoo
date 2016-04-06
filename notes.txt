@@ -5,4 +5,21 @@
 - How to infer unreduced Term and Type at the same time ("Glued" representation)
 - Globals vs locals (scope closures everywhere a good idea?)
 
+- Problem to solve: find "common ancestral" closure of two arbitrary closures
+  - Necessary for lots of operations on unreduced terms in closures.
+  - most simply: in the case of de Bruijn levels
+    - We can get a 8 size closure by applying 4 arguments to a function in 4-size closure
+      or by having a value in a 8-size closure - how do we know which variable points to common environment?
+    - How can we systematically record ancestry/inclusion of environments?
+    - Unsatisfactory solutions:
+      - 1. Only work with whnf or nf. In this case, resolving substitutions eliminates closure dependency and ambiguity.
+        - Why not good: we'd like to avoid unfolding when possible
+      - 2. Assume a special immutable environment with unambiguous references within type checking scope ("top level constants")
+           "Top level" references are unambiguous, therefore can be used in unfolded state. This strategy is probably employed by
+            real-world type checkers to some degree.
+        - Why not good:
+          - we should try solving the most general case first and see if there's something to be learned
+
+
+
 

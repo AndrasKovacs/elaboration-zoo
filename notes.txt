@@ -20,6 +20,14 @@
         - Why not good:
           - we should try solving the most general case first and see if there's something to be learned
 
+    - Dirty solution:
+       semidecide equality of unreduced references by unsafePtrEquality of context entries:
+       if yes, then hurray!, if no, then unfold and recheck
+         - actually, this seems to be pretty nifty to me!
+         - For pretty printing and reporting we don't need to know anything about env structure, we can just use
+           the names we have.
+         - Unreduced reference equality is "just" an optimization, and for that ptr equality is morally okay.
 
+- Question: merge operations + evaling as much as possible
 
 

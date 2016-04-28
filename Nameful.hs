@@ -31,9 +31,16 @@ data Val
   = VVar String
   | BVar !Int  -- "bound" variable, only used for alpha equality check
   | VApp Val Val
-  | VLam String Type (Val -> Val)
-  | VPi  String Type (Val -> Val)
+  | VLam String Type (Val -> Val)   -- VLam String Type (Env, Term)
+  | VPi  String Type (Val -> Val)   -- 
   | VStar
+
+-- case (f x y) of
+--   a -> 
+--   a ->
+
+    
+    
 
 data Infer
   = Ok Type

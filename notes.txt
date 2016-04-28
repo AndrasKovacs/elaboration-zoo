@@ -1,8 +1,18 @@
 
-- First-order closures for Val-s seem the best idea
+PRIOR ART:
+
+  - Coquand's algorithm:
+      www.cse.chalmers.se/~coquand/type.ps
+  - Chapman's thesis chapter 2:
+      https://jmchapman.github.io/papers/thesis.pdf
+  - Larry Diehl:
+      "Expressionless Weak-Head normal forms" : http://www.larrytheliquid.com/
+  - Epigram reloaded:
+      http://www.cs.nott.ac.uk/~psztxa/publ/checking.pdf
+
+- First-order closures for Val-s seem the best idea (Larry Diehl: "reduction via environment machines")
 - Unfolding and rewrites on closures
-- Non-reducing equality checks on closures
-- How to infer unreduced Term and Type at the same time ("Glued" representation)
+- How to infer unreduced Term and Type at the same time ("Glued" representation, e. g. in Epigram Reloaded)
 - Globals vs locals (scope closures everywhere a good idea?)
 
 - Problem to solve: find "common ancestral" closure of two arbitrary closures
@@ -19,6 +29,10 @@
             real-world type checkers to some degree.
         - Why not good:
           - we should try solving the most general case first and see if there's something to be learned
+      - 3. Extend de Bruijn indices to de Bruijn "path"-s (or: globally unique names of binders with "path" structure)
+           which lets us decide whether any two var points to the same context entry
+           - problem: could be slow and/or unwieldy
+           - worth a look though
 
     - Dirty solution:
        semidecide equality of unreduced references by unsafePtrEquality of context entries:
@@ -28,6 +42,14 @@
            the names we have.
          - Unreduced reference equality is "just" an optimization, and for that ptr equality is morally okay.
 
-- Question: merge operations + evaling as much as possible
+Closures: what should they contain:
+  - Option 1: only the vars that are free in the inner term
+    - Pros : small closures
+    - Cons : or maybe not; we have good sharing if our closures are big and all-encompassing
+             and mostly the same, and bad sharing if we custom-tailor each closure
+  - Option 2: closures always contain all lexically visible bindings
+
+  - Lazy loading? Suppose a module exports a single public function which references tons of private
+    names in its body. We wouldn't want to load everything transitively, or do we? 
 
 

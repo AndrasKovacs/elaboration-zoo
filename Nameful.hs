@@ -35,13 +35,6 @@ data Val
   | VPi  String Type (Val -> Val)   -- 
   | VStar
 
--- case (f x y) of
---   a -> 
---   a ->
-
-    
-    
-
 data Infer
   = Ok Type
   | IPi String Type (Val -> TM Infer)

@@ -4,7 +4,7 @@ Trying to use first-order closures and Term as much as possible.
 
 {-# language BangPatterns, LambdaCase, OverloadedStrings #-}
 
-module Closure where
+module Closures where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -232,5 +232,4 @@ test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
 
-
-
+       

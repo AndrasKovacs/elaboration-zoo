@@ -115,7 +115,7 @@ pretty prec = go (prec /= 0) where
   go :: Bool -> Term -> ShowS
   go p (Var i)   = (show i++)
   go p (App f x) = showParen p (unwords' $ map (go True) (spine f x))
-  go p (Lam a t) = showParen p (("λ "++) . go True a . (" -> "++) . go False t)
+  go p (Lam a t) = showParen p (("\\ "++) . go True a . (" -> "++) . go False t)
   go p Star      = ('*':)
   go p (Pi a b)  = showParen p (go True a . (" -> "++) . go False b)
 
@@ -229,5 +229,20 @@ natList = let c = cons $$ nat; n = nil $$ nat in
 test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
+
+tenK = mul $$ hundred $$ hundred
+million = mul $$ hundred $$ tenK
+
+-- reduction-heavy example
+stress =
+  lam "x" (nFunTy $$ million) $
+  cons $$ (nFunTy $$ million) $$ "x" $$
+  (nil $$ (nFunTy $$ million))
+
+
+
+
+
+
 
 

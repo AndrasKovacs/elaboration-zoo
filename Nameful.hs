@@ -32,7 +32,7 @@ data Val
   | BVar !Int  -- "bound" variable, only used for alpha equality check
   | VApp Val Val
   | VLam String Type (Val -> Val)   -- VLam String Type (Env, Term)
-  | VPi  String Type (Val -> Val)   -- 
+  | VPi  String Type (Val -> Val)   --
   | VStar
 
 data Infer
@@ -263,4 +263,13 @@ natList = let c = cons $$ nat; n = nil $$ nat in
 test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
+
+tenK = mul $$ hundred $$ hundred
+million = mul $$ hundred $$ tenK
+
+-- reduction-heavy example
+stress =
+  lam "x" (nFunTy $$ million) $
+  cons $$ (nFunTy $$ million) $$ "x" $$
+  (nil $$ (nFunTy $$ million))
 

@@ -3,10 +3,14 @@
 {-# language DataKinds, GADTs, TypeFamilies, MagicHash #-}
 {-# language PatternSynonyms #-}
 
+{-# options_ghc -fwarn-incomplete-patterns #-}
+
 module Glued where
 
 import Prelude hiding (pi)
 import Control.Monad
+import Control.Applicative
+import Control.Monad.Except
 import Data.Either
 import GHC.Prim (reallyUnsafePtrEquality#)
 import GHC.Types (isTrue#)
@@ -21,127 +25,145 @@ ptrEq :: a -> a -> Bool
 ptrEq x y = isTrue# (reallyUnsafePtrEquality# x y)
 {-# inline ptrEq #-}
 
-data Term
-  = Neu !String [Term] -- ^ Spines.
-  | Lam !String Type Term
-  | Pi !String Type Term
-  | Star
-  | Close_ {-# unpack #-} !Closure -- ^ Doesn't appear in raw terms.
-  | Ann Term Type
+-- Data
+--------------------------------------------------------------------------------
 
-data Val
-  = VLam !String Type {-# unpack #-} !Closure
-  | VPi  !String Type {-# unpack #-} !Closure
+-- Concrete
+type QType = QTerm
+data QTerm
+  = QVar !String
+  | QApp QTerm QTerm
+  | QPi !String QType QTerm
+  | QLam !String QTerm
+  | QStar
+  | QAnn QTerm QType
+
+-- Abstract
+type AType = ATerm
+data ATerm
+  = AVar !String
+  | AApp ATerm ATerm -- ^ We can apply to 'Pi' as well.
+  | APi !String AType ATerm
+  | ALam !String AType ATerm
+  | AStar
+  | Close {-# unpack #-} !Closure
+
+-- Weak head normal
+data Whnf
+  = VVar !String
+  | Alpha !Int
+  | VApp Whnf Whnf
+  | VPi  !String !AType {-# unpack #-} !Closure
+  | VLam !String !AType {-# unpack #-} !Closure
   | VStar
-  | VNeu !Int [Val] -- ^ This can be only an alpha-check var
 
-pattern Close env t = Close_ (Closure env t)
-
-type Type = Term
-
-data Closure = Closure {
+data Closure = C {
   _env  :: !Env,
-  _body :: Term }
+  _body :: !ATerm }
 
-data Glued = Glued {
+data Glued = G {
   _unreduced :: {-# unpack #-} !Closure,
-  _whnf      :: Val }
+  _whnf      :: Whnf }
 
-data Entry
-  = Entry {
-    _term :: {-# unpack #-} !Glued,
-    _type :: {-# unpack #-} !Glued }
-  | Bound !Int {-# unpack #-} !Glued -- ^ for alpha-eq checking (with Glued type)
+data Entry = E {
+  _term :: {-# unpack #-} !Glued,
+  _type :: {-# unpack #-} !Glued }
 
 type Env = HashMap String Entry
 type TM  = Either String
 
--- whnf
+-- Reduction
 --------------------------------------------------------------------------------
 
-glued :: Env -> Term -> Glued
-glued e t = Glued (Closure e t) (whnf e t)
+glued :: Env -> ATerm -> Glued
+glued e t = G (C e t) (whnf e t)
 
-whnfNeu :: Env -> String -> [Term] -> Val
-whnfNeu e v args = case e ! v of
-  Entry t ty -> go e (_whnf t) args
-  Bound i _  -> VNeu i (map (whnf e) args)
-  where
-    go e f []     = f
-    go e f (x:xs) = case f of
-      VLam v ty (Closure e' t) ->
-        go e (whnf (M.insert v (Entry (glued e x) (glued e ty)) e') t) xs
-      VNeu v args -> VNeu v (args ++ map (whnf e) (x:xs))
-
-whnf :: Env -> Term -> Val
+whnf :: Env -> ATerm -> Whnf
 whnf e = \case
-  Neu v args -> whnfNeu e v args
-  Lam v ty t -> VLam v ty (Closure e t)
-  Pi  v ty t -> VPi  v ty (Closure e t)
-  Ann t ty   -> whnf e  t
-  Close e' t -> whnf e' t
-  Star       -> VStar
+  AApp f x -> case whnf e f of
+    VLam v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
+    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
+    f'                 -> VApp f' (whnf e x)
+  AVar v         -> _whnf $ _term $ e ! v
+  APi  v ty t    -> VPi  v ty (C e t)
+  ALam v ty t    -> VLam v ty (C e t)
+  AStar          -> VStar
+  Close (C e' t) -> whnf e' t
 
-bound :: Int -> Env -> Type -> Entry
-bound b e ty = Bound b (glued e ty)
+quoteVar :: Env -> String -> AType -> Entry
+quoteVar e v ty = E (G (C e (AVar v)) (VVar v)) (glued e ty)
+
+-- TODO: eta-expansion
+alpha :: Int -> Env -> AType -> Entry
+alpha a e ty = E (G (C e (error "alpha")) (Alpha a)) (glued e ty)
+
+nf :: Env -> ATerm -> ATerm
+nf e t = quote (whnf e t)
+
+quote :: Whnf -> ATerm
+quote = \case
+  VVar v            -> AVar v
+  VApp f x          -> AApp (quote f) (quote x)
+  VPi  v ty (C e t) -> APi  v (nf e ty) (nf (M.insert v (quoteVar e v ty) e) t)
+  VLam v ty (C e t) -> ALam v (nf e ty) (nf (M.insert v (quoteVar e v ty) e) t)
+  VStar             -> AStar
+  Alpha{}           -> error "quote: Alpha in Whnf"
+
 
 -- Equality without reduction
 --------------------------------------------------------------------------------
 
--- | Semidecide variable equality.
-varEq :: Env -> Env -> String -> String -> Bool
-varEq e e' v v' = case (e ! v, e' ! v') of
-  (Bound i _, Bound i' _) -> i == i'
-  (x        , y         ) -> ptrEq x y
+termSemiEq :: Env -> Env -> Int -> ATerm -> ATerm -> Maybe Bool
+termSemiEq e e' !b t t' = case (t, t') of
 
--- | Semidecide neutral term equality.
-neutralEq :: Env -> Env -> Int -> String -> String -> [Term] -> [Term] -> Bool
-neutralEq e e' !b v v' args args' =
-  varEq e e' v v' && maybe False and (zipWithM (termEq e e' b) args args')
+  (AVar v, AVar v') -> case (_whnf $ _term $ e ! v, _whnf $ _term $ e' ! v') of
+    (Alpha b, Alpha b') -> Just (b == b')
+    (x      , y       ) -> True <$ guard (ptrEq x y)
+  (AVar{}, _) -> Nothing
+  (_, AVar{}) -> Nothing
 
--- | Try to decide unreduced term equality, or fall back to semidecision for
---   neutral terms.
-termEq :: Env -> Env -> Int -> Term -> Term -> Maybe Bool
-termEq e e' b t t' = case (t, t') of
-  (Neu v args, Neu v' args')  -> True <$ guard (neutralEq e e' b v v' args args')
-  (Lam v ty t, Lam v' ty' t') -> (&&) <$> termEq e e' b ty ty' <*>
-    (let bnd = bound b e ty in termEq (M.insert v bnd e) (M.insert v' bnd e') (b + 1) t t')
-  (Pi  v ty t, Pi  v' ty' t') -> (&&) <$> termEq e e' b ty ty' <*>
-    (let bnd = bound b e ty in termEq (M.insert v bnd e) (M.insert v' bnd e') (b + 1) t t')
-  (Star, Star)                -> Just True
+  (AApp f x, AApp f' x') ->
+    True <$ do {guard =<< termSemiEq e e' b f f'; guard =<< termSemiEq e e' b x x'}
+  (AApp{}, _) -> Nothing
+  (_, AApp{}) -> Nothing
 
-  (Ann t ty, t')   -> termEq e e' b t t'
-  (t, Ann t' ty')  -> termEq e e' b t t'
-  (Close e t, t')  -> termEq e e' b t t'
-  (t, Close e' t') -> termEq e e' b t t'
+  (ALam v ty t, ALam v' ty' t') -> (&&) <$> termSemiEq e e' b ty ty' <*>
+    (let al = alpha b e ty in termSemiEq (M.insert v al e) (M.insert v' al e') (b + 1) t t')
+  (APi  v ty t, APi  v' ty' t') -> (&&) <$> termSemiEq e e' b ty ty' <*>
+    (let al = alpha b e ty in termSemiEq (M.insert v al e) (M.insert v' al e') (b + 1) t t')
+  (AStar, AStar) -> Just True
+  _              -> Just False
 
-  _                -> Just False
 
 -- Equality with reduction
 --------------------------------------------------------------------------------
 
--- | Decide equality for whnf terms. Switch to term equality with lazy reduction
---   when going under constructors.
-whnfEq :: Int -> Val -> Val -> Bool
+whnfEq :: Int -> Whnf -> Whnf -> Bool
 whnfEq !b t t' = case (t, t') of
-  (VNeu v args, VNeu v' args') -> v == v' && and (zipWith (whnfEq b) args args')
-  (VLam v ty (Closure e t), VLam v' ty' (Closure e' t')) ->
-    reducingEq e e' b ty ty' &&
-    let bnd = bound b e ty
-    in reducingEq (M.insert v bnd e) (M.insert v' bnd e') (b + 1) t t'
-  (VPi v ty (Closure e t), VPi v' ty' (Closure e' t')) ->
-    reducingEq e e' 0 ty ty' &&
-    let bnd = bound b e ty
-    in reducingEq (M.insert v bnd e) (M.insert v' bnd e') (b + 1) t t'
+  (VVar v,   VVar v'   ) -> v == v'
+  (VApp f x, VApp f' x') -> whnfEq b f f' && whnfEq b x x'
+  (VLam v ty (C e t), VLam v' ty' (C e' t')) ->
+    termEq e e' b ty ty' &&
+    let al = alpha b e ty
+    in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
+  (VPi v ty (C e t), VPi v' ty' (C e' t')) ->
+    termEq e e' 0 ty ty' &&
+    let al = alpha b e ty
+    in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
   (VStar, VStar) -> True
   _              -> False
 
--- | If both sides are neutral, try unreduced equality, else reduce to whnf and continue.
-reducingEq :: Env -> Env -> Int -> Term -> Term -> Bool
-reducingEq e e' !b t t' = case (t, t') of
-  (Neu v args, Neu v' args') ->
-       neutralEq e e' b v v' args args'
-    || whnfEq b (whnfNeu e v args) (whnfNeu e v' args')
-  (t, t') -> whnfEq b (whnf e t) (whnf e' t')
+termEq :: Env -> Env -> Int -> ATerm -> ATerm -> Bool
+termEq e e' !b t t' = case (t, t') of
 
+  (AVar v, AVar v') -> case (_whnf $ _term $ e ! v, _whnf $ _term $ e' ! v') of
+    (Alpha b, Alpha b') -> b == b'
+    (x      , y       ) -> ptrEq x y || continue
+
+  (AApp f x, AApp f' x') ->
+    maybe False id (liftA2 (&&) (termSemiEq e e' b f f') (termSemiEq e e' b x x'))
+    || continue
+  _ -> continue
+
+  where continue = whnfEq b (whnf e t) (whnf e' t')
 

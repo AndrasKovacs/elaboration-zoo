@@ -1,8 +1,9 @@
 
-{-# language PatternSynonyms, BangPatterns, MagicHash, LambdaCase #-}
+{-# language PatternSynonyms, BangPatterns, MagicHash, LambdaCase, ViewPatterns #-}
+{-# language OverloadedStrings #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-module Glued where
+module Main where
 
 import Prelude hiding (pi)
 import Data.String
@@ -28,6 +29,7 @@ import Debug.Trace
   - add eta expansion for alpha
   - elaborate values of bottom to common dummy value (eta rule for bottom)
   - drop types from value closures
+     - or : use Glued instead of ATerm in ATerm types
   - use phantom tags for scopes
   - think about saner closure API
   - add let / unannotated lambda  using closures
@@ -35,7 +37,7 @@ import Debug.Trace
 -}
 
 ptrEq :: a -> a -> Bool
-ptrEq x y = isTrue# (reallyUnsafePtrEquality# x y)
+ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
 {-# inline ptrEq #-}
 
 -- Data
@@ -48,8 +50,10 @@ data QTerm
   | QApp !QTerm !QTerm
   | QPi !String !QType !QTerm
   | QLam !String !QTerm
+  | QLet !String !QTerm !QTerm
   | QStar
   | QAnn !QTerm !QType
+  deriving (Eq)
 
 -- Abstract
 type AType = ATerm
@@ -59,8 +63,10 @@ data ATerm
   | AApp !ATerm !ATerm -- ^ We can apply to 'Pi' as well.
   | APi !String !AType !ATerm
   | ALam !String !AType !ATerm
+  | ALet !String !AType !ATerm !ATerm
   | AStar
   | Close {-# unpack #-} !Closure
+  deriving (Eq)
 
 -- Weak head normal
 data Whnf
@@ -70,18 +76,22 @@ data Whnf
   | VPi  !String !AType {-# unpack #-} !Closure
   | VLam !String !AType {-# unpack #-} !Closure
   | VStar
-  deriving (Show)
+  deriving (Eq, Show)
 
 data Closure = C !Env !ATerm
-  deriving (Show)
+  deriving (Eq, Show)
+
+_cenv (C e _) = e
+_cterm (C _ t) = t
 
 type GType = Glued
-data Glued = G {-# unpack #-} !Closure Whnf deriving (Show)
+data Glued = G {-# unpack #-} !Closure Whnf deriving (Eq, Show)
 
 _unreduced (G u _) = u
 _whnf      (G _ v) = v
 
-data Entry = E {-# unpack #-} !Glued {-# unpack #-} !Glued deriving (Show)
+data Entry = E {-# unpack #-} !Glued {-# unpack #-} !GType deriving (Eq)
+instance Show Entry where show _ = "_"
 
 _term (E t _) = t
 _type (E _ v) = v
@@ -106,6 +116,7 @@ whnf e = \case
     VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
     f'                 -> VApp f' (whnf e x)
   AVar v         -> _whnf $ _term $ e ! v
+  ALet v ty t t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
   APi  v ty t    -> VPi  v ty (C e t)
   ALam v ty t    -> VLam v ty (C e t)
   AStar          -> VStar
@@ -140,9 +151,10 @@ termSemiEq e e' !b t t' = case (t, t') of
   (Close (C e t), t')  -> termSemiEq e e' b t t'
   (t, Close (C e' t')) -> termSemiEq e e' b t t'
 
-  (AVar v, AVar v') -> case (_whnf $ _term $ e ! v, _whnf $ _term $ e' ! v') of
-    (VAlpha b, VAlpha b') -> Just (b == b')
-    (x       , y        ) -> True <$ guard (ptrEq x y)
+  (AVar v, AVar v') -> do
+    case (e ! v, e' ! v') of
+      (E (G (C _ (AAlpha b)) _) _, E (G (C _ (AAlpha b')) _) _) -> Just (b == b')
+      (x, y) -> True <$ guard (ptrEq x y)
   (AVar{}, _) -> Nothing
   (_, AVar{}) -> Nothing
 
@@ -182,9 +194,10 @@ termEq e e' !b t t' = case (t, t') of
   (Close (C e t), t')  -> termEq e e' b t t'
   (t, Close (C e' t')) -> termEq e e' b t t'
 
-  (AVar v, AVar v') -> case (_whnf $ _term $ e ! v, _whnf $ _term $ e' ! v') of
-    (VAlpha b, VAlpha b') -> b == b'
-    (x       , y        ) -> ptrEq x y || continue
+  (AVar v, AVar v') ->
+    case (e ! v, e' ! v') of
+      (E (G (C _ (AAlpha b)) _) _, E (G (C _ (AAlpha b')) _) _) -> b == b'
+      (x , y) -> ptrEq x y || continue
 
   (AApp f x, AApp f' x') ->
     maybe False id (liftA2 (&&) (termSemiEq e e' b f f') (termSemiEq e e' b x x'))
@@ -218,7 +231,7 @@ check e t want = case (t, _whnf want) of
 
 infer :: Env -> QTerm -> TM (ATerm, Glued)
 infer e = \case
-  QVar v    -> pure (AVar v, _type $ e ! v) -- rename!
+  QVar v    -> pure (AVar v, _type $ e ! v)
   QStar     -> pure (AStar, gstar)
   QAnn t ty -> do
     ty' <- glued e <$> check e ty gstar
@@ -229,6 +242,10 @@ infer e = \case
     ty' <- check e ty gstar
     t'  <- check (M.insert v (quoteVar e v (glued e ty')) e) t gstar
     pure (APi v ty' t', gstar)
+  QLet v t1 t2 -> do
+    (t1', t1t) <- infer e t1
+    (t2', t2t) <- infer (M.insert v (E (glued e t1') t1t) e) t2
+    pure (ALet v (Close (_unreduced t1t)) t1' t2', t2t)
   QApp f x -> do
     (f', tf) <- infer e f
     case _whnf tf of
@@ -240,19 +257,8 @@ infer e = \case
                 (whnf (M.insert v (E (glued e x') a') e') b))
       _ -> Left "can't apply to non-function"
 
-
 -- print
 --------------------------------------------------------------------------------
-
--- embedQ :: QTerm -> ATerm
--- embedQ = \case
---   QVar v     -> AVar v
---   QApp f x   -> AApp (embedQ f) (embedQ x)
---   QPi  v a b -> APi v (embedQ a) (embedQ b)
---   QLam a b   -> ALam a (AVar "_") (embedQ b)
---   QStar      -> AStar
---   QAnn t ty  -> embedQ t
-
 
 instance Show QTerm where showsPrec = prettyQTerm
 
@@ -271,12 +277,15 @@ prettyQTerm prec = go (prec /= 0) where
   go p (QVar i)   = (i++)
   go p (QApp f x) = showParen p (unwords' $ map (go True) (spine f x))
   go p (QLam k t) = showParen p
-    (("λ "++) . (k++) . (" -> "++) . go False t)
+    (("λ "++) . (k++) . (". "++) . go False t)
   go p (QPi k a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
                               else go True a
   go p QStar = ('*':)
   go p (QAnn t ty) = showParen p (go False t . (" ∈ "++) . go False ty)
+  go p (QLet v t1 t2) =
+    showParen p (("let "++) . (v++) . (" = "++) . go False t1 . (" in \n"++) .
+                go False t2)
 
   freeIn :: String -> QTerm -> Bool
   freeIn k = go where
@@ -302,13 +311,16 @@ prettyATerm prec = go (prec /= 0) where
   go p (AAlpha i)   = showParen p (("alpha " ++ show i)++)
   go p (AApp f x)   = showParen p (unwords' $ map (go True) (spine f x))
   go p (ALam k a t) = showParen p
-    (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (" -> "++) . go False t)
+    (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (". "++) . go False t)
   go p (APi k a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
                               else go True a
   go p AStar = ('*':)
-  go p (Close (C e t)) = go p (nf e t)
-
+  go p (Close (C e t)) = go p t
+  go p (ALet v ty t1 t2) =
+    showParen p (("let "++) . (v++) . (" = "++) .
+                 go False t1 . (" ∈ "++) . go False ty .
+                 (" in \n"++) . go False t2)
   freeIn :: String -> ATerm -> Bool
   freeIn k = go where
     go (AVar i)      = i == k
@@ -338,28 +350,76 @@ a ==> b = QPi "" a b
 lam     = QLam
 pi      = QPi
 ($$)    = QApp
+qlet    = QLet
 infixl 8 $$
-infixr 8 ==>
+infixr 7 ==>
 
-natTy = pi "r" star $ ("r" ==> "r") ==> "r" ==> "r"
+test =
 
-id' = ann
-  (pi "x" star $ "x" ==> "x")
-  (lam "a" $ lam "b" "b")
+  qlet "nat"  (pi "r" star $ ("r" ==> "r") ==> "r" ==> "r") $
 
-const' = ann
-  (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a")
-  (lam "a" $ lam "b" $ lam "x" $ lam "y" "x")
+  qlet "zero" (ann "nat" (lam "r" $ lam "s" $ lam "z" "z")) $
 
-z = ann natTy (lam "r" $ lam "s" $ lam "z" "z")
+  qlet "suc" (ann ("nat" ==> "nat")
+  (lam "a" $ lam "r" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "r" $$ "s" $$ "z"))) $
 
-s = ann
-  (natTy ==> natTy)
-  (lam "a" $ lam "r" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "r" $$ "s" $$ "z"))
-
-add = ann
-  (natTy ==> natTy ==> natTy)
+  qlet "add" (ann ("nat" ==> "nat" ==> "nat")
   (lam "a" $ lam "b" $ lam "r" $ lam "s" $ lam "z" $
-  "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z"))
+      "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z"))) $
 
+  qlet "mul" (ann ("nat" ==> "nat" ==> "nat")
+  (lam "a" $ lam "b" $ lam "r" $ lam "s" $ lam "z" $
+      "a" $$ "r" $$ ("b" $$ "r" $$ "s") $$ "z")) $
 
+  qlet "one"      ("suc" $$ "zero") $
+  qlet "two"      ("suc" $$ ("suc" $$ "zero")) $
+  qlet "five"     ("suc" $$ ("add" $$ "two" $$ "two")) $
+  qlet "ten"      ("add" $$ "five" $$ "five") $
+  qlet "hundred"  ("mul" $$ "ten" $$ "ten") $
+  -- qlet "thousand" ("mul" $$ "ten" $$ "hundred") $
+  qlet "tenK"     ("mul" $$ "hundred" $$ "hundred") $
+  -- qlet "hundredK" ("mul" $$ "hundred" $$ "thousand") $
+
+  -- qlet "id" (ann (pi "x" star $ "x" ==> "x")
+  -- (lam "a" $ lam "b" "b")) $
+
+  qlet "const" (ann (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a")
+  (lam "a" $ lam "b" $ lam "x" $ lam "y" "x")) $
+
+  -- qlet "list" (ann (star ==> star)
+  -- (lam "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")) $
+
+  -- qlet "nil" (ann (pi "a" star $ "list" $$ "a")
+  -- (lam "a" $ lam "r" $ lam "c" $ lam "n" $ "n")) $
+
+  -- qlet "cons" (ann (pi "a" star $ "a" ==> "list" $$ "a" ==> "list" $$ "a")
+  -- (lam "a" $ lam "x" $ lam "xs" $ lam "r" $ lam "c" $ lam "n" $
+  --  "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n"))) $
+
+  -- qlet "listTest"
+  --   ("cons" $$ "nat" $$ "ten" $$ ("cons" $$ "nat" $$ "ten" $$ ("nil" $$ "nat"))) $
+
+  -- unreduced equalities
+  ------------------------------------------------------------
+  qlet "nfunTy" (ann ("nat" ==> star)
+  (lam "n" $ "n" $$ star $$ (lam "t" (star ==> "t")) $$ star)) $
+
+  -- simple unreduced eq
+  qlet "unreduced1" (ann ("nfunTy" $$ "tenK" ==> "nfunTy" $$ "tenK")
+  (lam "f" $ "f")) $
+
+  -- unreduced eq under function application (this isn't fast, as intended)
+  -- qlet "unreduced2" (ann (
+  --       "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "zero"
+  --   ==> "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "one" )
+  -- (lam "f" "f")) $
+
+  -- unreduced eq under whnf
+  qlet "unreduced3" (ann (
+        "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "zero"
+    ==> "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "one" )
+  (lam "f" "f")) $
+
+  "unreduced3"
+
+main = print $ isRight $ infer0 test

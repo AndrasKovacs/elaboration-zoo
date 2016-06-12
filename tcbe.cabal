@@ -18,7 +18,7 @@ executable tcbe
   build-depends: base, containers, ghc-prim >= 0.4.0.0, mtl, unordered-containers
 
 library
-  other-modules:       Syntax, NoInfer, Minimal, Nameful, Glued, Closures, NoVal
+  other-modules:       Syntax, NoInfer, Minimal, Nameful, Glued, Glued2, Closures, NoVal
   ghc-options:         -rtsopts -O2
   build-depends:       base, containers, ghc-prim >= 0.4.0.0, mtl, unordered-containers
   default-language:    Haskell2010

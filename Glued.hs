@@ -31,12 +31,8 @@ import Debug.Trace
   - add sigma & bottom
   - add eta expansion for alpha
   - elaborate values of bottom to common dummy value (eta rule for bottom)
-  - drop types from value closures
-     - or : use Glued instead of ATerm in ATerm types
   - use phantom tags for scopes
   - think about saner closure API
-  - add let / unannotated lambda  using closures
-  - add unreduced equality for Pi applications
 -}
 
 ptrEq :: a -> a -> Bool
@@ -92,13 +88,13 @@ _cenv (C e _) = e
 _cterm (C _ t) = t
 
 type GType = Glued
-data Glued = G {-# unpack #-} !Closure Whnf deriving (Eq, Show)
+data Glued = G {-# unpack #-} !Closure Whnf deriving (Eq)
+instance Show Glued where show (G (C _ t) _) = show t
 
 _unreduced (G u _) = u
 _whnf      (G _ v) = v
 
-data Entry = E {-# unpack #-} !Glued {-# unpack #-} !GType deriving (Eq)
-instance Show Entry where show _ = "_"
+data Entry = E {-# unpack #-} !Glued {-# unpack #-} !GType deriving (Eq, Show)
 
 _term (E t _) = t
 _type (E _ v) = v
@@ -124,7 +120,7 @@ whnf e = \case
   APiApp f x -> case whnf e f of
     VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
     f'                 -> error "piapp"
-  AVar v         -> _whnf $ _term $ e ! v
+  AVar v         -> maybe (VVar v) (_whnf . _term) $ M.lookup v e
   ALet v ty t t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
   APi  v ty t    -> VPi  v ty (C e t)
   ALam v ty t    -> VLam v ty (C e t)
@@ -248,7 +244,7 @@ termEq e e' !b t t'
   | otherwise = whnfEq b (whnf e t) (whnf e' t')
 
 gluedEq :: Glued -> Glued -> Bool
-gluedEq (G (C e t) v) (G (C e' t') v') = traceShow (t, t', (fullTermSemiEq e e' t t')) $
+gluedEq (G (C e t) v) (G (C e' t') v') =
   maybe False id (fullTermSemiEq e e' t t') || whnfEq 0 v v'
 
 -- Type checking / elaboration
@@ -463,5 +459,5 @@ test =
   -- unreduced eq from Pi applications (works)
   qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
 
-  "list"
+  "id"
 

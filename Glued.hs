@@ -3,7 +3,7 @@
 {-# language OverloadedStrings #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-module Main where
+module Glued where
 
 import Prelude hiding (pi)
 import Data.String
@@ -24,7 +24,6 @@ import Debug.Trace
 
 
 {- Notes:
-
   - add sigma & bottom
   - add eta expansion for alpha
   - elaborate values of bottom to common dummy value (eta rule for bottom)
@@ -33,7 +32,7 @@ import Debug.Trace
   - use phantom tags for scopes
   - think about saner closure API
   - add let / unannotated lambda  using closures
-
+  - add unreduced equality for Pi applications
 -}
 
 ptrEq :: a -> a -> Bool
@@ -43,14 +42,17 @@ ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
 -- Data
 --------------------------------------------------------------------------------
 
+type AlphaVar = Int
+type Var = String
+
 -- Concrete
 type QType = QTerm
 data QTerm
-  = QVar !String
+  = QVar !Var
   | QApp !QTerm !QTerm
-  | QPi !String !QType !QTerm
-  | QLam !String !QTerm
-  | QLet !String !QTerm !QTerm
+  | QPi !Var !QType !QTerm
+  | QLam !Var !QTerm
+  | QLet !Var !QTerm !QTerm
   | QStar
   | QAnn !QTerm !QType
   deriving (Eq)
@@ -58,23 +60,24 @@ data QTerm
 -- Abstract
 type AType = ATerm
 data ATerm
-  = AVar !String
-  | AAlpha !Int
-  | AApp !ATerm !ATerm -- ^ We can apply to 'Pi' as well.
-  | APi !String !AType !ATerm
-  | ALam !String !AType !ATerm
-  | ALet !String !AType !ATerm !ATerm
+  = AVar !Var
+  | AAlpha !AlphaVar
+  | AApp !ATerm !ATerm
+  | APiApp !ATerm !ATerm
+  | APi !Var !AType !ATerm
+  | ALam !Var !AType !ATerm
+  | ALet !Var !AType !ATerm !ATerm
   | AStar
   | Close {-# unpack #-} !Closure
   deriving (Eq)
 
 -- Weak head normal
 data Whnf
-  = VVar !String
-  | VAlpha !Int
+  = VVar !Var
+  | VAlpha !AlphaVar
   | VApp !Whnf Whnf
-  | VPi  !String !AType {-# unpack #-} !Closure
-  | VLam !String !AType {-# unpack #-} !Closure
+  | VPi  !Var !AType {-# unpack #-} !Closure
+  | VLam !Var !AType {-# unpack #-} !Closure
   | VStar
   deriving (Eq, Show)
 
@@ -96,7 +99,7 @@ instance Show Entry where show _ = "_"
 _term (E t _) = t
 _type (E _ v) = v
 
-type Env = HashMap String Entry
+type Env = HashMap Var Entry
 type TM  = Either String
 
 instance IsString ATerm where fromString = AVar
@@ -113,8 +116,10 @@ whnf :: Env -> ATerm -> Whnf
 whnf e = \case
   AApp f x -> case whnf e f of
     VLam v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
-    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
     f'                 -> VApp f' (whnf e x)
+  APiApp f x -> case whnf e f of
+    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
+    f'                 -> error "piapp"
   AVar v         -> _whnf $ _term $ e ! v
   ALet v ty t t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
   APi  v ty t    -> VPi  v ty (C e t)
@@ -123,7 +128,16 @@ whnf e = \case
   Close (C e' t) -> whnf e' t
   AAlpha{}       -> error "whnf: Alpha in ATerm"
 
-quoteVar :: Env -> String -> GType -> Entry
+-- | Reduce top level Pi applications
+reducePiApp :: Env -> ATerm -> ATerm
+reducePiApp e = \case
+  APiApp (APi v ty t) x -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
+  APiApp f x -> case reducePiApp e f of
+    Close (C e (APi v ty t)) -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
+    _ -> APiApp f x
+  t -> t
+
+quoteVar :: Env -> Var -> GType -> Entry
 quoteVar e v ty = E (G (C e (AVar v)) (VVar v)) ty
 
 -- TODO: eta-expansion (need to add Alpha to ATerm too)
@@ -141,6 +155,54 @@ quote = \case
   VLam v ty (C e t) -> ALam v (nf e ty) (nf (M.insert v (quoteVar e v (glued e ty)) e) t)
   VStar             -> AStar
   VAlpha{}          -> error "quote: Alpha in Whnf"
+
+-- Equality with n-depth unfolding but no reduction (semidecision)
+--------------------------------------------------------------------------------
+
+type Depth = Int
+
+termSemiEqN :: Depth -> Env -> Env -> AlphaVar -> ATerm -> ATerm -> Maybe Bool
+termSemiEqN !d e e' !a t t' = case (t, t') of
+  (Close (C e t), t')  -> termSemiEqN d e e' a t t'
+  (t, Close (C e' t')) -> termSemiEqN d e e' a t t'
+
+  (AVar v, AVar v') ->
+    case (M.lookup v e, M.lookup v' e') of
+      (Just e1@(E (G (C e t) _) _), Just e2@(E (G (C e' t') _) _)) ->
+        if ptrEq e1 e2 then
+          Just True
+        else if d == 0 then
+          Nothing
+        else
+          termSemiEqN (d - 1) e e' a t t'
+      _ -> Nothing
+
+  (AVar v, t') | d == 0    -> Nothing
+               | otherwise -> do
+                   E (G (C e t) _) _ <- M.lookup v e
+                   termSemiEqN (d - 1) e e' a t t'
+  (t, AVar v') | d == 0    -> Nothing
+               | otherwise -> do
+                   E (G (C e' t') _) _ <- M.lookup v' e'
+                   termSemiEqN (d - 1) e e' a t t'
+
+  (AApp f x, AApp f' x') ->
+    True <$ do {guard =<< termSemiEqN d e e' a f f'; guard =<< termSemiEqN d e e' a x x'}
+  (AApp{}, _) -> Nothing
+  (_, AApp{}) -> Nothing
+
+  (ALam v ty t, ALam v' ty' t') -> (&&) <$> termSemiEqN d e e' a ty ty' <*>
+    (let al = alpha a e ty in termSemiEqN d (M.insert v al e) (M.insert v' al e') (a + 1) t t')
+  (APi  v ty t, APi  v' ty' t') -> (&&) <$> termSemiEqN d e e' a ty ty' <*>
+    (let al = alpha a e ty in termSemiEqN d (M.insert v al e) (M.insert v' al e') (a + 1) t t')
+
+  (AAlpha a, AAlpha a') -> Just (a == a')
+  (AStar,    AStar    ) -> Just True
+  _                     -> Just False
+
+
+termSemiEq' :: Env -> Env -> ATerm -> ATerm -> Maybe Bool
+termSemiEq' e e' t t' = termSemiEqN 0 e e' 0 (reducePiApp e t) (reducePiApp e' t')
 
 
 -- Equality without reduction
@@ -183,11 +245,12 @@ whnfEq !b t t' = case (t, t') of
     let al = alpha b e ty
     in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
   (VPi v ty (C e t), VPi v' ty' (C e' t')) ->
-    termEq e e' 0 ty ty' &&
+    termEq e e' b ty ty' &&
     let al = alpha b e ty
     in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
-  (VStar, VStar) -> True
-  _              -> False
+  (VStar,    VStar    ) -> True
+  (VAlpha a, VAlpha a') -> a == a'
+  _                     -> False
 
 termEq :: Env -> Env -> Int -> ATerm -> ATerm -> Bool
 termEq e e' !b t t' = case (t, t') of
@@ -208,7 +271,8 @@ termEq e e' !b t t' = case (t, t') of
 
 gluedEq :: Glued -> Glued -> Bool
 gluedEq (G (C e t) v) (G (C e' t') v') =
-  maybe False id (termSemiEq e e' 0 t t') || whnfEq 0 v v'
+  --traceShow (t, t', reducePiApp e t, reducePiApp e' t', termSemiEq' e e' t t') $
+  maybe False id (termSemiEq' e e' t t') || whnfEq 0 v v'
 
 -- Type checking / elaboration
 --------------------------------------------------------------------------------
@@ -253,7 +317,7 @@ infer e = \case
         let a' = glued e' a
         x' <- check e x a'
         pure (AApp f' x',
-              G (C e (AApp (Close (_unreduced tf)) x'))
+              G (C (_cenv $ _unreduced tf) (APiApp (_cterm $ _unreduced tf) (Close (C e x'))))
                 (whnf (M.insert v (E (glued e x') a') e') b))
       _ -> Left "can't apply to non-function"
 
@@ -287,7 +351,7 @@ prettyQTerm prec = go (prec /= 0) where
     showParen p (("let "++) . (v++) . (" = "++) . go False t1 . (" in \n"++) .
                 go False t2)
 
-  freeIn :: String -> QTerm -> Bool
+  freeIn :: Var -> QTerm -> Bool
   freeIn k = go where
     go (QVar i)      = i == k
     go (QApp f x)    = go f || go x
@@ -310,6 +374,7 @@ prettyATerm prec = go (prec /= 0) where
   go p (AVar i)     = (i++)
   go p (AAlpha i)   = showParen p (("alpha " ++ show i)++)
   go p (AApp f x)   = showParen p (unwords' $ map (go True) (spine f x))
+  go p (APiApp f x) = showParen p (unwords' $ map (go True) (spine f x))
   go p (ALam k a t) = showParen p
     (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (". "++) . go False t)
   go p (APi k a b) = showParen p (arg . (" -> "++) . go False b)
@@ -376,50 +441,52 @@ test =
   qlet "five"     ("suc" $$ ("add" $$ "two" $$ "two")) $
   qlet "ten"      ("add" $$ "five" $$ "five") $
   qlet "hundred"  ("mul" $$ "ten" $$ "ten") $
-  -- qlet "thousand" ("mul" $$ "ten" $$ "hundred") $
+  qlet "thousand" ("mul" $$ "ten" $$ "hundred") $
   qlet "tenK"     ("mul" $$ "hundred" $$ "hundred") $
-  -- qlet "hundredK" ("mul" $$ "hundred" $$ "thousand") $
+  qlet "hundredK" ("mul" $$ "hundred" $$ "thousand") $
 
-  -- qlet "id" (ann (pi "x" star $ "x" ==> "x")
-  -- (lam "a" $ lam "b" "b")) $
+  qlet "id" (ann (pi "x" star $ "x" ==> "x")
+  (lam "a" $ lam "b" "b")) $
 
   qlet "const" (ann (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a")
   (lam "a" $ lam "b" $ lam "x" $ lam "y" "x")) $
 
-  -- qlet "list" (ann (star ==> star)
-  -- (lam "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")) $
+  qlet "list" (ann (star ==> star)
+  (lam "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")) $
 
-  -- qlet "nil" (ann (pi "a" star $ "list" $$ "a")
-  -- (lam "a" $ lam "r" $ lam "c" $ lam "n" $ "n")) $
+  qlet "nil" (ann (pi "a" star $ "list" $$ "a")
+  (lam "a" $ lam "r" $ lam "c" $ lam "n" $ "n")) $
 
-  -- qlet "cons" (ann (pi "a" star $ "a" ==> "list" $$ "a" ==> "list" $$ "a")
-  -- (lam "a" $ lam "x" $ lam "xs" $ lam "r" $ lam "c" $ lam "n" $
-  --  "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n"))) $
+  qlet "cons" (ann (pi "a" star $ "a" ==> "list" $$ "a" ==> "list" $$ "a")
+  (lam "a" $ lam "x" $ lam "xs" $ lam "r" $ lam "c" $ lam "n" $
+   "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n"))) $
 
-  -- qlet "listTest"
-  --   ("cons" $$ "nat" $$ "ten" $$ ("cons" $$ "nat" $$ "ten" $$ ("nil" $$ "nat"))) $
+  qlet "listTest"
+    ("cons" $$ "nat" $$ "ten" $$ ("cons" $$ "nat" $$ "ten" $$ ("nil" $$ "nat"))) $
 
   -- unreduced equalities
   ------------------------------------------------------------
   qlet "nfunTy" (ann ("nat" ==> star)
   (lam "n" $ "n" $$ star $$ (lam "t" (star ==> "t")) $$ star)) $
 
-  -- simple unreduced eq
+  -- simple unreduced eq (works)
   qlet "unreduced1" (ann ("nfunTy" $$ "tenK" ==> "nfunTy" $$ "tenK")
   (lam "f" $ "f")) $
 
-  -- unreduced eq under function application (this isn't fast, as intended)
+  -- unreduced eq under function application (doesn't work)
   -- qlet "unreduced2" (ann (
   --       "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "zero"
   --   ==> "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "one" )
   -- (lam "f" "f")) $
 
-  -- unreduced eq under whnf
+  -- unreduced eq under whnf (works)
   qlet "unreduced3" (ann (
         "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "zero"
     ==> "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "one" )
   (lam "f" "f")) $
 
-  "unreduced3"
+  -- unreduced eq from inferred Pi applications (TODO)
+  -- qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
 
-main = print $ isRight $ infer0 test
+  "list"
+

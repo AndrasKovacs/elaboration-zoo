@@ -22,8 +22,12 @@ import qualified Syntax as S
 
 import Debug.Trace
 
-
 {- Notes:
+  NEW:
+  - Use Glued for types in ATerm
+  - Remove Close from ATerm, instead use APiApp with embedded closure
+
+  OLD:
   - add sigma & bottom
   - add eta expansion for alpha
   - elaborate values of bottom to common dummy value (eta rule for bottom)
@@ -128,14 +132,14 @@ whnf e = \case
   Close (C e' t) -> whnf e' t
   AAlpha{}       -> error "whnf: Alpha in ATerm"
 
--- | Reduce top level Pi applications
-reducePiApp :: Env -> ATerm -> ATerm
-reducePiApp e = \case
-  APiApp (APi v ty t) x -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
-  APiApp f x -> case reducePiApp e f of
-    Close (C e (APi v ty t)) -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
-    _ -> APiApp f x
-  t -> t
+isNeutral :: ATerm -> Bool
+isNeutral = \case
+  AApp{}        -> True
+  AAlpha{}      -> True
+  AVar{}        -> True
+  APiApp{}      -> True
+  Close (C _ t) -> isNeutral t
+  _             -> False
 
 quoteVar :: Env -> Var -> GType -> Entry
 quoteVar e v ty = E (G (C e (AVar v)) (VVar v)) ty
@@ -155,6 +159,7 @@ quote = \case
   VLam v ty (C e t) -> ALam v (nf e ty) (nf (M.insert v (quoteVar e v (glued e ty)) e) t)
   VStar             -> AStar
   VAlpha{}          -> error "quote: Alpha in Whnf"
+
 
 -- Equality with n-depth unfolding but no reduction (semidecision)
 --------------------------------------------------------------------------------
@@ -200,38 +205,21 @@ termSemiEqN !d e e' !a t t' = case (t, t') of
   (AStar,    AStar    ) -> Just True
   _                     -> Just False
 
+-- | Reduce top level Pi applications
+reducePiApp :: Env -> ATerm -> ATerm
+reducePiApp e = \case
+  APiApp (APi v ty t) x -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
+  APiApp f x -> case reducePiApp e f of
+    Close (C e (APi v ty t)) -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
+    _ -> APiApp f x
+  t -> t
 
-termSemiEq' :: Env -> Env -> ATerm -> ATerm -> Maybe Bool
-termSemiEq' e e' t t' = termSemiEqN 0 e e' 0 (reducePiApp e t) (reducePiApp e' t')
+depth :: Depth
+depth = 1
 
-
--- Equality without reduction
---------------------------------------------------------------------------------
-
-termSemiEq :: Env -> Env -> Int -> ATerm -> ATerm -> Maybe Bool
-termSemiEq e e' !b t t' = case (t, t') of
-  (Close (C e t), t')  -> termSemiEq e e' b t t'
-  (t, Close (C e' t')) -> termSemiEq e e' b t t'
-
-  (AVar v, AVar v') -> do
-    case (e ! v, e' ! v') of
-      (E (G (C _ (AAlpha b)) _) _, E (G (C _ (AAlpha b')) _) _) -> Just (b == b')
-      (x, y) -> True <$ guard (ptrEq x y)
-  (AVar{}, _) -> Nothing
-  (_, AVar{}) -> Nothing
-
-  (AApp f x, AApp f' x') ->
-    True <$ do {guard =<< termSemiEq e e' b f f'; guard =<< termSemiEq e e' b x x'}
-  (AApp{}, _) -> Nothing
-  (_, AApp{}) -> Nothing
-
-  (ALam v ty t, ALam v' ty' t') -> (&&) <$> termSemiEq e e' b ty ty' <*>
-    (let al = alpha b e ty in termSemiEq (M.insert v al e) (M.insert v' al e') (b + 1) t t')
-  (APi  v ty t, APi  v' ty' t') -> (&&) <$> termSemiEq e e' b ty ty' <*>
-    (let al = alpha b e ty in termSemiEq (M.insert v al e) (M.insert v' al e') (b + 1) t t')
-  (AStar, AStar) -> Just True
-  _              -> Just False
-
+fullTermSemiEq :: Env -> Env -> ATerm -> ATerm -> Maybe Bool
+fullTermSemiEq e e' t t' =
+  termSemiEqN depth e e' 0 (reducePiApp e t) (reducePiApp e' t')
 
 -- Equality with reduction
 --------------------------------------------------------------------------------
@@ -253,26 +241,15 @@ whnfEq !b t t' = case (t, t') of
   _                     -> False
 
 termEq :: Env -> Env -> Int -> ATerm -> ATerm -> Bool
-termEq e e' !b t t' = case (t, t') of
-  (Close (C e t), t')  -> termEq e e' b t t'
-  (t, Close (C e' t')) -> termEq e e' b t t'
-
-  (AVar v, AVar v') ->
-    case (e ! v, e' ! v') of
-      (E (G (C _ (AAlpha b)) _) _, E (G (C _ (AAlpha b')) _) _) -> b == b'
-      (x , y) -> ptrEq x y || continue
-
-  (AApp f x, AApp f' x') ->
-    maybe False id (liftA2 (&&) (termSemiEq e e' b f f') (termSemiEq e e' b x x'))
-    || continue
-  _ -> continue
-
-  where continue = whnfEq b (whnf e t) (whnf e' t')
+termEq e e' !b t t'
+  | isNeutral t || isNeutral t' = case termSemiEqN 0 e e' b t t' of
+    Just True -> True
+    _ -> whnfEq b (whnf e t) (whnf e' t')
+  | otherwise = whnfEq b (whnf e t) (whnf e' t')
 
 gluedEq :: Glued -> Glued -> Bool
-gluedEq (G (C e t) v) (G (C e' t') v') =
-  --traceShow (t, t', reducePiApp e t, reducePiApp e' t', termSemiEq' e e' t t') $
-  maybe False id (termSemiEq' e e' t t') || whnfEq 0 v v'
+gluedEq (G (C e t) v) (G (C e' t') v') = traceShow (t, t', (fullTermSemiEq e e' t t')) $
+  maybe False id (fullTermSemiEq e e' t t') || whnfEq 0 v v'
 
 -- Type checking / elaboration
 --------------------------------------------------------------------------------
@@ -403,8 +380,6 @@ instance Show ATerm where
 
 
 nf0         = nf mempty
-termSemiEq0 = termSemiEq mempty mempty
-termEq0     = termEq mempty mempty
 whnf0       = whnf mempty
 infer0      = infer mempty
 infer0'     = fmap (quote . _whnf . snd) . infer0
@@ -473,7 +448,7 @@ test =
   qlet "unreduced1" (ann ("nfunTy" $$ "tenK" ==> "nfunTy" $$ "tenK")
   (lam "f" $ "f")) $
 
-  -- unreduced eq under function application (doesn't work)
+  -- unreduced eq under general function application (doesn't work)
   -- qlet "unreduced2" (ann (
   --       "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "zero"
   --   ==> "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "one" )
@@ -485,8 +460,8 @@ test =
     ==> "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "one" )
   (lam "f" "f")) $
 
-  -- unreduced eq from inferred Pi applications (TODO)
-  -- qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
+  -- unreduced eq from Pi applications (works)
+  qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
 
   "list"
 

@@ -159,3 +159,94 @@ const' =
   ann (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a") $
   lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x"
 
+
+
+-- compose =
+--   forAll "a" $
+--   forAll "b" $
+--   forAll "c" $
+--   lam "f" ("b" ==> "c") $
+--   lam "g" ("a" ==> "b") $
+--   lam "x" "a" $
+--   "f" $$ ("g" $$ "x")
+
+-- nat = pi "a" star $ ("a" ==> "a") ==> "a" ==> "a"
+
+-- z = forAll "a" $
+--     lam "s" ("a" ==> "a") $
+--     lam"z" "a"
+--     "z"
+
+-- s = lam "n" nat $
+--     forAll "a" $
+--     lam "s" ("a" ==> "a") $
+--     lam "z" "a" $
+--     "s" $$ ("n" $$ "a" $$ "s" $$ "z")
+
+-- add =
+--   lam "a" nat $
+--   lam "b" nat $
+--   forAll "r" $
+--   lam "s" ("r" ==> "r") $
+--   lam "z" "r" $
+--   "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z")
+
+-- mul =
+--   lam "a" nat $
+--   lam "b" nat $
+--   forAll "r" $
+--   lam "s" ("r" ==> "r") $
+--   "a" $$ "r" $$ ("b" $$ "r" $$ "s")
+
+-- two = s $$ (s $$ z)
+-- five = s $$ (s $$ (s $$ (s $$ (s $$ z))))
+-- ten = add $$ five $$ five
+-- hundred = mul $$ ten $$ ten
+
+-- nFunTy =
+--   lam "n" nat $
+--   "n" $$ star $$ (lam "t" star $ star ==> "t") $$ star
+
+-- nFun =
+--   lam "n" nat $
+--   lam "f" (nFunTy $$ "n") $
+--   star
+
+-- list = forAll "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r"
+
+-- nil = forAll "a" $ forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
+
+-- cons =
+--    forAll "a" $
+--    lam "x" "a" $
+--    lam "xs" (list $$ "a") $
+--    forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $
+--    "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n")
+
+-- map' =
+--   forAll "a" $
+--   forAll "b" $
+--   lam "f" ("a" ==> "b") $
+--   lam "as" (list $$ "a") $
+--   "as" $$ (list $$ "b") $$
+--     (lam "x" "a" $ lam "xs" (list $$ "b") $ cons $$ "b" $$ ("f" $$ "x") $$ "xs") $$
+--     (nil $$ "b")
+
+-- sum' = lam "xs" (list $$ nat) $ "xs" $$ nat $$ add $$ z
+
+-- natList = let c = cons $$ nat; n = nil $$ nat in
+--   c $$ z $$ (c $$ five $$ (c $$ ten $$ n))
+
+-- test = all (isRight . infer0)
+--   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
+--    nFun $$ five, sum' $$ natList, map']
+
+-- tenK = mul $$ hundred $$ hundred
+-- million = mul $$ hundred $$ tenK
+
+-- -- reduction-heavy example
+-- stress =
+--   lam "x" (nFunTy $$ million) $
+--   cons $$ (nFunTy $$ million) $$ "x" $$
+--   (nil $$ (nFunTy $$ million))
+

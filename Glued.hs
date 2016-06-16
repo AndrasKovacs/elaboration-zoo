@@ -23,11 +23,24 @@ import qualified Syntax as S
 import Debug.Trace
 
 {- Notes:
-  NEW:
-  - Use Glued for types in ATerm
-  - Remove Close from ATerm, instead use APiApp with embedded closure
 
-  OLD:
+  CRITICAL
+  - BUGG : ALam and ALet annotation ignores any subsequent whnf evaluation !!
+     - first alternative : do inferred annotated lambdas
+     - second -||-       : try to push annotations down to lambdas, use annotations
+                           to implement eta expansion
+
+  IDEA:
+  - as a stunt, try to implement the most sophisticated language with an existential
+    type for names, with only an Eq instance
+
+  - easier but more practical version: also include an existential map type with
+    lookup and insert.
+
+  - bonus: using the abstracted types, try to factor out the entire closure setup
+    into a library (how?)
+
+  FEATURE:
   - add sigma & bottom
   - add eta expansion for alpha
   - elaborate values of bottom to common dummy value (eta rule for bottom)
@@ -115,10 +128,10 @@ glued e t = G (C e t) (whnf e t)
 whnf :: Env -> ATerm -> Whnf
 whnf e = \case
   AApp f x -> case whnf e f of
-    VLam v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
+    VLam v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e' ty)) e') t
     f'                 -> VApp f' (whnf e x)
   APiApp f x -> case whnf e f of
-    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e ty)) e') t
+    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e' ty)) e') t
     f'                 -> error "piapp"
   AVar v         -> maybe (VVar v) (_whnf . _term) $ M.lookup v e
   ALet v ty t t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
@@ -259,7 +272,7 @@ check e t want = case (t, _whnf want) of
     let a' = glued e' a
     t' <- check (M.insert v (quoteVar e v a') e) t
                 (glued (M.insert v' (quoteVar e v a') e') b)
-    pure $ ALam v (Close (_unreduced a')) t'
+    pure $ ALam v (Close $ _unreduced a') t'
 
   _ -> do
     (t', has) <- infer e t
@@ -459,5 +472,6 @@ test =
   -- unreduced eq from Pi applications (works)
   qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
 
-  "id"
+  "id" $$ star
+
 

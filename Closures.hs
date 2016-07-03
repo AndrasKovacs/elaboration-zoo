@@ -138,10 +138,12 @@ infer0 = quoteInfer 0 <=< infer cxt0 . fromRaw
 nf0 :: RawTerm -> TM Term
 nf0 v = quote 0 (whnf [] 0 $ fromRaw v) <$ infer0 v
 
+
 pi            = S.Pi
 lam           = S.Lam
 star          = S.Star
-forAll a b    = lam a star b
+tlam a b      = lam a star b
+forAll a b    = pi a star b
 let' k ty x e = lam k ty e $$ x
 infixl 9 $$
 ($$) = S.App
@@ -149,27 +151,27 @@ infixl 9 $$
 (==>) a b = pi "" a b
 infixr 8 ==>
 
-id'    = forAll "a" $ lam "x" "a" $ "x"
-const' = forAll "a" $ forAll "b" $ lam "x" "a" $ lam "y" "b" $ "x"
+id'    = tlam "a" $ lam "x" "a" $ "x"
+const' = tlam "a" $ tlam "b" $ lam "x" "a" $ lam "y" "b" $ "x"
 
 compose =
-  forAll "a" $
-  forAll "b" $
-  forAll "c" $
+  tlam "a" $
+  tlam "b" $
+  tlam "c" $
   lam "f" ("b" ==> "c") $
   lam "g" ("a" ==> "b") $
   lam "x" "a" $
   "f" $$ ("g" $$ "x")
 
-nat = pi "a" star $ ("a" ==> "a") ==> "a" ==> "a"
+nat = forAll "a" $ ("a" ==> "a") ==> "a" ==> "a"
 
-z = forAll "a" $
+z = tlam "a" $
     lam "s" ("a" ==> "a") $
     lam"z" "a"
     "z"
 
 s = lam "n" nat $
-    forAll "a" $
+    tlam "a" $
     lam "s" ("a" ==> "a") $
     lam "z" "a" $
     "s" $$ ("n" $$ "a" $$ "s" $$ "z")
@@ -177,7 +179,7 @@ s = lam "n" nat $
 add =
   lam "a" nat $
   lam "b" nat $
-  forAll "r" $
+  tlam "r" $
   lam "s" ("r" ==> "r") $
   lam "z" "r" $
   "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z")
@@ -185,7 +187,7 @@ add =
 mul =
   lam "a" nat $
   lam "b" nat $
-  forAll "r" $
+  tlam "r" $
   lam "s" ("r" ==> "r") $
   "a" $$ "r" $$ ("b" $$ "r" $$ "s")
 
@@ -203,20 +205,20 @@ nFun =
   lam "f" (nFunTy $$ "n") $
   star
 
-list = forAll "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r"
+list = tlam "a" $ forAll "r" $ ("a" ==> "r" ==> "r") ==> "r" ==> "r"
 
-nil = forAll "a" $ forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
+nil = tlam "a" $ tlam "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
 
 cons =
-   forAll "a" $
+   tlam "a" $
    lam "x" "a" $
    lam "xs" (list $$ "a") $
-   forAll "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $
+   tlam "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $
    "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n")
 
 map' =
-  forAll "a" $
-  forAll "b" $
+  tlam "a" $
+  tlam "b" $
   lam "f" ("a" ==> "b") $
   lam "as" (list $$ "a") $
   "as" $$ (list $$ "b") $$
@@ -232,4 +234,12 @@ test = all (isRight . infer0)
   [id', const', compose, nat, z, s, add, mul, two, five, nFunTy, nFun,
    nFun $$ five, sum' $$ natList, map']
 
-       
+tenK = mul $$ hundred $$ hundred
+million = mul $$ hundred $$ tenK
+
+-- reduction-heavy example
+stress =
+  lam "x" (nFunTy $$ million) $
+  cons $$ (nFunTy $$ million) $$ "x" $$
+  (nil $$ (nFunTy $$ million))
+

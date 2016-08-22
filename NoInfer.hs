@@ -20,9 +20,9 @@ import Syntax (RawTerm)
 import qualified Syntax as S
 
 data Term
-  = Var !Int
+  = Var !Int -- db Level 
   | App Term Term
-  | Lam Term
+  | Lam Term 
   | Pi Term Term
   | Ann Term Term
   | Star
@@ -32,7 +32,7 @@ data Val
   = VVar !Int
   | VApp Val Val
   | VLam (Val -> Val)
-  | VPi  Type (Val -> Val)
+  | VPi Type (Val -> Val)
   | VStar
 
 type Type  = Val
@@ -69,14 +69,17 @@ quote d = \case
   VPi  a b -> Pi  (quote d a) (quote (d + 1) (b (VVar d)))
   VStar    -> Star
 
+nf :: [Val] -> Int -> Term -> Term
+nf vs d t = quote d (eval vs d t)
+
 check :: Cxt -> Term -> Type -> TM ()
-check cxt@(vs, ts, d) t ty = case (t, ty) of
+check cxt@(vs, ts, d) t want = case (t, want) of
   (Lam t, VPi a b) -> do
     check (a <:: cxt) t (b (VVar d))
   (t, ty) -> do
-    let ty' = quote d ty
-    tt <- quote 0 <$> infer cxt t
-    unless (tt == ty') $ Left "type mismatch"
+    let want' = quote d want
+    has <- quote d <$> infer cxt t
+    unless (has == want') $ Left "type mismatch"
 
 infer :: Cxt -> Term -> TM Type
 infer cxt@(vs, ts, d) = \case
@@ -97,7 +100,6 @@ infer cxt@(vs, ts, d) = \case
         check cxt x a
         pure $ b (eval vs d x)
       _ -> Left "can't apply non-function"
-
 
 -- Test
 --------------------------------------------------------------------------------
@@ -249,4 +251,5 @@ const' =
 --   lam "x" (nFunTy $$ million) $
 --   cons $$ (nFunTy $$ million) $$ "x" $$
 --   (nil $$ (nFunTy $$ million))
+
 

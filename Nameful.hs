@@ -40,17 +40,17 @@ data Infer
   | IPi String Type (Val -> TM Infer)
 
 type Type  = Val
-type Cxt   = (HashMap String Val, HashMap String Type, Int)
+type Cxt   = (HashMap String Val, HashMap String Type)
 type TM    = Either String
 
 cxt0 :: Cxt
-cxt0 = (HM.empty, HM.empty, 0)
+cxt0 = (HM.empty, HM.empty)
 
 (<:) :: (String, Val, Type) -> Cxt -> Cxt
-(<:) (k, v, t) (vs, ts, d) = (HM.insert k v vs, HM.insert k t ts, d + 1)
+(<:) (k, v, t) (vs, ts) = (HM.insert k v vs, HM.insert k t ts)
 
 (<::) :: (String, Type) -> Cxt -> Cxt
-(<::) (k, t) (vs, ts, d) = (HM.insert k (BVar d) vs, HM.insert k t ts, d + 1)
+(<::) (k, t) (vs, ts) = (HM.insert k (VVar k) vs, HM.insert k t ts)
 
 vapp :: Val -> Val -> Val
 vapp (VLam _ _ f) x = f x
@@ -100,12 +100,12 @@ aeq d _            _              = False
 --------------------------------------------------------------------------------
 
 check :: Cxt -> Term -> Type -> TM ()
-check cxt@(_, _, d) t expect = do
+check cxt t expect = do
   eq <- aeqInfer expect =<< infer cxt t
   unless eq $ Left "type mismatch"
 
 infer :: Cxt -> Term -> TM Infer
-infer cxt@(vs, ts, d) = \case
+infer cxt@(vs, ts) = \case
   Var i   -> pure $ Ok (ts ! i)
   Star    -> pure $ Ok VStar
   Lam k a t -> do
@@ -144,7 +144,7 @@ pretty prec = go (prec /= 0) where
   go p (Var i)     = (i++)
   go p (App f x)   = showParen p (unwords' $ map (go True) (spine f x))
   go p (Lam k a t) = showParen p
-    (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (" -> "++) . go False t)
+    (("\\ "++) . showParen True ((k++) . (" : "++) . go False a) . (" -> "++) . go False t)
   go p (Pi k a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
                               else go True a
@@ -185,6 +185,7 @@ infixr 8 ==>
 
 id'    = tlam "a" $ lam "x" "a" $ "x"
 const' = tlam "a" $ tlam "b" $ lam "x" "a" $ lam "y" "b" $ "x"
+const'' = tlam "a" $ lam "x" "a" $ tlam "b" $ lam "y" "b" $ "x"
 
 compose =
   tlam "a" $
@@ -238,8 +239,7 @@ nFun =
   star
 
 list = tlam "a" $ forAll "r" $ ("a" ==> "r" ==> "r") ==> "r" ==> "r"
-
-nil = tlam "a" $ tlam "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
+nil  = tlam "a" $ tlam "r" $ lam "c" ("a" ==> "r" ==> "r") $ lam "n" "r" $ "n"
 
 cons =
    tlam "a" $

@@ -1,114 +1,120 @@
 
--- {-# language PatternSynonyms, BangPatterns, MagicHash, LambdaCase, ViewPatterns #-}
--- {-# language OverloadedStrings #-}
--- {-# options_ghc -fwarn-incomplete-patterns #-}
+{-# language PatternSynonyms, BangPatterns, MagicHash, LambdaCase, ViewPatterns #-}
+{-# language OverloadedStrings, TypeFamilies, GADTs, EmptyCase #-}
+{-# options_ghc -fwarn-incomplete-patterns #-}
 
--- module Glued2 where
+module Glued2 where
 
--- import Prelude hiding (pi)
--- import Data.String
--- import Control.Monad
--- import Control.Applicative
--- import Control.Monad.Except
--- import Data.Either
--- import GHC.Prim (reallyUnsafePtrEquality#)
--- import GHC.Types (isTrue#)
+import Prelude hiding (pi)
+import Data.String
+import Control.Monad
+import Control.Applicative
+import Control.Monad.Except
+import Data.Either
+import GHC.Prim (reallyUnsafePtrEquality#)
+import GHC.Types (isTrue#)
 
--- import Data.HashMap.Strict (HashMap, (!))
--- import qualified Data.HashMap.Strict as M
+import Data.Text (Text)
+import qualified Data.Text as T
 
--- import Debug.Trace
+import Data.HashMap.Strict (HashMap, (!))
+import qualified Data.HashMap.Strict as M
 
--- {-
--- binder :
---   - type
---   - var
---   - instantiate
---   - body
+ptrEq :: a -> a -> Bool
+ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
+{-# inline ptrEq #-}
 
--- current env in monad
--- enter closure
--- -}
+type Gen = Int
+type Var = Text
 
+type Type = Term
+data Term
+  = Var !Var
+  | Gen !Gen
+  | App !Term !Term
+  | PiApp !Term {-# unpack #-} !Closure
+  | Pi !Var !Type !Type
+  | Lam !Var !Term
+  | Let !Var !Type !Term !Term
+  | Star
 
--- ptrEq :: a -> a -> Bool
--- ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
--- {-# inline ptrEq #-}
+-- whnf
+type WType = WTerm
+data WTerm
+  = WVar !Var
+  | WGen !Gen
+  | WApp !WTerm WTerm
+  | WPi {-# unpack #-} !PiBind
+  | WLam {-# unpack #-} !LamBind
+  | WStar
 
--- -- Data
--- --------------------------------------------------------------------------------
+data GTerm   = G {-# unpack #-} !Closure WTerm
+type GType   = GTerm
+data Closure = C !Env !Term
+data Entry   = E {-# unpack #-} !GTerm {-# unpack #-} !GType
+data LamBind = LamBind !Env !Var !Term
+data PiBind  = PiBind !Env !Var !Type WType !Term
+type Env     = HashMap Var Entry
+type M       = Either String
 
--- type AlphaVar = Int
--- type Var = String
+instance IsString Term  where fromString = Var . fromString
+instance IsString WTerm where fromString = WVar . fromString
 
--- -- Concrete
--- type QType = QTerm
--- data QTerm
---   = QVar !Var
---   | QApp !QTerm !QTerm
---   | QPi !Var !QType !QTerm
---   | QLet !Var !QType !QTerm !QTerm
---   | QLam !Var !QTerm
---   | QStar
+inst :: LamBind -> PiBind -> GTerm -> (WTerm, WType)
+inst (LamBind e v t) (PiBind e' v' a wa b) x =
+  let ga = G (C e' a) wa in
+  (whnf (M.insert v (E x ga) e) t, whnf (M.insert v' (E x ga) e') b)
 
--- -- Abstract
--- type AType = ATerm
--- data ATerm
---   = AVar !Var
---   | AAlpha !AlphaVar
---   | AApp !ATerm !ATerm
---   | APiApp !ATerm {-# unpack #-} !Closure
---   | APi !Var !AType !AType
---   | ALam !Var !ATerm
---   | ALet !Var !AType !ATerm !ATerm
---   | AStar
+instPi :: PiBind -> GTerm -> WType
+instPi (PiBind e v a wa b) t' = whnf (M.insert v (E t' (G (C e a) wa)) e) b
 
--- -- Weak head normal
--- type WType = Whnf
--- data Whnf
---   = VVar !Var
---   | VAlpha !AlphaVar
---   | VApp !Whnf Whnf
---   | VPi  !Var !AType {-# unpack #-} !Closure
---   | VLam !Var {-# unpack #-} !Closure
---   | VStar
-
--- data Closure = C !Env !ATerm
-
--- _cenv  (C e _) = e
--- _cbody (C _ t) = t
-
--- type GType = Glued
--- data Glued = G {-# unpack #-} !Closure Whnf
-
--- _raw  (G u _) = u
--- _whnf (G _ v) = v
-
--- data Entry = E {-# unpack #-} !Glued {-# unpack #-} !GType
-
--- _term (E t _) = t
--- _type (E _ v) = v
-
--- type Env = HashMap Var Entry
--- type TM  = Either String
-
--- instance IsString ATerm where fromString = AVar
--- instance IsString Whnf  where fromString = VVar
--- instance IsString QTerm where fromString = QVar
-
-
--- reduction
 --------------------------------------------------------------------------------
 
--- whnfApp :: Env -> ATerm -> (Whnf, WType)
--- whnfApp e = \case  
---   AVar v   -> let E t ty = e ! v in (_whnf t, _whnf ty)
---   AApp f x -> case whnfApp e f of
---     (VLam v (C elam t), VPi v' a (C epi b)) -> _
-  
--- whnf :: Env -> ATerm -> Whnf
--- whnf e = \case
---   AApp f x -> fst $ whnfApp e (AApp f x) 
+glued :: Env -> Term -> GTerm
+glued e t = G (C e t) (whnf e t)
 
+whnfApp :: Env -> Term -> (WTerm, WType)
+whnfApp e = \case
+  Var v -> let E (G _ t) (G _ ty) = e ! v in (t, ty)
+  App f x -> case whnfApp e f of
+    (WLam lam, WPi pi) -> inst lam pi (glued e x)
+    (f       , WPi pi) -> (WApp f (whnf e x), instPi pi (glued e x))
+    _                  -> error "whnfApp: impossible"
+  _ -> error "whnfApp: impossible"
+    
+whnf :: Env -> Term -> WTerm
+whnf e = \case
+  Var v     -> let E (G _ t) _ = e ! v in t
+  App f x   -> fst $ whnfApp e (App f x)
+  Pi v a b  -> WPi (PiBind e v a (whnf e a) b)
+  Lam v t   -> WLam (LamBind e v t)
+  PiApp f (C e x) -> case whnf e f of
+    WPi pi -> instPi pi (glued e x)
+    _      -> error "whnf: impossible"
+  Star -> WStar
+  Let v t ty t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
+  _ -> error "whnf: impossible"
 
-  
+-- TODO : eta
+quoteVar :: Env -> Var -> GType -> Entry
+quoteVar e v ty = E (G (C e (Var v)) (WVar v)) ty
+
+-- TODO : eta
+gen :: Int -> Env -> GType -> Entry
+gen a e = E (G (C e (Gen a)) (WGen a))
+
+-- nf :: Env -> Term -> Term
+-- nf e = quote . whnf e
+
+-- quote :: WTerm -> Term
+-- quote = \case
+--   WVar v   -> Var v
+--   WApp f x -> App (quote f) (quote x)
+--   WPi (PiBind e v a wa b) ->
+--     Pi v (quote wa) (nf (M.insert v (quoteVar e v (G (C e a) wa)) e) b)
+--   WLam (LamBind e v t) ->
+--     Lam v (nf (M.insert v (E _ _) e) t)
+--   WStar             -> Star
+--   WGen{}            -> error "quote: Gen in WTerm"
+--      PiBind !Env !Var !Type WType !Term
+

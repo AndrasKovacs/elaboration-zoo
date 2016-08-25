@@ -95,7 +95,7 @@ infer :: Cxt -> Term -> TM Type
 infer cxt@(vs, ts) = \case
   Var v    -> pure (ts ! v)
   Star     -> pure VStar
-  Lam v t  -> Left "can't infer type for lambda"
+  Lam v t  -> Left $ "can't infer type for lambda " ++ show (Lam v t)
   Ann t ty -> do
     check cxt ty VStar
     let ty' = eval vs ty
@@ -108,6 +108,29 @@ infer cxt@(vs, ts) = \case
     infer cxt f >>= \case
       VPi v a b -> b (eval vs x) <$ check cxt x a
       _         -> Left "can't apply non-function"
+
+-- eta reduce
+--------------------------------------------------------------------------------
+
+freeIn :: String -> Term -> Bool
+freeIn v = go where
+  go (Var v')     = v' == v
+  go (App f x)    = go f || go x
+  go (Lam v' t)   = v' /= v && go t
+  go (Pi  v' a b) = go a || (v' /= v && go b)
+  go (Ann t ty)   = go t || go ty
+  go Star         = False
+
+etaRed :: Term -> Term
+etaRed = \case
+  Var v   -> Var v
+  App f x -> App (etaRed f) (etaRed x)
+  Lam v t -> case etaRed t of
+    App f (Var v') | v == v' && not (freeIn v f) -> f
+    t -> Lam v t
+  Pi v a b -> Pi v (etaRed a) (etaRed b)
+  Ann t ty -> Ann (etaRed t) (etaRed ty)
+  Star     -> Star
 
 -- Sugar & print
 --------------------------------------------------------------------------------
@@ -139,13 +162,6 @@ pretty prec = go (prec /= 0) where
                               else go True a
   go p Star = ('*':)
 
-  freeIn :: String -> Term -> Bool
-  freeIn v = go where
-    go (Var v')     = v' == v
-    go (App f x)    = go f || go x
-    go (Lam v' t)   = v' /= v && go t
-    go (Pi  v' a b) = go a || (v' /= v && go b)
-    go _            = False
 
 instance Show Term where
   showsPrec = pretty
@@ -157,7 +173,7 @@ infer0 :: Term -> TM Term
 infer0 t = quote <$> infer cxt0 t
 
 eval0 :: Term -> TM Term
-eval0 t = quote (eval HM.empty t) <$ infer0 t
+eval0 t = etaRed (quote (eval HM.empty t)) <$ infer0 t
 
 pi         = Pi
 lam        = Lam
@@ -190,7 +206,7 @@ compose =
 
 nat = forAll "a" $ ("a" ==> "a") ==> "a" ==> "a"
 
-z = ann nat $ lam "s" $ lam "z" "z"
+z = ann nat $ lam "n" $ lam "s" $ lam "z" "z"
 
 s =
   ann (nat ==> nat) $
@@ -229,16 +245,33 @@ cons =
   lam "a" $ lam "x" $ lam "as" $ lam "r" $ lam "c" $ lam "n" $
   "c" $$ "x" $$ ("as" $$ "r" $$ "c" $$ "n")
 
+-- non-fusing
 map' =
   ann (forAll "a" $ forAll "b" $ ("a" ==> "b") ==> list $$ "a" ==> list $$ "b") $
   lam "a" $ lam "b" $ lam "f" $ lam "as" $
-  "as" $$ (list $$ "b") $$
-    (lam "x" $ lam "xs" $ cons $$ "b" $$ ("f" $$ "x") $$ "xs") $$
-    (nil $$ "b")
-
+  "as" $$ (list $$ "b") $$ (lam "x" $ cons $$ "b" $$ ("f" $$ "x")) $$ (nil $$ "b")
+  
+-- fusing
+map'' =
+  ann (forAll "a" $ forAll "b" $ ("a" ==> "b") ==> list $$ "a" ==> list $$ "b") $
+  lam "a" $ lam "b" $ lam "f" $ lam "as" $ lam "l" $ lam "c" $ lam "n" $
+  "as" $$ "l" $$ (lam "x" $ "c" $$ ("f" $$ "x")) $$ "n"
+  
+-- non-fusing
 sum' =
   ann (list $$ nat ==> nat) $
   lam "ns" $ "ns" $$ nat $$ add $$ z
+
+-- fusing
+sum'' =
+  ann (list $$ nat ==> nat) $
+  lam "ns" $ lam "r" $ lam "s" $ 
+  "ns" $$ "r" $$ (lam "a" $ "a" $$ "r" $$ "s")
+
+sumMapFuse =
+  ann (list $$ nat ==> (nat ==> nat) ==> nat) $
+  lam "ns" $ lam "f" $
+  sum'' $$ (map'' $$ nat $$ nat $$ "f" $$ "ns")  
 
 natList = let c = cons $$ nat; n = nil $$ nat in
   c $$ z $$ (c $$ five $$ (c $$ ten $$ n))

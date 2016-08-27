@@ -19,10 +19,16 @@ import Data.HashMap.Strict (HashMap, (!))
 import qualified Data.HashMap.Strict as M
 
 {-
-Issue: when doing syn check we don't really need types, but must
-fiddle with them currently
-  - solution : Elaborate into unreduced Elab with annotated spines and all the pizazz
-               Keep raw terms really raw.
+  Future :
+    - Separate raw and core syntax. Core may have type annotations inside spines
+      or elsewhere.
+    - Question: how to properly convert unannotated arg lambdas to annotated?
+    - Include metadata on binders: lam | pi | let | unfolding rules etc.
+    - Ditch PiApp in favor of binding metadata
+    - Have proper env entries for Gen and Bound variables.
+    - One unchanging global env + small closures
+    - Closure conversion for Core syntax.
+    - How to easily switch between untyped and typed local closures?
 -}
 
 type Var   = String
@@ -31,7 +37,7 @@ type Depth = Int
 
 data Sp
   = Var !Var
-  | Gen !Gen -- only for syntactic equality
+  | Gen !Gen !GType -- only for syntactic equality
   | App !Sp !Term
 
 data Term
@@ -55,8 +61,8 @@ data WTerm
 
 type Type    = Term
 type WType   = WTerm
-data Closure = C !Env !Term
-data GTerm   = G {-# unpack #-} !Closure WTerm
+data C a     = C !Env !a
+data GTerm   = G {-# unpack #-} !(C Term) WTerm
 type GType   = GTerm
 data Entry   = E {-# unpack #-} !GTerm {-# unpack #-} !GType
 type Env     = HashMap Var Entry
@@ -67,8 +73,8 @@ type M       = Either String
 -- misc
 --------------------------------------------------------------------------------
 
-gen :: Gen -> GTerm
-gen g = G (C mempty (Sp (Gen g))) (WSp (WGen g))
+gen :: Gen -> GType -> GTerm
+gen g gty = G (C mempty (Sp (Gen g gty))) (WSp (WGen g))
 
 var :: Var -> GTerm
 var v = G (C mempty (Sp (Var v))) (WSp (WVar v))
@@ -133,7 +139,7 @@ instPi :: WPi_ -> GTerm -> WType
 instPi pi@(WPi_ e v a wa b) gt = whnf (e <: (v, gt, domG pi)) b
 
 divePi :: Gen -> WPi_ -> WType
-divePi g pi = instPi pi (gen g)
+divePi g pi = instPi pi (gen g (domG pi))
 
 quotePi :: WPi_ -> WType
 quotePi pi = instPi pi (var (domVar pi))
@@ -151,7 +157,7 @@ conv = go 0 WStar where
     go g (domW pi) (domW pi') WStar && go (g + 1) (divePi g pi) (divePi g pi') WStar
 
   go g (WPi pi) t t' =
-    go (g + 1) (divePi g pi) (wapp pi t (gen g)) (wapp pi t' (gen g))
+    go (g + 1) (divePi g pi) (wapp pi t (gen g (domG pi))) (wapp pi t' (gen g (domG pi)))
 
   go g _ (WSp sp) (WSp sp') = goSp g sp sp'
   go _ _ _ _ = error "conv: impossible"
@@ -219,66 +225,88 @@ infer !e = \case
   PiApp{} -> error "infer: PiApp"
 
 
-
-
-
-
-
-
-
-
 -- Syntactic equality (semidecision)
 --------------------------------------------------------------------------------
 
 ptrEq :: a -> a -> Bool
 ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
 
-varVar :: Gen -> Depth -> Env -> Env -> Var -> Var -> Maybe Bool
+varVar :: Gen -> Depth -> Env -> Env -> Var -> Var -> Maybe (Bool, WType)
 varVar !g !d !e !e' v v' = case (M.lookup v e, M.lookup v' e') of
   (Just entry@(E (G (C e t) _) gt), Just entry'@(E (G (C e' t') _) _))
-    | ptrEq entry entry' -> Just True
+    | ptrEq entry entry' -> Just (True, getW gt)
     | d == 0             -> Nothing
-    | otherwise          -> synEqN g (d - 1) e e' (getW gt) t t'
+    | otherwise          -> (,getW gt) <$> synEqN g (d - 1) e e' (getW gt) t t'
   _ -> Nothing
 
 synEqNSp :: Gen -> Depth -> Env -> Env -> Sp -> Sp -> Maybe Bool
 synEqNSp g d e e' sp sp' = fst <$> go sp sp' where
-  go (Gen v) (Gen v') = undefined -- Just (v == v')
+  go :: Sp -> Sp -> Maybe (Bool, WType)
+  go (Gen v gty) (Gen v' _)  = Just (v == v', getW gty)
+  go (Var v    ) (Var v'  )  = varVar g d e e' v v'
+  go (Var v    ) sp'         = varTerm g d e e' v (Sp sp')
+  go sp          (Var v')    = varTerm g d e e' v' (Sp sp)
+  go (App sp t) (App sp' t') = do
+    (b, WPi pi) <- go sp sp'
+    guard b
+    guard =<< synEqN g d e e' (domW pi) t t'
+    pure (True, instPi pi (glue e t))
+  go _ _ = Nothing
 
-  -- (Var v, Var v') -> varVar g d e e' v v'
-  -- (Var v, sp'   ) -> varTerm g d e e' v (Sp sp')
-  -- (sp   , Var v') -> varTerm g d e e' v' (Sp sp)
-  -- (App sp t, App sp' t') -> do
-  --   guard =<< synEqNSp g d e e' sp sp'
-  --   guard =<< synEq g d e e' t t'
-  --   pure True
-  -- _ -> Nothing
-
-varTerm :: Gen -> Depth -> Env -> Env -> Var -> Term -> Maybe Bool
+varTerm :: Gen -> Depth -> Env -> Env -> Var -> Term -> Maybe (Bool, WType)
 varTerm g d e e' v t' = do
   guard (d /= 0)
   E (G (C e t) _) gt <- M.lookup v e
-  synEqN g (d - 1) e e' (getW gt) t t'
+  (,getW gt) <$> synEqN g (d - 1) e e' (getW gt) t t'
+
+tapp :: WPi_ -> C Term -> Gen -> C Term
+tapp pi (C e (Sp sp))   g = C e (Sp (App sp (Sp (Gen g (domG pi)))))
+tapp pi (C e (Lam v t)) g = C (e <: (v, gen g (domG pi), domG pi)) t
+tapp _  _               _ = error "tapp: impossible"
 
 -- | Try to decide equality by doing PiApp elimination, n-depth delta-reduction,
 --   and eta-expansion. Beta reduction is *not* performed.
 --   A 'Nothing' result indicates that equality can't be decided this way.
+-- synEqN :: Gen -> Depth -> Env -> Env -> WType -> Term -> Term -> Maybe Bool
+-- synEqN g d e e' wty t t' = case (t, t') of
+--   (PiApp t v entry, t')   -> synEqN g d (M.insert v entry e) e' wty t t'
+--   (t, PiApp t' v' entry') -> synEqN g d e (M.insert v' entry' e') wty t t'
+--   _ -> case wty of
+--     WPi pi ->
+  -- (Sp sp, Sp sp')         -> synEqNSp g d e e' sp sp'
+  -- (Sp (Var v), t')        -> fst <$> varTerm g d e e' v t'
+  -- (t, Sp (Var v'))        -> fst <$> varTerm g d e e' v' t
+
+  -- (Lam v t, Lam v' t')    -> case wty of
+  --   WPi pi -> let ga = domG pi; gvar = gen g ga in
+  --     synEqN (g + 1) d (e <: (v, gvar, ga)) (e' <: (v', gvar, ga)) (divePi g pi) t t'
+  --   _ -> error "synEq: non-Pi type for Lam"
+
+  -- (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d e e' WStar a a' <*>
+  --   (let ga = glue e a; gvar = gen g ga in
+  --    synEqN (g + 1) d (e <: (v, gvar, ga)) (e' <: (v', gvar, ga)) WStar b b')
+
+  -- (Star, Star) -> Just True
+  -- _            -> Just False
+
+
+
 synEqN :: Gen -> Depth -> Env -> Env -> WType -> Term -> Term -> Maybe Bool
 synEqN g d e e' wty t t' = case (t, t') of
 
   (PiApp t v entry, t')   -> synEqN g d (M.insert v entry e) e' wty t t'
   (t, PiApp t' v' entry') -> synEqN g d e (M.insert v' entry' e') wty t t'
   (Sp sp, Sp sp')         -> synEqNSp g d e e' sp sp'
-  (Sp (Var v), t')        -> varTerm g d e e' v t'
-  (t, Sp (Var v'))        -> varTerm g d e e' v' t
+  (Sp (Var v), t')        -> fst <$> varTerm g d e e' v t'
+  (t, Sp (Var v'))        -> fst <$> varTerm g d e e' v' t
 
   (Lam v t, Lam v' t')    -> case wty of
-    WPi pi -> let gvar = gen g; ga = domG pi in
+    WPi pi -> let ga = domG pi; gvar = gen g ga in
       synEqN (g + 1) d (e <: (v, gvar, ga)) (e' <: (v', gvar, ga)) (divePi g pi) t t'
     _ -> error "synEq: non-Pi type for Lam"
 
   (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d e e' WStar a a' <*>
-    (let gvar = gen g; ga = glue e a in
+    (let ga = glue e a; gvar = gen g ga in
      synEqN (g + 1) d (e <: (v, gvar, ga)) (e' <: (v', gvar, ga)) WStar b b')
 
   (Star, Star) -> Just True

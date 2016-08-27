@@ -38,14 +38,18 @@ tracing a = traceShow a a
 
     3. We never recompute whnf, types, or whnf of types for any Term
 
-    4. NOT YET IMPLEMENTED: we don't retain more entries in environments
+    4. Time and space overhead of storing unreduced terms must be O(1)
+       in the size of the source code, compared to non-glued type checking
+       with beta-eta conversions.
+
+    5. NOT YET IMPLEMENTED: we don't retain more entries in environments
        than an STG machine would.
 
-    5. No new Terms may be created expect by PiApp. If there's a non-PiApp
-       Term at runtime, it must equal to some Term that was present in the
-       source code.
+    6. No new Terms may be created and stored during type checking,
+       expect when created by PiApp. Since PiApp-s are bounded by
+       source code size, Terms in general are bounded by source code size as well.
 
-    6. No new Var-s may be created. All Var-s come from the source code.
+    7. No new Var-s may be created. All Var-s come from the source code.
        The only available operations on Var-s are equality checking and
        Env insertion/lookup.
 
@@ -53,11 +57,15 @@ tracing a = traceShow a a
 
 
 {-
-  Future :
+  Notes:
     - Separate raw and core syntax. Core may have type annotations inside spines
       or elsewhere.
     - Question: how to properly convert unannotated arg lambdas to annotated?
     - Include metadata on binders: lam | pi | let | unfolding rules etc.
+
+    - Question: what is the best spine / App data shape?
+      - Outer application first: easier to apply
+      - Inner application first: faster to wapp
 
     - Can't fully ditch PiApp in favor of metadata:
           - "PiApp (Sp sp)" y can't be reduced
@@ -67,8 +75,7 @@ tracing a = traceShow a a
     - One unchanging global env + small closures
     - Closure conversion for Core syntax.
     - How to easily switch between untyped and typed local closures?
-    - Unique global binder identifiers: make it possible to check syntactic
-      Var equality without ptrEq
+    - Unique global binder identifiers
 
   Implementation niceties:
     put Env in a Reader, use "local"
@@ -139,6 +146,9 @@ domG (WPi_ e v a wa b) = G (C e a) wa
 domW :: WPi_ -> WType
 domW (WPi_ _ _ _ wa _) = wa
 
+lamVar :: WLam_ -> Var
+lamVar (WLam_ e v t) = v
+
 domVar :: WPi_ -> Var
 domVar (WPi_ _ v _ _ _) = v
 
@@ -151,9 +161,6 @@ gstar = G (C mempty Star) WStar
 (<:) :: Env -> (Var, GTerm, GType) -> Env
 e <: (v, gt, gty) = M.insert v (E gt gty) e
 
-(<::) :: Env -> (Var, GType) -> Env
-e <:: (v, gty) = e <: (v, var v, gty)
-
 -- Whnf
 --------------------------------------------------------------------------------
 
@@ -165,7 +172,7 @@ wapp _  _          _  = error "wapp: impossible"
 whnfSp :: Env -> Sp -> WTerm
 whnfSp e = fst . go where
   go :: Sp -> (WTerm, WType)
-  go (Var v)    = let E _ gty = e ! v in (WSp (WVar v), getW gty)
+  go (Var v)    = let E (G _ wt) gty = e ! v in (wt, getW gty)
   go Gen{}      = error "whnfSp: Gen"
   go (App sp t) = let gt = glue e t in case go sp of
     (wt, WPi pi) -> (wapp pi wt gt, instPi pi gt)
@@ -183,15 +190,19 @@ whnf !e = \case
   Star          -> WStar
   PiApp{}       -> error "whnf: PiApp"
 
--- Quoting to beta-eta normal form
+-- Quoting to beta normal form
 --------------------------------------------------------------------------------
 
+-- NOTE: quoting to eta-beta normal form requires fresh name generation, or
+-- generic/de Bruijn vars used as actual variables!
+-- That's why we're not doing eta-expansion here.
+
 quote :: WTerm -> WType -> Term
-quote WStar    _       = Star
-quote (WPi pi) _       = Pi (domVar pi) (quote (domW pi) WStar) (quote (quotePi pi) WStar)
-quote wt      (WPi pi) = Lam (domVar pi) (quote (wapp pi wt (var (domVar pi))) (quotePi pi))
-quote (WSp sp) _       = Sp (quoteSp sp)
-quote _        _       = error "quote: impossible"
+quote WStar      _        = Star
+quote (WPi  pi)  _        = Pi (domVar pi) (quote (domW pi) WStar) (quote (quotePi pi) WStar)
+quote (WLam lam) (WPi pi) = Lam (lamVar lam) (quote (quoteLam lam pi) (quotePi pi))
+quote (WSp sp)   _        = Sp (quoteSp sp)
+quote _          _        = error "quote: impossible"
 
 quoteSp :: WSp -> Sp
 quoteSp (WVar v)         = Var v
@@ -204,8 +215,14 @@ quoteSp WGen{}           = error "quoteSp: WGen"
 instLam :: WLam_ -> WPi_ -> GTerm -> WTerm
 instLam (WLam_ e v t) pi gt = whnf (e <: (v, gt, domG pi)) t
 
+quoteLam :: WLam_ -> WPi_ -> WType
+quoteLam lam pi = instLam lam pi (var (lamVar lam))
+
 instPi :: WPi_ -> GTerm -> WType
 instPi pi@(WPi_ e v a wa b) gt = whnf (e <: (v, gt, domG pi)) b
+
+quotePi :: WPi_ -> WType
+quotePi pi = instPi pi (var (domVar pi))
 
 instGPi :: Closure -> WPi_ -> GTerm -> GType
 instGPi (C e t) pi gt = G (C e (PiApp t (E gt (domG pi)))) (instPi pi gt)
@@ -213,8 +230,6 @@ instGPi (C e t) pi gt = G (C e (PiApp t (E gt (domG pi)))) (instPi pi gt)
 divePi :: Gen -> WPi_ -> WType
 divePi g pi = instPi pi (gen g (domG pi))
 
-quotePi :: WPi_ -> WType
-quotePi pi = instPi pi (var (domVar pi))
 
 -- Beta-eta conversion check
 --------------------------------------------------------------------------------
@@ -243,8 +258,40 @@ conv = go 0 WStar where
 -- Syntactic equality (semidecision)
 --------------------------------------------------------------------------------
 
+-- | Try to decide equality by doing PiApp elimination, n-depth delta-reduction
+--   and eta-expansion. Beta reduction is *not* performed.
+--   A 'Nothing' result indicates that equality can't be decided this way.
+synEqN :: Gen -> Depth -> Closure -> Closure -> WType -> Maybe Bool
+synEqN g d ct@(C e t) ct'@(C e' t') wty = case wty of
+  WPi pi -> synEqN (g + 1) d (synEta g pi ct) (synEta g pi ct') (divePi g pi)
+  _      -> case (t, t') of
+
+    (PiApp (Pi v a b) x, t')    -> synEqN g d (C (M.insert v x e) b) (C e' t') wty
+    (t, PiApp (Pi v' a' b') x') -> synEqN g d (C e t) (C (M.insert v' x' e') b') wty
+
+    (PiApp (Sp sp) (E (G ct _) gty), PiApp (Sp sp') (E (G ct' _) _)) ->
+      True <$ do {guard =<< synEqNSp g d e e' sp sp'; guard =<< synEqN g d ct ct' (getW gty)}
+
+    (Sp sp, Sp sp')  -> synEqNSp g d e e' sp sp'
+    (Sp (Var v), t') -> fst <$> varTerm g d e e' v t'
+    (t, Sp (Var v')) -> fst <$> varTerm g d e e' v' t
+
+    (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d (C e a) (C e' a') WStar <*>
+      (let ga = glue e a; gvar = gen g ga in
+       synEqN (g + 1) d (C (e <: (v, gvar, ga)) b) (C (e' <: (v', gvar, ga)) b') WStar)
+
+    (Star, Star) -> Just True
+    _            -> Just False
+
 ptrEq :: a -> a -> Bool
 ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
+{-# inline ptrEq #-}
+
+synEta :: Gen -> WPi_ -> Closure -> Closure
+synEta g pi (C e t) = case t of
+  Sp sp   -> C e (Sp (App sp (Sp (Gen g (domG pi)))))
+  Lam v t -> C (e <: (v, gen g (domG pi), domG pi)) t
+  _       -> error "synEta: impossible"
 
 varVar :: Gen -> Depth -> Env -> Env -> Var -> Var -> Maybe (Bool, WType)
 varVar !g !d !e !e' v v' = case (M.lookup v e, M.lookup v' e') of
@@ -274,47 +321,14 @@ varTerm g d e e' v t' = do
   E (G (C e t) _) gt <- M.lookup v e
   (,getW gt) <$> synEqN g (d - 1) (C e t) (C e' t') (getW gt)
 
-synEta :: Gen -> WPi_ -> Closure -> Closure
-synEta g pi (C e t) = case t of
-  Sp sp   -> C e (Sp (App sp (Sp (Gen g (domG pi)))))
-  Lam v t -> C (e <: (v, gen g (domG pi), domG pi)) t
-  _       -> error "synEta: impossible"
-
-piApp :: Env -> Term -> Entry -> Closure
-piApp e (Pi v a b) entry = C (M.insert v entry e) b
-piApp e t          entry = C e (PiApp t entry)
-
--- | Try to decide equality by doing PiApp elimination, n-depth delta-reduction
---   and eta-expansion. Beta reduction is *not* performed.
---   A 'Nothing' result indicates that equality can't be decided this way.
-synEqN :: Gen -> Depth -> Closure -> Closure -> WType -> Maybe Bool
-synEqN g d ct@(C e t) ct'@(C e' t') wty = case wty of
-  WPi pi -> synEqN (g + 1) d (synEta g pi ct) (synEta g pi ct') (divePi g pi)
-  _      -> case (t, t') of
-
-    (PiApp t x, t')  -> synEqN g d (piApp e t x) (C e' t') wty
-    (t, PiApp t' x') -> synEqN g d (C e t) (piApp e' t' x') wty
-    (Sp sp, Sp sp')  -> synEqNSp g d e e' sp sp'
-    (Sp (Var v), t') -> fst <$> varTerm g d e e' v t'
-    (t, Sp (Var v')) -> fst <$> varTerm g d e e' v' t
-
-    (Lam v t, Lam v' t')    -> case wty of
-      WPi pi -> let ga = domG pi; gvar = gen g ga in
-        synEqN (g + 1) d (C (e <: (v, gvar, ga)) t) (C (e' <: (v', gvar, ga)) t') (divePi g pi)
-      _ -> error "synEq: non-Pi type for Lam"
-
-    (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d (C e a) (C e' a') WStar <*>
-      (let ga = glue e a; gvar = gen g ga in
-       synEqN (g + 1) d (C (e <: (v, gvar, ga)) b) (C (e' <: (v', gvar, ga)) b') WStar)
-
-    (Star, Star) -> Just True
-    _            -> Just False
-
 -- Full equality
 --------------------------------------------------------------------------------
 
+deltaDepth :: Depth
+deltaDepth = 1
+
 eq :: GType -> GType -> Bool
-eq (G ct wt) (G ct' wt') = case synEqN 0 1 ct ct' WStar of
+eq (G ct wt) (G ct' wt') = case synEqN 0 deltaDepth ct ct' WStar of
   Just b -> b
   _      -> conv wt wt'
 
@@ -324,7 +338,7 @@ eq (G ct wt) (G ct' wt') = case synEqN 0 1 ct ct' WStar of
 check :: Env -> Term -> GType -> M ()
 check !e t want = case (t, want) of
   (Lam v t, G cpi (WPi pi)) ->
-    check (e <:: (v, domG pi)) t (instGPi cpi pi (var v))
+    check (e <: (v, var v, domG pi)) t (instGPi cpi pi (var v))
   _ -> do
     has <- infer e t
     unless (eq has want) $ throwError "type mismatch"
@@ -342,13 +356,13 @@ inferSp e = \case
   Gen{} -> error "inferSp: Gen"
 
 infer :: Env -> Term -> M GType
-infer !e = \case
+infer !e t = case t of
   Sp sp    -> inferSp e sp
   Star     -> pure gstar
   Lam{}    -> throwError "can't infer type for lambda"
   Pi v a b -> do
     check e a gstar
-    check (e <:: (v, glue e a)) b gstar
+    check (e <: (v, var v, glue e a)) b gstar
     pure gstar
   Let v t ty t' -> do
     check e ty gstar
@@ -360,9 +374,16 @@ infer !e = \case
 infer0 :: Term -> M GType
 infer0 = infer mempty
 
+-- eval0 :: Term -> M Term
+eval0 t = do
+  gty <- infer0 t
+  -- pure $ whnf mempty t
+  pure $ quote (whnf mempty t) (getW gty)
+
 --------------------------------------------------------------------------------
 
 instance IsString Term where fromString = Sp . Var
+instance IsString Sp   where fromString = Var
 
 a ==> b = Pi "" a b
 ($$) = App
@@ -370,13 +391,20 @@ infixl 8 $$
 infixr 3 ==>
 
 test =
-  -- Let "id" (Lam "a" $ Lam "x" "x") (Pi "a" Star $ "a" ==> "a") $
-  -- Let "const" (Lam "a" $ Lam "b" $ Lam "x" $ Lam "y" "x")
-  --             (Pi "a" Star $ Pi "b" Star $ "a" ==> "b" ==> "a") $
-  Let "nat" (Lam "a" $ Pi "r" Star $ ("r" ==> "r") ==> "r" ==> "r")
-            (Star ==> Star) $
+  Let "id" (Lam "a" $ Lam "x" "x") (Pi "a" Star $ "a" ==> "a") $
 
-  "nat"
+  Let "const" (Lam "a" $ Lam "b" $ Lam "x" $ Lam "y" "x")
+              (Pi "a" Star $ Pi "b" Star $ "a" ==> "b" ==> "a") $
+  Let "nat" (Pi "r" Star $ ("r" ==> "r") ==> "r" ==> "r") Star $
+
+  Let "list" (Lam "a" $ Pi "r" Star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")
+             (Star ==> Star) $
+
+  Let "foo" (Lam "f" "f") ((Star ==> Star) ==> Star ==> Star) $
+  "list"
+
+
+
 
 -- print
 --------------------------------------------------------------------------------

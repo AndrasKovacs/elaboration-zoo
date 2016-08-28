@@ -1,7 +1,7 @@
 
 {-# language
   PatternSynonyms, BangPatterns, MagicHash,
-  DataKinds, LambdaCase, ViewPatterns,
+  DataKinds, LambdaCase, ViewPatterns, TupleSections,
   TypeFamilies, GADTs, EmptyCase, OverloadedStrings #-}
 
 {-# options_ghc -fwarn-incomplete-patterns #-}
@@ -24,6 +24,10 @@ import Debug.Trace
 tracing :: Show a => a -> a
 tracing a = traceShow a a
 
+{- TODO:
+   Version with glued TC Env but only whnf closures in WTerm
+   Version with closure conversion?
+-}
 {-
 
   Glued principles:
@@ -76,6 +80,7 @@ tracing a = traceShow a a
     - Closure conversion for Core syntax.
     - How to easily switch between untyped and typed local closures?
     - Unique global binder identifiers
+      - non-shadowing binders enough to implement syntactic bound var equality
 
   Implementation niceties:
     put Env in a Reader, use "local"
@@ -125,7 +130,8 @@ type WType   = WTerm
 data Closure = C !Env !Term deriving Show
 data GTerm   = G {-# unpack #-} !Closure WTerm deriving Show
 type GType   = GTerm
-data Entry   = E {-# unpack #-} !GTerm {-# unpack #-} !GType deriving Show
+data Entry   = E {-# unpack #-} !GTerm {-# unpack #-} !GType
+instance Show Entry where show _ = "<entry>"
 type Env     = HashMap Var Entry
 data WPi_    = WPi_ !Env !Var !Type WType !Term deriving Show
 data WLam_   = WLam_ !Env !Var !Term deriving Show
@@ -167,7 +173,7 @@ e <: (v, gt, gty) = M.insert v (E gt gty) e
 wapp :: WPi_ -> WTerm -> GTerm -> WTerm
 wapp pi (WLam lam) gt = instLam lam pi gt
 wapp pi (WSp  sp ) gt = WSp (WApp sp (getW gt) (domW pi))
-wapp _  _          _  = error "wapp: impossible"
+wapp _  w          g  = error "wapp: impossible"
 
 whnfSp :: Env -> Sp -> WTerm
 whnfSp e = fst . go where
@@ -209,6 +215,8 @@ quoteSp (WVar v)         = Var v
 quoteSp (WApp sp wt wty) = App (quoteSp sp) (quote wt wty)
 quoteSp WGen{}           = error "quoteSp: WGen"
 
+nfWTy = flip quote WStar
+
 -- Going under binders
 --------------------------------------------------------------------------------
 
@@ -235,16 +243,17 @@ divePi g pi = instPi pi (gen g (domG pi))
 --------------------------------------------------------------------------------
 
 conv :: WType -> WType -> Bool
-conv = go 0 WStar where
+conv t t' = go 0 WStar t t' where
 
   go :: Gen -> WType -> WTerm -> WTerm -> Bool
   go !g ty WStar WStar = True
 
+  -- the two divePi entries could be shared by inlining
   go g ty (WPi pi) (WPi pi') =
-    go g (domW pi) (domW pi') WStar && go (g + 1) (divePi g pi) (divePi g pi') WStar
+    go g WStar (domW pi) (domW pi') && go (g + 1) WStar (divePi g pi) (divePi g pi')
 
-  go g (WPi pi) t t' =
-    go (g + 1) (divePi g pi) (wapp pi t (gen g (domG pi))) (wapp pi t' (gen g (domG pi)))
+  go g (WPi pi) t t' = let gvar = gen g (domG pi) in
+    go (g + 1) (divePi g pi) (wapp pi t gvar) (wapp pi t' gvar)
 
   go g _ (WSp sp) (WSp sp') = goSp g sp sp'
   go _ _ _ _ = error "conv: impossible"
@@ -258,40 +267,54 @@ conv = go 0 WStar where
 -- Syntactic equality (semidecision)
 --------------------------------------------------------------------------------
 
--- | Try to decide equality by doing PiApp elimination, n-depth delta-reduction
---   and eta-expansion. Beta reduction is *not* performed.
---   A 'Nothing' result indicates that equality can't be decided this way.
+-- | Try to decide equality by doing n-depth delta reduction, eta expansion
+--   and PiApp/Let reduction. Returns 'Nothing' if equality can't be decided
+--   this way.
 synEqN :: Gen -> Depth -> Closure -> Closure -> WType -> Maybe Bool
-synEqN g d ct@(C e t) ct'@(C e' t') wty = case wty of
-  WPi pi -> synEqN (g + 1) d (synEta g pi ct) (synEta g pi ct') (divePi g pi)
-  _      -> case (t, t') of
-
-    (PiApp (Pi v a b) x, t')    -> synEqN g d (C (M.insert v x e) b) (C e' t') wty
-    (t, PiApp (Pi v' a' b') x') -> synEqN g d (C e t) (C (M.insert v' x' e') b') wty
+synEqN g d ct ct' wty = case (preproc g wty ct, preproc g wty ct') of
+  (C e t, C e' t') -> case (t, t') of
+    (Star, Star) -> Just True
 
     (PiApp (Sp sp) (E (G ct _) gty), PiApp (Sp sp') (E (G ct' _) _)) ->
       True <$ do {guard =<< synEqNSp g d e e' sp sp'; guard =<< synEqN g d ct ct' (getW gty)}
-
-    (Sp sp, Sp sp')  -> synEqNSp g d e e' sp sp'
-    (Sp (Var v), t') -> fst <$> varTerm g d e e' v t'
-    (t, Sp (Var v')) -> fst <$> varTerm g d e e' v' t
 
     (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d (C e a) (C e' a') WStar <*>
       (let ga = glue e a; gvar = gen g ga in
        synEqN (g + 1) d (C (e <: (v, gvar, ga)) b) (C (e' <: (v', gvar, ga)) b') WStar)
 
-    (Star, Star) -> Just True
-    _            -> Just False
+    -- (Lam-Lam case covered by synEta)
+    (Sp sp, Sp sp')  -> synEqNSp g d e e' sp sp'
+    (Sp (Var v), t') -> fst <$> varTerm g d e e' v t'
+    (t, Sp (Var v')) -> fst <$> varTerm g d e e' v' t
+    (PiApp{}, _)     -> Nothing
+    (_, PiApp{})     -> Nothing
+    (Sp{}, _)        -> Nothing
+    (_, Sp{})        -> Nothing
+    _                -> Just False
+
+preproc :: Gen -> WType -> Closure -> Closure
+preproc g wty = synEta g wty . bindElim
+
+-- | Move top level Let bindings and reducible PiApp args into
+--   the environment.
+bindElim :: Closure -> Closure
+bindElim (C e t) = case t of
+  PiApp f x -> case bindElim (C e f) of
+    C e (Pi v a b) -> C (M.insert v x e) b
+    C e f          -> C e (PiApp f x)
+  Let v t ty t' -> bindElim (C (e <: (v, glue e ty, glue e t)) t')
+  _ -> C e t
+
+synEta :: Gen -> WType -> Closure -> Closure
+synEta g (WPi pi) (C e t) = case t of
+  Sp sp   -> C e (Sp (App sp (Sp (Gen g (domG pi)))))
+  Lam v t -> C (e <: (v, gen g (domG pi), domG pi)) t
+  _       -> C e t
+synEta _ _ (C e t) = C e t
 
 ptrEq :: a -> a -> Bool
 ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
 {-# inline ptrEq #-}
-
-synEta :: Gen -> WPi_ -> Closure -> Closure
-synEta g pi (C e t) = case t of
-  Sp sp   -> C e (Sp (App sp (Sp (Gen g (domG pi)))))
-  Lam v t -> C (e <: (v, gen g (domG pi), domG pi)) t
-  _       -> error "synEta: impossible"
 
 varVar :: Gen -> Depth -> Env -> Env -> Var -> Var -> Maybe (Bool, WType)
 varVar !g !d !e !e' v v' = case (M.lookup v e, M.lookup v' e') of
@@ -299,6 +322,7 @@ varVar !g !d !e !e' v v' = case (M.lookup v e, M.lookup v' e') of
     | ptrEq entry entry' -> Just (True, getW gt)
     | d == 0             -> Nothing
     | otherwise          -> (,getW gt) <$> synEqN g (d - 1) (C e t) (C e' t') (getW gt)
+
   _ -> Nothing
 
 synEqNSp :: Gen -> Depth -> Env -> Env -> Sp -> Sp -> Maybe Bool
@@ -328,23 +352,29 @@ deltaDepth :: Depth
 deltaDepth = 1
 
 eq :: GType -> GType -> Bool
-eq (G ct wt) (G ct' wt') = case synEqN 0 deltaDepth ct ct' WStar of
-  Just b -> b
-  _      -> conv wt wt'
+eq (G ct@(C _ t) wt) (G ct'@(C _ t') wt') =
+  case synEqN 0 deltaDepth ct ct' WStar of
+    Just b -> traceShow (t, t', nfWTy wt, nfWTy wt') b
+    _      -> conv wt wt'
 
 -- Check & infer
 --------------------------------------------------------------------------------
 
 check :: Env -> Term -> GType -> M ()
 check !e t want = case (t, want) of
-  (Lam v t, G cpi (WPi pi)) ->
-    check (e <: (v, var v, domG pi)) t (instGPi cpi pi (var v))
+  (Lam v t, G (C e' tpi) (WPi pi@(WPi_ e'' v' a' wa' b'))) -> do
+    -- Inlining stuff so we explicitly share the Entry
+    let !varv  = var v
+        !dom   = domG pi
+        !entry = E varv dom
+    check (M.insert v entry e) t (G (C e' (PiApp tpi entry)) (whnf (M.insert v' entry e'') b'))
+
   _ -> do
     has <- infer e t
     unless (eq has want) $ throwError "type mismatch"
 
 inferSp :: Env -> Sp -> M GType
-inferSp e = \case
+inferSp e sp = case sp of
   Var v    -> let E _ gty = e ! v in pure gty
   App sp t -> do
     G spTy wSpTy <- inferSp e sp
@@ -371,13 +401,12 @@ infer !e t = case t of
     infer (e <: (v, glue e t, gty)) t'
   PiApp{} -> error "infer: PiApp"
 
-infer0 :: Term -> M GType
-infer0 = infer mempty
+infer0 :: Term -> M Term
+infer0 = fmap (flip quote WStar . getW) . infer mempty
 
--- eval0 :: Term -> M Term
+eval0 :: Term -> M Term
 eval0 t = do
-  gty <- infer0 t
-  -- pure $ whnf mempty t
+  gty <- infer mempty t
   pure $ quote (whnf mempty t) (getW gty)
 
 --------------------------------------------------------------------------------
@@ -386,12 +415,13 @@ instance IsString Term where fromString = Sp . Var
 instance IsString Sp   where fromString = Var
 
 a ==> b = Pi "" a b
-($$) = App
+Sp sp $$ x = Sp (App sp x)
+_     $$ x = undefined
 infixl 8 $$
 infixr 3 ==>
 
 test =
-  Let "id" (Lam "a" $ Lam "x" "x") (Pi "a" Star $ "a" ==> "a") $
+  Let "id" (Lam "a" $ Lam "x" $ "x") (Pi "z" Star $ "z" ==> "z") $
 
   Let "const" (Lam "a" $ Lam "b" $ Lam "x" $ Lam "y" "x")
               (Pi "a" Star $ Pi "b" Star $ "a" ==> "b" ==> "a") $
@@ -400,87 +430,22 @@ test =
   Let "list" (Lam "a" $ Pi "r" Star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")
              (Star ==> Star) $
 
-  Let "foo" (Lam "f" "f") ((Star ==> Star) ==> Star ==> Star) $
-  "list"
+  Let "ap" (Lam "a" $ Lam "b" $ Lam "f" $ Lam "x" $ "f" $$ "x")
+           (Pi "a" Star $ Pi "b" Star $ ("a" ==> "b") ==> "a" ==> "b") $
 
+  Let "f"     (Lam "f" "f")                    ((Star ==> Star) ==> Star ==> Star) $
+  Let "f-eta" (Lam "f" $ Lam "x" $ "f" $$ "x") ((Star ==> Star) ==> Star ==> Star) $
 
+  -- Leibniz equality
+  Let "eq" (Lam "a" $ Lam "x" $ Lam "y" $ Pi "p" ("a" ==> Star) $ "p" $$ "x" ==> "p" $$ "y")
+           (Pi "a__" Star $ "a__" ==> "a__" ==> Star) $
 
+  Let "refl" (Lam "a" $ Lam "x" $ Lam "p" $ Lam "px" "px")
+             (Pi "a_" Star $ Pi "x_" "a_" $ "eq" $$ "a_" $$ "x_" $$ "x_") $
 
--- print
---------------------------------------------------------------------------------
+  Let "etaTest"
+    ("refl" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f")
+    ("eq" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f" $$ "f-eta") $
 
--- prettyTerm :: Int -> Term -> ShowS
--- prettyTerm prec = go (prec /= 0) where
-
---   go = _
-
---   unwords' :: [ShowS] -> ShowS
---   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
-
-  -- spine :: Sp -> Term -> ShowS
-  -- spine f x = go f [x] where
-  --   go (QApp f y) args = go f (y : args)
-  --   go (Var v)    args = t:args
-
---   go :: Bool -> QTerm -> ShowS
---   go p (QVar i)   = (i++)
---   go p (QApp f x) = showParen p (unwords' $ map (go True) (spine f x))
---   go p (QLam k t) = showParen p
---     (("λ "++) . (k++) . (". "++) . go False t)
---   go p (QPi k a b) = showParen p (arg . (" -> "++) . go False b)
---     where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
---                               else go True a
---   go p QStar = ('*':)
---   go p (QAnn t ty) = showParen p (go False t . (" ∈ "++) . go False ty)
---   go p (QLet v t1 t2) =
---     showParen p (("let "++) . (v++) . (" = "++) . go False t1 . (" in \n"++) .
---                 go False t2)
-
---   freeIn :: Var -> QTerm -> Bool
---   freeIn k = go where
---     go (QVar i)      = i == k
---     go (QApp f x)    = go f || go x
---     go (QLam k' t)   = (k' /= k && go t)
---     go (QPi  k' a b) = go a || (k' /= k && go b)
---     go _             = False
-
--- prettyATerm :: Int -> ATerm -> ShowS
--- prettyATerm prec = go (prec /= 0) where
-
---   unwords' :: [ShowS] -> ShowS
---   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
-
---   spine :: ATerm -> ATerm -> [ATerm]
---   spine f x = go f [x] where
---     go (AApp f y) args = go f (y : args)
---     go t          args = t:args
-
---   go :: Bool -> ATerm -> ShowS
---   go p (AVar i)     = (i++)
---   go p (AAlpha i)   = showParen p (("alpha " ++ show i)++)
---   go p (AApp f x)   = showParen p (unwords' $ map (go True) (spine f x))
---   go p (APiApp f x) = showParen p (unwords' $ map (go True) (spine f x))
---   go p (ALam k a t) = showParen p
---     (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (". "++) . go False t)
---   go p (APi k a b) = showParen p (arg . (" -> "++) . go False b)
---     where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
---                               else go True a
---   go p AStar = ('*':)
---   go p (Close (C e t)) = go p t
---   go p (ALet v ty t1 t2) =
---     showParen p (("let "++) . (v++) . (" = "++) .
---                  go False t1 . (" ∈ "++) . go False ty .
---                  (" in \n"++) . go False t2)
---   freeIn :: String -> ATerm -> Bool
---   freeIn k = go where
---     go (AVar i)      = i == k
---     go (AApp f x)    = go f || go x
---     go (ALam k' a t) = go a || (k' /= k && go t)
---     go (APi  k' a b) = go a || (k' /= k && go b)
---     go _             = False
-
--- instance Show ATerm where
---   showsPrec = prettyATerm
--- -- deriving instance Show ATerm
-
+  Star
 

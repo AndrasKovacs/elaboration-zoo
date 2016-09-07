@@ -19,10 +19,15 @@ import Data.String
 import Data.HashMap.Strict (HashMap, (!))
 import qualified Data.HashMap.Strict as M
 
-import Debug.Trace
+import qualified Debug.Trace as Trace
 
-tracing :: Show a => a -> a
-tracing a = traceShow a a
+tracing a    = Trace.traceShow a a
+traceShow x  = Trace.traceShow x
+traceShowM x = Trace.traceShowM x
+trace        = Trace.trace
+traceM x     = Trace.traceM x
+
+
 
 {- TODO:
    Version with glued TC Env but only whnf closures in WTerm
@@ -42,7 +47,7 @@ tracing a = traceShow a a
 
     3. We never recompute whnf, types, or whnf of types for any Term
 
-    4. Time and space overhead of storing unreduced terms must be O(1)
+    4. Time and space overhead of storing unreduced terms must be O(N)
        in the size of the source code, compared to non-glued type checking
        with beta-eta conversions.
 
@@ -256,7 +261,7 @@ conv t t' = go 0 WStar t t' where
     go (g + 1) (divePi g pi) (wapp pi t gvar) (wapp pi t' gvar)
 
   go g _ (WSp sp) (WSp sp') = goSp g sp sp'
-  go _ _ _ _ = error "conv: impossible"
+  go g _ _        _         = False
 
   goSp :: Gen -> WSp -> WSp -> Bool
   goSp !g (WGen v)         (WGen v')           = v == v'
@@ -268,8 +273,8 @@ conv t t' = go 0 WStar t t' where
 --------------------------------------------------------------------------------
 
 -- | Try to decide equality by doing n-depth delta reduction, eta expansion
---   and PiApp/Let reduction. Returns 'Nothing' if equality can't be decided
---   this way.
+--   and PiApp/Let reduction. Beta reduction is *not* performed.
+--   Returns 'Nothing' if equality can't be decided this way.
 synEqN :: Gen -> Depth -> Closure -> Closure -> WType -> Maybe Bool
 synEqN g d ct ct' wty = case (preproc g wty ct, preproc g wty ct') of
   (C e t, C e' t') -> case (t, t') of
@@ -354,7 +359,7 @@ deltaDepth = 1
 eq :: GType -> GType -> Bool
 eq (G ct@(C _ t) wt) (G ct'@(C _ t') wt') =
   case synEqN 0 deltaDepth ct ct' WStar of
-    Just b -> traceShow (t, t', nfWTy wt, nfWTy wt') b
+    Just b -> b
     _      -> conv wt wt'
 
 -- Check & infer
@@ -404,6 +409,11 @@ infer !e t = case t of
 infer0 :: Term -> M Term
 infer0 = fmap (flip quote WStar . getW) . infer mempty
 
+inferT0 :: Term -> M Term
+inferT0 t = do
+  G (C _ t') _ <- infer mempty t
+  pure t'
+
 eval0 :: Term -> M Term
 eval0 t = do
   gty <- infer mempty t
@@ -447,5 +457,45 @@ test =
     ("refl" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f")
     ("eq" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f" $$ "f-eta") $
 
-  Star
+  Let "z" (Lam "r" $ Lam "s" $ Lam "z" "z") "nat" $
+
+  Let "s" (Lam "n" $ Lam "r" $ Lam "s" $ Lam "z" $ "s" $$ ("n" $$ "r" $$ "s" $$ "z"))
+          ("nat" ==> "nat") $
+
+  Let "nf" (Lam "n" $ "n" $$ Star $$ (Lam "t" $ Star ==> "t") $$ Star)
+           ("nat" ==> Star) $
+
+  Let "five" (Lam "r" $ Lam "s" $ Lam "z" $ "s" $$ ("s" $$ ("s" $$ ("s" $$ ("s" $$ "z")))))
+             "nat" $
+
+  Let "add"
+    (Lam "a" $ Lam "b" $ Lam "r" $ Lam "s" $ Lam "z" $
+    "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z"))
+    ("nat" ==> "nat" ==> "nat") $
+
+  Let "mul"
+    (Lam "a" $ Lam "b" $ Lam "r" $ Lam "s" $
+    "a" $$ "r" $$ ("b" $$ "r" $$ "s"))
+    ("nat" ==> "nat" ==> "nat") $
+
+  Let "ten" ("add" $$ "five" $$ "five") "nat" $
+
+  Let "hundred" ("mul" $$ "ten" $$ "ten") "nat" $
+
+  Let "10K" ("mul" $$ "hundred" $$ "hundred") "nat" $
+
+  Let "50K" ("mul" $$ "10K" $$ "five") "nat" $
+
+  Let "nf" (Lam "n" $ "n" $$ Star $$ (Lam "t" $ Star ==> "t") $$ Star)
+           ("nat" ==> Star) $
+
+  Let "stress1" (Lam "x" "x") ("nf" $$ "50K" ==> "nf" $$ "50K") $
+
+  Let "stress2" (Lam "f" $ Lam "n" $ "f" $$ "n")
+                (("nat" ==> "nf" $$ "50K") ==> "nat" ==> "nf" $$ "50K")
+
+  "stress2"
+
+checkTest = isRight $ infer0 test
+
 

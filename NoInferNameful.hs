@@ -19,19 +19,19 @@ import Data.HashMap.Strict (HashMap, (!))
 import qualified Data.HashMap.Strict as HM
 
 data Term
-  = Var String
-  | App Term Term
-  | Lam String Term
-  | Ann Term Term
-  | Pi String Term Term
+  = Var !String
+  | App !Term !Term
+  | Lam !String !Term
+  | Ann !Term !Term
+  | Pi !String !Term !Term
   | Star
 
 data Val
-  = VVar String
+  = VVar !String
   | BVar !Int
-  | VApp Val Val
-  | VLam String (Val -> Val)
-  | VPi  String Type (Val -> Val)
+  | VApp !Val Val
+  | VLam !String !(Val -> Val)
+  | VPi  !String !Type !(Val -> Val)
   | VStar
 
 type Type  = Val
@@ -41,21 +41,23 @@ type TM    = Either String
 cxt0 :: Cxt
 cxt0 = (HM.empty, HM.empty)
 
+-- add (term : type) to Cxt
 (<:) :: (String, Val, Type) -> Cxt -> Cxt
 (<:) (v, t, ty) (vs, ts) = (HM.insert v t vs, HM.insert v ty ts)
 
+-- add (bound var : type) to Cxt
 (<::) :: (String, Type) -> Cxt -> Cxt
-(<::) (v, ty) (vs, ts) = (HM.insert v (VVar v) vs, HM.insert v ty ts)
+(<::) (v, ty) (vs, ts) = (vs, HM.insert v ty ts)
 
-eval :: HashMap String Val -> Term -> Val
-eval vs = \case
-  Var k     -> vs ! k
-  App f x   -> case (eval vs f, eval vs x) of
+whnf :: HashMap String Val -> Term -> Val
+whnf vs = \case
+  Var v     -> maybe (VVar v) id (HM.lookup v vs)
+  App f x   -> case (whnf vs f, whnf vs x) of
     (VLam _ f, x) -> f x
     (f       , x) -> VApp f x
-  Ann t ty  -> eval vs t
-  Lam v t   -> VLam v $ \t' -> eval (HM.insert v t' vs) t
-  Pi  v a b -> VPi  v (eval vs a) $ \t' -> eval (HM.insert v t' vs) b
+  Ann t ty  -> whnf vs t
+  Lam v t   -> VLam v $ \t' -> whnf (HM.insert v t' vs) t
+  Pi  v a b -> VPi  v (whnf vs a) $ \t' -> whnf (HM.insert v t' vs) b
   Star      -> VStar
 
 quote :: Val -> Term
@@ -67,11 +69,11 @@ quote = \case
   VStar      -> Star
   BVar _     -> error "quote: impossible BVar"
 
--- alpha equality
+-- beta-alpha convertibility
 --------------------------------------------------------------------------------
 
-aeq :: Type -> Type -> Bool
-aeq = go 0 where
+conv :: Type -> Type -> Bool
+conv = go 0 where
   go d (VVar v)     (VVar v')      = v == v'
   go d (BVar i)     (BVar i')      = i == i'
   go d (VApp f x)   (VApp f' x')   = go d f f' && go d x x'
@@ -89,7 +91,7 @@ check cxt t want = case (t, want) of
     check ((v, a) <:: cxt) t (b (VVar v))
   (t, _) -> do
     has <- infer cxt t
-    unless (aeq has want) $ Left "type mismatch"
+    unless (conv has want) $ Left "type mismatch"
 
 infer :: Cxt -> Term -> TM Type
 infer cxt@(vs, ts) = \case
@@ -98,39 +100,22 @@ infer cxt@(vs, ts) = \case
   Lam v t  -> Left $ "can't infer type for lambda " ++ show (Lam v t)
   Ann t ty -> do
     check cxt ty VStar
-    let ty' = eval vs ty
+    let ty' = whnf vs ty
     ty' <$ check cxt t ty'
   Pi v a b -> do
     check cxt a VStar
-    check ((v, eval vs a) <:: cxt) b VStar
+    check ((v, whnf vs a) <:: cxt) b VStar
     pure VStar
   App f x ->
     infer cxt f >>= \case
-      VPi v a b -> b (eval vs x) <$ check cxt x a
+      VPi v a b -> b (whnf vs x) <$ check cxt x a
       _         -> Left "can't apply non-function"
 
--- eta reduce
---------------------------------------------------------------------------------
+infer0 :: Term -> TM Term
+infer0 t = quote <$> infer cxt0 t
 
-freeIn :: String -> Term -> Bool
-freeIn v = go where
-  go (Var v')     = v' == v
-  go (App f x)    = go f || go x
-  go (Lam v' t)   = v' /= v && go t
-  go (Pi  v' a b) = go a || (v' /= v && go b)
-  go (Ann t ty)   = go t || go ty
-  go Star         = False
-
-etaRed :: Term -> Term
-etaRed = \case
-  Var v   -> Var v
-  App f x -> App (etaRed f) (etaRed x)
-  Lam v t -> case etaRed t of
-    App f (Var v') | v == v' && not (freeIn v f) -> f
-    t -> Lam v t
-  Pi v a b -> Pi v (etaRed a) (etaRed b)
-  Ann t ty -> Ann (etaRed t) (etaRed ty)
-  Star     -> Star
+nf0 :: Term -> TM Term
+nf0 t = etaRed (quote (whnf HM.empty t)) <$ infer0 t      
 
 -- Sugar & print
 --------------------------------------------------------------------------------
@@ -162,18 +147,36 @@ pretty prec = go (prec /= 0) where
                               else go True a
   go p Star = ('*':)
 
-
 instance Show Term where
   showsPrec = pretty
 
 instance IsString Term where
   fromString = Var
 
-infer0 :: Term -> TM Term
-infer0 t = quote <$> infer cxt0 t
+-- eta reduce
+--------------------------------------------------------------------------------
 
-eval0 :: Term -> TM Term
-eval0 t = etaRed (quote (eval HM.empty t)) <$ infer0 t
+freeIn :: String -> Term -> Bool
+freeIn v = go where
+  go (Var v')     = v' == v
+  go (App f x)    = go f || go x
+  go (Lam v' t)   = v' /= v && go t
+  go (Pi  v' a b) = go a || (v' /= v && go b)
+  go (Ann t ty)   = go t || go ty
+  go Star         = False
+
+etaRed :: Term -> Term
+etaRed = \case
+  Var v   -> Var v
+  App f x -> App (etaRed f) (etaRed x)
+  Lam v t -> case etaRed t of
+    App f (Var v') | v == v' && not (freeIn v f) -> f
+    t -> Lam v t
+  Pi v a b -> Pi v (etaRed a) (etaRed b)
+  Ann t ty -> Ann (etaRed t) (etaRed ty)
+  Star     -> Star
+
+--------------------------------------------------------------------------------  
 
 pi         = Pi
 lam        = Lam

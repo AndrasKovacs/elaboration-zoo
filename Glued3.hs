@@ -207,6 +207,7 @@ whnf !e = \case
 -- NOTE: quoting to eta-beta normal form requires fresh name generation, or
 -- generic/de Bruijn vars used as actual variables!
 -- That's why we're not doing eta-expansion here.
+-- (it wouldn't be hard though)
 
 quote :: WTerm -> WType -> Term
 quote WStar      _        = Star
@@ -492,7 +493,7 @@ test =
   Let "stress1" (Lam "x" "x") ("nf" $$ "50K" ==> "nf" $$ "50K") $
 
   Let "stress2" (Lam "f" $ Lam "n" $ "f" $$ "n")
-                (("nat" ==> "nf" $$ "50K") ==> "nat" ==> "nf" $$ "50K")
+                (("nat" ==> "nf" $$ "50K") ==> "nat" ==> "nf" $$ "50K") $
 
   "stress2"
 

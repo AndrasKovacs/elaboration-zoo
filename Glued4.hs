@@ -225,27 +225,27 @@ check e t ty = case (t, ty) of
     unless (conv (getW has) ty) $ throwError "type mismatch"
     pure t
 
+gcheck :: Env -> Raw -> WType -> M GTerm
+gcheck e t ty = glue (snd e) <$> check e t ty
+
 infer :: Env -> Raw -> M (Term, GType)
 infer e = \case
   RVar v -> let !ty = fst e ! v in pure (Var v ty, ty)
   RStar  -> pure (Star, gstar)
   RPi v a b -> do
-    a <- glue (snd e) <$> check e a WStar
+    a <- gcheck e a WStar
     b <- check ((v, a) <: e) b WStar
     pure (Pi v a b, gstar)
   RLam v t -> throwError "can't infer type for lambda"
   RLet v ty a b -> do
-    ta       <- glue (snd e) <$> check e ty WStar
-    a        <- glue (snd e) <$> check e a (getW ta)
+    ta       <- gcheck e ty WStar
+    a        <- gcheck e a (getW ta)
     (b, tb)  <- infer ((v, a, ta) <:: e) b
     pure (Let v ta a b, tb)
   RApp f x -> do
     (f, tf) <- infer e f
     case getW tf of
       WPi v ta tb -> do
-        x <- check e x (getW ta)
-        let !gx = glue (snd e) x
-        pure (App f x (getW ta), G (C (snd e) (PiApp f gx)) (tb gx))
+        gx <- gcheck e x (getW ta)
+        pure (App f (unC $ getC gx) (getW ta), G (C (snd e) (PiApp f gx)) (tb gx))
       _ -> throwError "can't apply non-function"
-
-

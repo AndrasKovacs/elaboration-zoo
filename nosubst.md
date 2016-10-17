@@ -1,6 +1,6 @@
 #### Dependent type checking without substitution
 
-Update: I learned of several important things in the related [reddit discussion](https://www.reddit.com/r/dependent_types/comments/4cvbkm/dependent_type_checking_without_substitution/), and I will revise the content below when I have the time. See this [comment](https://www.reddit.com/r/haskell/comments/4q96qm/any_update_on_dependent_type_checking_without/d4rq95q) for some update.
+**UPDATE : this post is now deprecated.**
 
 *Summary: interleaving normalization-by-evaluation and type checking gets us an algorithm that is extremely efficient, simple and obviously structurally recursive.*
 

@@ -13,7 +13,7 @@ This could be seen as one basic idea behind [Coquand's algorithm](http://ac.els-
 - Easily extended to type-directed evaluation and syntactic equality checks (equality with no/limited reduction).
 - Possible to extend to [machine code](https://depositonce.tu-berlin.de/bitstream/11303/3095/1/Dokument_9.pdf) based evaluation or [JIT compilation](http://www.maximedenes.fr/download/coqonut.pdf) (even during type checking). 
 
-Introductory material on dependent type checking unfortunately fails to mention Coquand's algorithm and its variants. This post is not the introductory tutorial that should exist. You can refer to [this](http://www2.tcs.ifi.lmu.de/~abel/msfp08.pdf) and [this](http://www.cse.chalmers.se/~bengt/papers/GKminiTT.pdf), or may look at the files in this repository, which are all variations of the algorithm in question.
+Popular introductory materials on dependent type checking unfortunately fail to mention Coquand's algorithm and its variants. This post is not the introductory tutorial that should exist. You can refer to [this](http://www2.tcs.ifi.lmu.de/~abel/msfp08.pdf) and [this](http://www.cse.chalmers.se/~bengt/papers/GKminiTT.pdf), or may look at the files in this repository, which are all variations of the algorithm in question.
 
 #### What we'd like to do
 

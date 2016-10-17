@@ -2,7 +2,7 @@
 
 #### Intro
 
-Dependent type checking involves evaluation of functional programs. Compilers and interpreters of functional languages have been acceptably fast since the 80s, and their evaluation strategies are well-understood, so why not use that for dependent type checking as well? Not a single functional language uses capture-avoiding substitution to run programs. 
+Dependent type checking involves evaluation of functional programs. Compilers and interpreters of functional languages have been acceptably fast since the 80s, and their evaluation strategies are well-understood, so why not use that for dependent type checking as well?
 
 This could be seen as one basic idea behind [Coquand's algorithm](http://ac.els-cdn.com/0167642395000216/1-s2.0-0167642395000216-main.pdf?_tid=848e736c-944f-11e6-b999-00000aacb362&acdnat=1476698172_390e8fd4c6267a2fc9e68704b0e96c9e). The advantages are manifold:
 

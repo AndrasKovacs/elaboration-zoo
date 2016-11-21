@@ -35,30 +35,20 @@ data Val
   | VStar
 
 type Type  = Val
-type Cxt   = (HashMap String Val, HashMap String Type)
+type Cxt   = HashMap String Type
 type TM    = Either String
 
-cxt0 :: Cxt
-cxt0 = (HM.empty, HM.empty)
-
--- add (term : type) to Cxt
-(<:) :: (String, Val, Type) -> Cxt -> Cxt
-(<:) (v, t, ty) (vs, ts) = (HM.insert v t vs, HM.insert v ty ts)
-
--- add (bound var : type) to Cxt
-(<::) :: (String, Type) -> Cxt -> Cxt
-(<::) (v, ty) (vs, ts) = (vs, HM.insert v ty ts)
-
-whnf :: HashMap String Val -> Term -> Val
-whnf vs = \case
-  Var v     -> maybe (VVar v) id (HM.lookup v vs)
-  App f x   -> case (whnf vs f, whnf vs x) of
-    (VLam _ f, x) -> f x
-    (f       , x) -> VApp f x
-  Ann t ty  -> whnf vs t
-  Lam v t   -> VLam v $ \t' -> whnf (HM.insert v t' vs) t
-  Pi  v a b -> VPi  v (whnf vs a) $ \t' -> whnf (HM.insert v t' vs) b
-  Star      -> VStar
+whnf :: Term -> Val
+whnf = go HM.empty where
+  go vs = \case
+    Var v     -> maybe (VVar v) id (HM.lookup v vs)
+    App f x   -> case (go vs f, go vs x) of
+      (VLam _ f, x) -> f x
+      (f       , x) -> VApp f x
+    Ann t ty  -> go vs t
+    Lam v t   -> VLam v $ \t' -> go (HM.insert v t' vs) t
+    Pi  v a b -> VPi  v (go vs a) $ \t' -> go (HM.insert v t' vs) b
+    Star      -> VStar
 
 quote :: Val -> Term
 quote = \case
@@ -88,34 +78,34 @@ conv = go 0 where
 check :: Cxt -> Term -> Type -> TM ()
 check cxt t want = case (t, want) of
   (Lam v t, VPi _ a b) ->
-    check ((v, a) <:: cxt) t (b (VVar v))
+    check (HM.insert v a cxt) t (b (VVar v))
   (t, _) -> do
     has <- infer cxt t
     unless (conv has want) $ Left "type mismatch"
 
 infer :: Cxt -> Term -> TM Type
-infer cxt@(vs, ts) = \case
-  Var v    -> pure (ts ! v)
+infer cxt = \case
+  Var v    -> pure (cxt ! v)
   Star     -> pure VStar
   Lam v t  -> Left $ "can't infer type for lambda " ++ show (Lam v t)
   Ann t ty -> do
     check cxt ty VStar
-    let ty' = whnf vs ty
+    let ty' = whnf ty
     ty' <$ check cxt t ty'
   Pi v a b -> do
     check cxt a VStar
-    check ((v, whnf vs a) <:: cxt) b VStar
+    check (HM.insert v (whnf a) cxt) b VStar
     pure VStar
   App f x ->
     infer cxt f >>= \case
-      VPi v a b -> b (whnf vs x) <$ check cxt x a
+      VPi v a b -> b (whnf x) <$ check cxt x a
       _         -> Left "can't apply non-function"
 
 infer0 :: Term -> TM Term
-infer0 t = quote <$> infer cxt0 t
+infer0 t = quote <$> infer HM.empty t
 
 nf0 :: Term -> TM Term
-nf0 t = etaRed (quote (whnf HM.empty t)) <$ infer0 t      
+nf0 t = etaRed (quote (whnf t)) <$ infer0 t      
 
 -- Sugar & print
 --------------------------------------------------------------------------------

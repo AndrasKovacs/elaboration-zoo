@@ -108,6 +108,54 @@ import Control.Monad.Except
                not impossible.
     - 2. Minimize type use. This makes a couple of things simpler, but eta converrsion
          checking becomes incomplete and full of hacks.
+
+  - Ideas:
+    - Implement lazy metacontext instantiation with mutable (IO) refs.
+
+    - Don't use error monad. Use metas for type-incorrect expressions, don't
+      stop elaboration on errors. Use IO exception for conversion checks.
+      Zonking will nicely list all errors and unsolved metas.
+
+    - Backtracking metacxt still possible with lazy metacxt instantiation:
+      we just need to switch mode from "destructive" to "persistent".
+
+      On switch to "persistent", we copy metacxt to persistent data structure, and we only
+      use persistent cxt with immediate instantiation for eval while we're
+      in persistent mode.
+
+      On switch to "destructive", we copy the metacxt back to new mutable array.
+
+      The two copying can be avoided by only having a persistent data structure at
+      all times under the IORef. When switching, we just change eval between immediate
+      and lazy modes.
+
+  - General invariant to be preserved with glued repr:
+    - All stored Tm-s must be the same size (not counting possible Type tags)
+      as some Raw term that was present in the source code. 
+    - We could violate this by keeping normalized Tm-s around.
+    - Metavar fiddling requires operations on Tm-s, but fortunately it seems
+      that we get away with mere renamings:
+        - When solving metas, we only need renaming on the RHS
+        - When pruning and intersecting, we need to strenghten the types
+          of metas, but that's also renaming.
+
+  - Questions for someone knowledgeable, e.g. Andreas Abel
+
+    - Ordered metacontext:
+      - Pientka says ord. metacxt. makes type occurs check unnecessary
+      - Gundry has it in ch. 4 of his thesis, and does lots of shuffling on
+        metavar solving to keep the ordering
+      - However, Agda doesn't do type occurs check, and doesn't have ordered metacxt either
+
+    - When pruning occurring metas on RHS, Agda assumes that all the types of the pruned metas
+      can be strengthened. Why is that?
+      - Answer: no Agda *doesn't* assume such thing. It doesn't prune vars that are
+        unpruneable because of type dependency.
+
+  - Idea: metavariable operations require only renamaing. Can we switch to Kripke
+    closures or semantic functions with minimal overhead, and see if that makes
+    renaming faster?
+
 -}
 
 type Name = String
@@ -288,7 +336,7 @@ unify = go 0 where
     let MEntry cxt retTy Nothing = mcxt IM.! i    
 
     sub <- invertSub (addSpToSub sub sp ty mcxt)
-    _
+    undefined
     -- let MEntry cxt ty Nothing = mcxt IM.! i
     -- let t' = quote ty 
 

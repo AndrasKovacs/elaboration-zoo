@@ -1,11 +1,13 @@
 
+
 {-# language
   PatternSynonyms, BangPatterns, MagicHash, PatternGuards,
   DataKinds, LambdaCase, ViewPatterns, TupleSections,
+  RecordWildCards,
   TypeFamilies, GADTs, EmptyCase, OverloadedStrings #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-module MetavarNoEta2 where
+module Metavar where
 
 import Prelude hiding (pi)
 
@@ -34,15 +36,12 @@ type Name   = String
 type Meta   = Int
 type Gen    = Int
 
--- Note: context-like things have the *rightmost* element at top, so it's reverse order
--- compared to how we usually print lists.
-type VSub   = [(Name, Val)]
-type Sub    = [(Name, Tm)]
+type Env    = [(Name, Val)]
 type Cxt    = [(Name, Type)]
 
 type Ren    = HashMap (Either Name Gen) Name
 type Type   = Val
-data MEntry = MEntry {_cxt :: !Cxt, _ty :: Type, _solution :: !(Maybe (VSub -> MCxt -> Val))}
+data MEntry = MEntry {_ty :: Type, _solution :: !(Maybe Val)}
 type MCxt   = IntMap MEntry
 data S      = S {_mcxt :: !MCxt, _freshMeta :: !Meta}
 type M      = StateT S (Either String)
@@ -51,18 +50,18 @@ data Raw
   = RVar !Name
   | RApp !Raw !Raw
   | RLam !Name !Raw
+  | RLet !Name !Raw !Raw !Raw
   | RPi !Name !Raw !Raw
-  | RAnn !Raw !Raw
   | RStar
   | RHole
 
 data Head
-  = VMeta !Meta !VSub
+  = VMeta !Meta
   | VVar !Name
   | VGen !Gen
 
 data Val
-  = !Head :$ !VSub
+  = !Head :$ !Env
   | VLam !Name !(Val -> MCxt -> Val)
   | VPi !Name !Val !(Val -> MCxt -> Val)
   | VStar
@@ -70,27 +69,23 @@ infix 3 :$
 
 data Tm
   = Var !Name
-  | Gen !Gen -- ^ Only appears briefly in normal terms on the RHS of metavar equations.
+  | Gen !Gen
   | App !Tm !Tm !Name
   | Lam !Name !Tm
+  | Let !Name !Tm !Tm !Tm
   | Pi !Name !Tm !Tm
-  | Ann !Tm !Tm
   | Star
-  | Meta !Meta !Sub
+  | Meta !Meta
 
 
 -- Evaluation
 --------------------------------------------------------------------------------
 
--- | Try to instantiate a metavariable and apply it to its substitution.
-inst :: Meta -> VSub -> MCxt -> Maybe Val
-inst v sub mcxt = let MEntry _ _ mt = mcxt IM.! v in (\t -> t sub mcxt) <$> mt
-
 -- | Try to instantiate the top-level head meta recursively until
 --   we don't have a meta application at top or the top meta is unsolved.
 refresh :: Val -> MCxt -> Val
 refresh t !mcxt = go t where
-  go (VMeta i sub :$ sp) | Just t <- inst i sub mcxt =
+  go (VMeta i :$ sp) | Just t <- _solution $ mcxt IM.! i  =
     go (foldr (\(v, a) t -> vapp t a v mcxt) t sp)
   go t = t
 
@@ -101,26 +96,25 @@ vapp t t' v !mcxt = case (t, t') of
   _             -> error "vapp: impossible"
 
 -- | Evaluate to weak head normal form in a metacontext.
-eval :: VSub -> Tm -> MCxt -> Val
+eval :: Env -> Tm -> MCxt -> Val
 eval !vs !t !mcxt = go vs t where
   go vs = \case
-    Var v      -> maybe (VVar v :$ []) (flip refresh mcxt) (lookup v vs)
-    App f a v  -> vapp (go vs f) (go vs a) v mcxt
-    Lam v t    -> VLam v $ \a -> eval ((v, a):vs) t
-    Pi v a b   -> VPi v (go vs a) $ \a -> eval ((v, a):vs) b
-    Ann t ty   -> go vs t
-    Star       -> VStar
-    Meta i sub -> let sub' = (go vs <$>) <$> sub in
-                  maybe (VMeta i sub' :$ []) id (inst i sub' mcxt)
-    Gen{}      -> error "eval: impossible Gen"
+    Var v        -> maybe (VVar v :$ []) (flip refresh mcxt) (lookup v vs)
+    App f a v    -> vapp (go vs f) (go vs a) v mcxt
+    Lam v t      -> VLam v $ \a -> eval ((v, a):vs) t
+    Let v e t e' -> eval ((v, eval vs e mcxt):vs) e' mcxt
+    Pi v a b     -> VPi v (go vs a) $ \a -> eval ((v, a):vs) b
+    Star         -> VStar
+    Meta i       -> maybe (VMeta i :$ []) id (_solution $ mcxt IM.! i)
+    Gen{}        -> error "eval: impossible Gen"
 
 -- | Fully normalize a weak head normal value in a metacontext.
 quote :: Val -> MCxt -> Tm
 quote t !mcxt = go t where
   goHead = \case
-    VMeta i sub -> Meta i ((go <$>) <$> sub)
-    VVar v      -> Var v
-    VGen i      -> Gen i
+    VMeta i -> Meta i
+    VVar v  -> Var v
+    VGen i  -> Gen i
   go t = case refresh t mcxt of
     h :$ sp   -> foldr (\(v, a) t -> App t (go a) v) (goHead h) sp
     VLam v t  -> Lam v (go (t (VVar v :$ []) mcxt))
@@ -136,7 +130,7 @@ nf t mcxt = quote (eval [] t mcxt) mcxt
 -- | Try to create an inverse partial renaming from a substitution.
 --   Only variables are allowed in the input substitution, but it can be non-linear,
 --   since we restrict the output renaming to the linear part.
-invert :: VSub -> Either String Ren
+invert :: Env -> Either String Ren
 invert = foldM go HM.empty where
   go r (v, t) = case t of
     VVar v' :$ [] | HM.member (Left v') r -> pure $ HM.delete (Left v') r
@@ -156,30 +150,30 @@ renameRhs :: Meta -> Ren -> Tm -> Either String Tm
 renameRhs occur r = go r where
   go :: Ren -> Tm -> Either String Tm
   go r = \case
-    Var v      -> maybe (throwError $ "scope fail") (pure . Var) (HM.lookup (Left v) r)
-    Gen i      -> maybe (throwError $ "scope fail") (pure . Var) (HM.lookup (Right i) r)
-    App f a v  -> App <$> go r f <*> go r a <*> pure v
-    Lam v t    -> Lam v <$> go (HM.insert (Left v) v r) t
-    Pi v a b   -> Pi v <$> go r a <*> go (HM.insert (Left v) v r) b
-    Ann t ty   -> Ann <$> go r t <*> go r ty
-    Star       -> pure Star
-    Meta i sub | i == occur -> throwError "occurs fail"
-               | otherwise  -> Meta i <$> traverse (traverse (go r)) sub
+    Var v        -> maybe (throwError $ "scope fail") (pure . Var) (HM.lookup (Left v) r)
+    Gen i        -> maybe (throwError $ "scope fail") (pure . Var) (HM.lookup (Right i) r)
+    App f a v    -> App <$> go r f <*> go r a <*> pure v
+    Lam v t      -> Lam v <$> go (HM.insert (Left v) v r) t
+    Let v e t e' -> error "renameRhs: impossible"
+    Pi v a b     -> Pi v <$> go r a <*> go (HM.insert (Left v) v r) b
+    Star         -> pure Star
+    Meta i | i == occur -> throwError "occurs fail"
+           | otherwise  -> pure (Meta i)
 
-addLams :: VSub -> Tm -> Tm
-addLams sp t = foldr (Lam . fst) t sp
+addLams :: Env -> Tm -> Tm
+addLams sp t = foldr (Lam . fst) t sp           
 
 -- | Solve a meta by applying the inverse of its substitution to the RHS.
 --   It uses full normalization on the RHS, which is costly. Future versions
 --   should use "glued" representation which enables various syntactic checks
 --   and heuristics.
-solveMeta :: Meta -> VSub -> VSub -> Val -> M ()
-solveMeta m sub sp t = do
-  ren <- lift $ invert (sp ++ sub)
+solveMeta :: Meta -> Env -> Val -> M ()
+solveMeta m sp t = do
+  ren <- lift $ invert sp
   t   <- quote t <$> gets _mcxt
   !t  <- lift $ addLams sp <$> renameRhs m ren t
-  modify $ \s@S{..} ->
-    s {_mcxt = IM.adjust (\e -> e {_solution = Just $ \env -> eval env t}) m _mcxt}
+  modify $ \s@(S _mcxt _) ->
+    s {_mcxt = IM.adjust (\e -> e {_solution = Just $ eval [] t _mcxt}) m _mcxt}
 
 unify :: Val -> Val -> M ()
 unify t t' = go 0 t t' where
@@ -190,7 +184,6 @@ unify t t' = go 0 t t' where
     t' <- refresh t' <$> gets _mcxt
     case (t, t') of
       (VStar, VStar) -> pure ()
-
       
       (VLam v t, VLam v' t') -> do
         mcxt <- gets _mcxt
@@ -203,24 +196,22 @@ unify t t' = go 0 t t' where
         mcxt <- gets _mcxt
         go (g + 1) (b gen mcxt) (b' gen mcxt)
 
-      (VVar v :$ sp, VVar v' :$ sp') | v == v' -> goVSub g sp sp'
-      (VGen i :$ sp, VGen i' :$ sp') | i == i' -> goVSub g sp sp'
+      (VVar v  :$ sp, VVar v'  :$ sp') | v == v' -> goEnv g sp sp'
+      (VGen i  :$ sp, VGen i'  :$ sp') | i == i' -> goEnv g sp sp'
+      (VMeta i :$ sp, VMeta i' :$ sp') | i == i' -> goEnv g sp sp'
 
-      (VMeta i sub :$ sp, VMeta i' sub' :$ sp')
-        | i == i' -> goVSub g sp sp' >> goVSub g sub sub' -- TODO: intersection
-
-      (VMeta i sub :$ sp, t) -> solveMeta i sub sp t
-      (t, VMeta i sub :$ sp) -> solveMeta i sub sp t
+      (VMeta i :$ sp, t) -> solveMeta i sp t
+      (t, VMeta i :$ sp) -> solveMeta i sp t
 
       _ -> do
         nt  <- quote t <$> gets _mcxt
         nt' <- quote t' <$> gets _mcxt
         throwError $ "can't unify\n" ++ show nt ++ "\nwith\n" ++  show nt'
 
-  goVSub :: Int -> VSub -> VSub -> M ()
-  goVSub g ((_, a):as) ((_, b):bs) = goVSub g as bs >> go g a b
-  goVSub g []          []          = pure ()
-  goVSub _ _           _           = error "unify Sp: impossible"
+  goEnv :: Int -> Env -> Env -> M ()
+  goEnv g ((_, a):as) ((_, b):bs) = goEnv g as bs >> go g a b
+  goEnv g []          []          = pure ()
+  goEnv _ _           _           = error "unify Sp: impossible"
 
 
 -- Elaboration
@@ -232,47 +223,52 @@ unify t t' = go 0 t t' where
 ext :: (Name, Type) -> Cxt -> Cxt
 ext x cxt = x : deleteBy ((==) `on` fst) x cxt
 
+metaType :: Cxt -> Type -> Type
+metaType cxt t = foldl (\t (v, a) -> VPi v a $ \_ _ -> t) t cxt
+
 newMeta :: Cxt -> Type -> M Tm
 newMeta cxt ty = do
   S mcxt i <- get
-  put $ S (IM.insert i (MEntry cxt ty Nothing) mcxt) (i + 1)
-  pure $ Meta i ((\(v, _) -> (v, Var v)) <$> cxt)
+  put $ S (IM.insert i (MEntry (metaType cxt ty) Nothing) mcxt) (i + 1)
+  pure $ Meta i
 
-check :: Cxt -> Raw -> Type -> M Tm
-check cxt t want = case (t, want) of
+check :: Cxt -> Env ->  Raw -> Type -> M Tm
+check cxt env t want = case (t, want) of
   (RLam v t, VPi _ a b) -> do
     mcxt <- gets _mcxt
-    Lam v <$> check (ext (v, a) cxt) t (b (VVar v :$ []) mcxt)
+    Lam v <$> check (ext (v, a) cxt) env t (b (VVar v :$ []) mcxt)
   (RHole, _) ->
     newMeta cxt want
   (t, _) -> do
     want' <- quote want <$> gets _mcxt
-    (t, has) <- infer cxt t
+    (t, has) <- infer cxt env t
     t <$ unify has want
 
-infer :: Cxt -> Raw -> M (Tm, Type)
-infer cxt = \case
+infer :: Cxt -> Env -> Raw -> M (Tm, Type)
+infer cxt env = \case
   RVar v ->
     maybe (throwError $ "Variable: " ++ v ++ " not in scope")
           (\ty -> pure (Var v, ty))
           (lookup v cxt)
   RStar     -> pure (Star, VStar)
-  RAnn t ty -> do
-    ty  <- check cxt ty VStar
-    ty' <- eval [] ty <$> gets _mcxt
-    t   <- check cxt t ty'
-    pure (Ann t ty, ty')
   RPi v a b -> do
-    a  <- check cxt a VStar
-    a' <- eval [] a <$> gets _mcxt
-    b  <- check (ext (v, a') cxt) b VStar
+    a  <- check cxt env a VStar
+    a' <- eval env a <$> gets _mcxt
+    b  <- check (ext (v, a') cxt) env b VStar
     pure (Pi v a b, VStar)
+  RLet v e1 t e2 -> do
+    t   <- check cxt env t VStar
+    t'  <- eval env t <$> gets _mcxt
+    e1  <- check cxt env e1 t'
+    e1' <- eval env e1 <$> gets _mcxt
+    (e2, te) <- infer cxt ((v, e1') : env) e2
+    pure (Let v e1 t e2, te)    
   RApp f a -> do
-    (f, tf) <- infer cxt f
+    (f, tf) <- infer cxt env f
     case tf of
       VPi v ta tb -> do
-        a   <- check cxt a ta
-        a'  <- eval [] a <$> gets _mcxt
+        a   <- check cxt env a ta
+        a'  <- eval env a <$> gets _mcxt
         tb' <- tb a' <$> gets _mcxt
         pure (App f a v, tb')
 
@@ -287,23 +283,25 @@ infer cxt = \case
 -- | Replace all metas with their normal solutions.
 zonk :: Tm -> M Tm
 zonk = \case
-  Var v      -> pure (Var v)
-  Star       -> pure Star
-  Ann t ty   -> Ann <$> zonk t <*> zonk ty
-  Pi v a b   -> Pi v <$> zonk a <*> zonk b
-  App f a v  -> App <$> zonk f <*> zonk a <*> pure v
-  Meta v sub -> do
+  Var v        -> pure (Var v)
+  Star         -> pure Star
+  Pi v a b     -> Pi v <$> zonk a <*> zonk b
+  App f a v    -> App <$> zonk f <*> zonk a <*> pure v
+  Let v e t e' -> Let v <$> zonk e <*> zonk t <*> zonk e'
+  Meta v       -> do
     mcxt <- gets _mcxt
-    case inst v (((\t -> eval [] t mcxt) <$>) <$> sub) mcxt of
+    case _solution $ mcxt IM.! v of
       Just t -> pure (quote t mcxt)
-      _      -> Meta v <$> (traverse (traverse zonk) sub)
+      _      -> pure (Meta v)
   Lam v t -> Lam v <$> zonk t
   _ -> error "zonk"
+
+
 
 --------------------------------------------------------------------------------
 
 run0 :: ((Tm, Type) -> M a) -> Raw -> Either String a
-run0 act t = evalStateT (infer [] t >>= act) (S mempty 0)
+run0 act t = evalStateT (infer [] [] t >>= act) (S mempty 0)
 
 -- | Infer normal type.
 infer0 :: Raw -> Either String Tm
@@ -321,19 +319,10 @@ zonk0 = run0 (zonk . fst)
 nf0 :: Raw -> Either String Tm
 nf0 = run0 (\(t, _) -> nf t <$> gets _mcxt)
 
+
+
 -- Printing
 --------------------------------------------------------------------------------
-
--- freeInTm :: Name -> Tm -> Bool
--- freeInTm v = go where
---   go (Var v')     = v' == v
---   go (Meta i sub) = any (freeInTm v . snd) sub
---   go (App f x _)  = go f || go x
---   go (Lam v' t)   = v' /= v && go t
---   go (Pi  v' a b) = go a || (v' /= v && go b)
---   go (Ann t ty)   = go t || go ty
---   go Star         = False
---   go _            = error "freeInTm"
 
 prettyTm :: Int -> Tm -> ShowS
 prettyTm prec = go (prec /= 0) where
@@ -352,11 +341,12 @@ prettyTm prec = go (prec /= 0) where
     go vs t         = (vs, t)
 
   go :: Bool -> Tm -> ShowS
-  go p (Var v)      = (v++)
-  go p (Meta v sub) = showParen p (("?"++).(show v++).(" "++).(show (snd <$>sub)++))
-  go p (App f x _)  = showParen p (unwords' $ map (go True) (spine f x))
-  go p (Ann t ty)   = showParen p (go False t . (" : "++) . go False ty)
-  go p (Lam v t)    = case lams v t of
+  go p (Var v)        = (v++)
+  go p (Let v e t e') =
+    showParen p (go False e . (" : "++) . go False t . ("\n"++) . go False e')
+  go p (Meta v)       = showParen p (("?"++).(show v++))
+  go p (App f x _)    = showParen p (unwords' $ map (go True) (spine f x))
+  go p (Lam v t)      = case lams v t of
     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
   go p (Pi v a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
@@ -371,16 +361,6 @@ instance IsString Tm where
   fromString = Var
 
 --------------------------------------------------------------------------------
-
--- freeInRaw :: Name -> Raw -> Bool
--- freeInRaw v = go where
---   go (RVar v')     = v' == v
---   go RHole         = False
---   go (RApp f x)    = go f || go x
---   go (RLam v' t)   = v' /= v && go t
---   go (RPi  v' a b) = go a || (v' /= v && go b)
---   go (RAnn t ty)   = go t || go ty
---   go RStar         = False
 
 prettyRaw :: Int -> Raw -> ShowS
 prettyRaw prec = go (prec /= 0) where
@@ -399,11 +379,12 @@ prettyRaw prec = go (prec /= 0) where
     go vs t          = (vs, t)
 
   go :: Bool -> Raw -> ShowS
-  go p (RVar v)      = (v++)
-  go p RHole         = ('_':)
-  go p (RApp f x)    = showParen p (unwords' $ map (go True) (spine f x))
-  go p (RAnn t ty)   = showParen p (go False t . (" : "++) . go False ty)
-  go p (RLam v t)    = case lams v t of
+  go p (RVar v)        = (v++)
+  go p (RLet v e t e') =
+    showParen p (go False e . (" : "++) . go False t . ("\n"++) . go False e')
+  go p RHole           = ('_':)
+  go p (RApp f x)      = showParen p (unwords' $ map (go True) (spine f x))
+  go p (RLam v t)      = case lams v t of
     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
   go p (RPi v a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
@@ -415,6 +396,9 @@ instance Show Raw where
 
 instance IsString Raw where
   fromString = RVar
+
+
+{-
 
 --------------------------------------------------------------------------------
 
@@ -629,3 +613,5 @@ test12 =
 --   -> (a : A) -> C a (g a)
 -- comp = \A B C f g a. f a (g a) 
 
+
+-}

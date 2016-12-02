@@ -92,7 +92,7 @@ type Name   = String
 type Meta   = Int
 type Gen    = Int
 type Sub    = [(Name, Val)]
-type Cxt    = Sub
+type Cxt    = [(Name, Either Type Type)]
 type Ren    = HashMap (Either Name Gen) Name
 type Type   = Val
 data MEntry = MEntry {_mty :: Type, _solution :: !(Maybe Val)}
@@ -258,7 +258,7 @@ unify t t' = go 0 t t' where
 -- Elaboration
 --------------------------------------------------------------------------------
 
-ext :: (Name, Type) -> Cxt -> Cxt
+ext :: (Name, Either Type Type) -> Cxt -> Cxt
 ext x cxt = x : deleteBy ((==) `on` fst) x cxt
 
 addPis :: Sub -> Tm -> Tm
@@ -269,8 +269,9 @@ newMeta cxt ty = do
   m <- readIORef freshMeta
   writeIORef freshMeta (m + 1)
   
-  let ty' = eval [] $ addPis cxt (quote ty)
-      t   = foldr (\(v, _) t -> App t (Var v) v) (Meta m) cxt
+  let cxt' = [(v, ty) | (v, Left ty) <- cxt]
+      ty'  = eval [] $ addPis cxt' (quote ty)
+      t    = foldr (\(v, _) t -> App t (Var v) v) (Meta m) cxt'
       
   modifyIORef' mcxt $ IM.insert m (MEntry ty' Nothing)
   pure t
@@ -278,7 +279,7 @@ newMeta cxt ty = do
 check :: Cxt -> Sub -> Raw -> Type -> M Tm
 check cxt vs t want = case (t, want) of
   (RLam v t, VPi _ a b) -> do
-    Lam v <$> check (ext (v, a) cxt) vs t (b (VVar v :$ []))
+    Lam v <$> check (ext (v, Left a) cxt) vs t (b (VVar v :$ []))
   (RHole, _) ->
     newMeta cxt want
   (t, _) -> do
@@ -289,13 +290,13 @@ infer :: Cxt -> Sub -> Raw -> M (Tm, Type)
 infer cxt vs = \case
   RVar v ->
     maybe (error $ "Variable: " ++ v ++ " not in scope")
-          (\ty -> pure (Var v, ty))
+          (\ty -> pure (Var v, either id id ty))
           (lookup v cxt)
   RStar     -> pure (Star, VStar)
   RPi v a b -> do
     a <- check cxt vs a VStar
     let a' = eval vs a
-    b <- check (ext (v, a') cxt) vs b VStar
+    b <- check (ext (v, Left a') cxt) vs b VStar
     pure (Pi v a b, VStar)
   RApp f a -> do
     (f, tf) <- infer cxt vs f
@@ -309,11 +310,15 @@ infer cxt vs = \case
     let t' = eval vs t
     e1 <- check cxt vs e1 t'
     let e1' = eval vs e1
-    (e2, te2) <- infer (ext (v, t') cxt) ((v, e1'):vs) e2
+    (e2, te2) <- infer (ext (v, Right t') cxt) ((v, e1'):vs) e2
     pure (Let v e1 t e2, te2)
   RLam v t -> do
     error $ "can't infer type for lambda: " ++ show (RLam v t)
   RHole -> error "can't infer type for hole"
+
+getSp :: Tm -> [(Name, Tm)] ->  (Tm, [(Name, Tm)])
+getSp (App f a v) sp = getSp f ((v, a):sp)
+getSp t           sp = (t, sp)
 
 zonk :: Sub -> Tm -> Tm
 zonk vs = \case
@@ -321,11 +326,12 @@ zonk vs = \case
   Meta v       -> maybe (Meta v) quote (inst v)  
   Star         -> Star
   Pi v a b     -> Pi v (zonk vs a) (zonk vs b)
-  App f a v    -> undefined
+  App f a v    -> case getSp f [(v, a)] of
+    (Meta i, sp) | Just t <- inst i -> quote (foldl' (\t (v, a) -> vapp t (eval vs a) v) t sp)
+    (t     , sp) -> foldl' (\t (v, a) -> App t (zonk vs a) v) t sp
   Lam v t      -> Lam v (zonk vs t)
   Let v e t e' -> Let v (zonk vs e) (zonk vs t) (zonk ((v, eval vs e):vs) e')    
   _            -> error "zonk: impossible Gen"
-
 
 --------------------------------------------------------------------------------
 
@@ -366,15 +372,15 @@ prettyTm prec = go (prec /= 0) where
     (v++) . (" : "++) . go False t . ("\n"++) .
     (v++) . (" = "++) . go False e . ("\n\n"++) .
     go False e'
-  go p (Meta v)       = showParen p (("?"++).(show v++))
+  go p (Meta v)       = (("?"++).(show v++))
   go p (App f x _)    = showParen p (unwords' $ map (go True) (spine f x))
   go p (Lam v t)      = case lams v t of
     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
   go p (Pi v a b) = showParen p (arg . (" -> "++) . go False b)
     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
                               else go True a
-  go p Star = ('*':)
-  go _ _    = error "prettyTm"
+  go p Star    = ('*':)
+  go p (Gen g) = ("~"++).(show g++)
 
 instance Show Tm where
   showsPrec = prettyTm
@@ -437,236 +443,76 @@ infixl 9 $$
 infixr 8 ==>
 
 test =
-  -- make "id" (pi "a" h $ "a" ==> "a")
-  -- (lam "a" $ lam "x" "x") $
+  make "id" (pi "a" star $ "a" ==> "a")
+  (lam "a" $ lam "x" "x") $
 
-  -- make "const" (pi "a" h $ pi "b" h $ "a" ==> "b" ==> "a")
-  -- (lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x") $
+  make "const" (pi "a" h $ pi "b" h $ "a" ==> "b" ==> "a")
+  (lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x") $
 
-  -- make "Nat" star
-  -- (pi "n" h $ ("n" ==> "n") ==> "n" ==> "n") $
+  make "Nat" star
+  (pi "n" h $ ("n" ==> "n") ==> "n" ==> "n") $
 
-  -- make "z" "Nat"
-  -- (lam "n" $ lam "s" $ lam "z" "z") $
+  make "z" "Nat"
+  (lam "n" $ lam "s" $ lam "z" "z") $
 
-  -- make "s" ("Nat" ==> "Nat")
-  -- (lam "a" $ lam "n" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "n" $$ "s" $$ "z")) $
+  make "s" ("Nat" ==> "Nat")
+  (lam "a" $ lam "n" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "n" $$ "s" $$ "z")) $
 
-  -- make "add" ("Nat" ==> "Nat" ==> "Nat")
-  -- (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
-  --  "a" $$ "n" $$ "s" $$ ("b" $$ "n" $$ "s" $$ "z")) $
+  make "add" ("Nat" ==> "Nat" ==> "Nat")
+  (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
+   "a" $$ "n" $$ "s" $$ ("b" $$ "n" $$ "s" $$ "z")) $
 
-  -- make "mul" ("Nat" ==> "Nat" ==> "Nat")
-  -- (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
-  --  "a" $$ "n" $$ ("b" $$ "n" $$ "s") $$ "z") $
+  make "mul" ("Nat" ==> "Nat" ==> "Nat")
+  (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
+   "a" $$ "n" $$ ("b" $$ "n" $$ "s") $$ "z") $
   
-  -- make "one"     "Nat" ("s" $$ "z") $
-  -- make "two"     "Nat" ("s" $$ "one") $
-  -- make "five"    "Nat" ("s" $$ ("add" $$ "two" $$ "two")) $
-  -- make "ten"     "Nat" ("add" $$ "five" $$ "five") $
-  -- make "hundred" "Nat" ("mul" $$ "ten" $$ "ten") $
+  make "one"     "Nat" ("s" $$ "z") $
+  make "two"     "Nat" ("s" $$ "one") $
+  make "five"    "Nat" ("s" $$ ("add" $$ "two" $$ "two")) $
+  make "ten"     "Nat" ("add" $$ "five" $$ "five") $
+  make "hundred" "Nat" ("mul" $$ "ten" $$ "ten") $
+
+  make "comp"
+       (pi "a" h $ pi "b" h $ pi "c" h $
+       ("b" ==> "c") ==> ("a" ==> "b") ==> "a" ==> "c")
+  (lam "a" $ lam "b" $ lam "c" $ lam "f" $ lam "g" $ lam "x" $
+    "f" $$ ("g" $$ "x")) $
 
   make "ap"
     (pi "a" h $
      pi "b" ("a" ==> star) $
      pi "f" (pi "x" h $ "b" $$ "x") $
      pi "x" h $ "b" $$ "x")
-
   (lam "a" $ lam "b" $ lam "f" $ lam "x" $ "f" $$ "x") $
 
-  "ap"
+  make "dcomp"
+    (pi "A" h $
+     pi "B" ("A" ==> h) $
+     pi "C" (pi "a" h $ "B" $$ "a" ==> star) $
+     pi "f" (pi "a" h $ pi "b" h $ "C" $$ "a" $$ "b") $
+     pi "g" (pi "a" h $ "B" $$ "a") $
+     pi "a" h $
+     "C" $$ h $$ ("g" $$ "a"))
+    (lam "A" $ lam "B" $ lam "C" $
+     lam "f" $ lam "g" $ lam "a" $ "f" $$ h $$ ("g" $$ "a")) $
 
+  make "Eq" (pi "A" star $ "A" ==> "A" ==> star)
+  (lam "A" $ lam "x" $ lam "y" $ pi "P" ("A" ==> star) $ ("P" $$ "x") ==> ("P" $$ "y")) $
 
--- const' =
---   ann (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a") $
---   lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x"
+  make "refl" (pi "A" star $ pi "x" "A" $ "Eq" $$ "A" $$ "x" $$ "x")
+  (lam "A" $ lam "x" $ lam "P" $ lam "px" "px") $
 
--- compose =
---   ann (tlam "a" $ tlam "b" $ tlam "c" $
---        ("b" ==> "c") ==> ("a" ==> "b") ==> "a" ==> "c") $
---   lam "a" $ lam "b" $ lam "c" $
---   lam "f" $ lam "g" $ lam "x" $
---   "f" $$ ("g" $$ "x")
+  make "Bool" star
+  (pi "B" h $ "B" ==> "B" ==> "B") $
 
--- test =
---   ann
---   -- type declarations
---   (pi "id"    (tlam "a" $ "a" ==> "a") $
---    star
---   )
---   -- program
---   (lam "id" $
---    "id" $$ h $$ star
---   )
---   -- declaration definitions
---   $$ (lam "a" $ lam "x" $ "x")
+  make "true" "Bool"
+  (lam "B" $ lam "t" $ lam "f" "t") $
 
--- test2 =
---   ann
---   (
---   pi "f" (tlam "a" $ tlam "b" $ "a" ==> "b") $
---   star
---   )(
---   lam "f" $
---   "f" $$ h $$ h $$ "f"
---   )
+  make "false" "Bool"
+  (lam "B" $ lam "t" $ lam "f" "f") $
 
--- test3 =
---   ann
---   (
---   pi "id" (tlam "a" $ "a" ==> "a") $
---   pi "f" h $
---   h
---   )(
---   lam "id" $
---   lam "f" $
---   "id" $$ h $$ "id"
---   )
+  make "foo" ("Eq" $$ h $$ "true" $$ "true")
+  ("refl" $$ h $$ h) $
 
---   $$ (lam "a" $ lam "x" "x")
-
--- -- "Substitution for metavariable is not a renaming" : actually correct error!
--- test4 =
---   ann
---   (
---   pi "x" h $
---   pi "y" h $ -- would have to solve "?1 [*] = *", which isn't pattern!
---   h          -- it would work with explicit non-dependent function space
---   )(         -- can we add that since * : * and we're parametric, ?1 = \_ -> *
---   lam "x" $  -- in other words, types are irrelevant.
---   lam "y" $  -- anyway, we'd need the type-directed unif version for this
---   star
---   )
---   $$ star
---   $$ star
-
--- test5 =
---   ann
---   (
---   pi "a" star $
---   pi "b" star $
---   pi "f" ("a" ==> "b") $
---   pi "x" "a" $
---   pi "ap" (pi "a" h $ pi "b" ("a" ==> h) $ pi "f" (pi "x" h $ "b" $$ "x") $ pi "x" h $ "b" $$ "x") $
---   h
---   )(
---   lam "a" $
---   lam "b" $
---   lam "f" $
---   lam "x" $
---   lam "ap" $
---   "ap" $$ h $$ h $$ "f" $$ "x"
---   )
-
--- test6 = (pi "a" h $ pi "b" ("a" ==> h) $ pi "f" (pi "x" h $ "b" $$ "x") $ pi "x" h $ "b" $$ "x")
-
--- test7 =
---   ann
---   (
---     pi "a" h $
---     pi "f" ("a" ==> "a") $
---     "a"
---   )
---   (
---     lam "a" $
---     lam "f" $
---     (lam "x" $ "f" $$ ("x" $$ "x")) $$ (lam "x" $ "f" $$ ("x" $$ "x"))
---   )
-
--- test8 =
---   ann
---   (
---   pi "ap" (pi "a" h $ pi "b" ("a" ==> h) $ pi "f" (pi "x" h $ "b" $$ "x") $ pi "x" h $ "b" $$ "x") $
---   pi "a" h $
---   pi "b" ("a" ==> h) $
---   pi "f" (pi "x" h $ "b" $$ "x") $
---   pi "x" "a" $
---   h
---   )(
---   lam "ap" $
---   lam "a" $
---   lam "b" $
---   lam "f" $
---   lam "x" $
---   "ap" $$ h $$ h $$ "f" $$ "x"
---   )
-
--- test9 =
---   ann
---   (
---   pi "ap" (pi "a" h $ pi "b" ("a" ==> h) $ pi "f" (pi "x" h $ "b" $$ "x") $ pi "x" h $ "b" $$ "x") $
---   pi "a" h $
---   pi "b" ("a" ==> h) $
---   pi "f" (pi "x" h $ "b" $$ "x") $
---   pi "x" "a" $
---   h
---   )(
---   lam "ap" $
---   lam "a" $
---   lam "b" $
---   lam "f" $
---   lam "x" $
---   "ap" $$ h $$ h $$ "f" $$ "x"
---   )
-
--- test10 =
---   let' "id" (tlam "a" $ "a" ==> "a")
---             (lam "a" $ lam "x" "x") $
---   let' "const" (tlam "a" $ tlam "b" $ "a" ==> "b" ==> "a")
---                (lam "a" $ lam "b" $ lam "x" $ lam "y" "x") $
---   let' "const'" (tlam "a" $ "a" ==> (tlam "b" $ "b" ==> "a"))
---                 (lam "a" $ lam "x" $ lam "b" $ lam "y" "x") $
---   "const'" $$ h $$ "id"
-
--- -- can't depend on value of nat, need true "let"
--- test11 =
---   let' "Nat" star
---              (tlam "n" $ ("n" ==> "n") ==> "n") $
---   let' "z" "Nat"
---            (lam "n" $ lam "s" $ lam "z" "z") $
---   "Nat"
-
--- test12 =
---   ann 
---     (pi "A" star $
---      pi "B" ("A" ==> star) $
---      pi "C" (pi "a" h $ "B" $$ "a" ==> star) $
---      pi "f" (pi "a" h $ pi "b" h $ "C" $$ "a" $$ "b") $
---      pi "g" (pi "a" h $ "B" $$ "a") $
---      pi "a" h $
---      "C" $$ h $$ ("g" $$ "a"))
---     (lam "A" $ lam "B" $ lam "C" $
---      lam "f" $ lam "g" $ lam "a" $ "f" $$ h $$ ("g" $$ "a"))
-
--- -- Raw:
--- -- comp :
--- --     (A : *)
--- --  -> (B : A -> *)
--- --  -> (C : (a : _) -> (B a) -> *)
--- --  -> (f : (a : _) -> (b : _) -> C a b)
--- --  -> (g : (a : _) -> B a)
--- --  -> (a : _) -> C _ (g a)         
--- -- comp = \A B C f g a. f _ (g a)
-
--- -- Elaborated:
--- -- comp :
--- --     (A : *)
--- --  -> (B : A -> *)
--- --  -> (C : (a : ?0 [B,A]) -> (B a) -> *)
--- --  -> (f : (a : ?1 [C,B,A]) -> (b : ?2 [a,C,B,A]) -> C a b)
--- --  -> (g : (a : ?3 [f,C,B,A]) -> B a)
--- --  -> (a : ?4 [g,f,C,B,A]) -> C (?5 [a,g,f,C,B,A]) (g a)
--- -- comp = \A B C f g a. f (?6 [a,g,f,C,B,A]) (g a)
-
--- -- Zonked
--- -- comp:
--- --      (A : *)
--- --   -> (B : A -> *)
--- --   -> (C : (a : A) -> (B a) -> *)
--- --   -> (f : (a : A) -> (b : B a) -> C a b)
--- --   -> (g : (a : A) -> B a)
--- --   -> (a : A) -> C a (g a)
--- -- comp = \A B C f g a. f a (g a) 
-
-
+  "foo"
 

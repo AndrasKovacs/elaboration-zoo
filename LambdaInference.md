@@ -6,9 +6,9 @@ Dependent type checking involves evaluation of functional programs. Compilers an
 
 This could be seen as one basic idea behind [Coquand's algorithm](http://ac.els-cdn.com/0167642395000216/1-s2.0-0167642395000216-main.pdf?_tid=848e736c-944f-11e6-b999-00000aacb362&acdnat=1476698172_390e8fd4c6267a2fc9e68704b0e96c9e). The advantages are manifold:
 
-- No substitution, therefore no need for shifting, renaming or any sort of capture avoidance.
+- No syntactic substitution, therefore no need for shifting, renaming or any sort of capture avoidance.
 - No need for fresh name generation (for simple type checkers).
-- Tremendously faster than evaluation by substitution.
+- Tremendously faster than evaluation by substituting redexes away.
 - Easier to implement correctly.
 - Easily extended to type-directed evaluation and syntactic equality checks (equality with no/limited reduction).
 - Possible to extend to [machine code](https://depositonce.tu-berlin.de/bitstream/11303/3095/1/Dokument_9.pdf) based evaluation or [JIT compilation](http://www.maximedenes.fr/download/coqonut.pdf) (even during type checking). 

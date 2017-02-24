@@ -1,477 +1,502 @@
 
-{-# language PatternSynonyms, BangPatterns, MagicHash, LambdaCase, ViewPatterns #-}
-{-# language OverloadedStrings #-}
+{-# language
+  PatternSynonyms, BangPatterns, MagicHash,
+  DataKinds, LambdaCase, ViewPatterns, TupleSections,
+  TypeFamilies, GADTs, EmptyCase, OverloadedStrings #-}
+
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-module Glued where
+module Glued3 where
 
 import Prelude hiding (pi)
-import Data.String
 import Control.Monad
-import Control.Applicative
-import Control.Monad.Except
 import Data.Either
+import Control.Monad.Except
 import GHC.Prim (reallyUnsafePtrEquality#)
 import GHC.Types (isTrue#)
+import Data.String
 
 import Data.HashMap.Strict (HashMap, (!))
 import qualified Data.HashMap.Strict as M
 
-import Syntax (RawTerm)
-import qualified Syntax as S
+import qualified Debug.Trace as Trace
 
-import Debug.Trace
+tracing a    = Trace.traceShow a a
+traceShow x  = Trace.traceShow x
+traceShowM x = Trace.traceShowM x
+trace        = Trace.trace
+traceM x     = Trace.traceM x
 
-{- Notes:
 
-  CRITICAL
-  - BUGG : ALam and ALet annotation ignores any subsequent whnf evaluation !!
-     - first alternative : do inferred annotated lambdas
-     - second -||-       : try to push annotations down to lambdas, use annotations
-                           to implement eta expansion
 
-  IDEA:
-  - as a stunt, try to implement the most sophisticated language with an existential
-    type for names, with only an Eq instance
-
-  - easier but more practical version: also include an existential map type with
-    lookup and insert.
-
-  - bonus: using the abstracted types, try to factor out the entire closure setup
-    into a library (how?)
-
-  FEATURE:
-  - add sigma & bottom
-  - add eta expansion for alpha
-  - elaborate values of bottom to common dummy value (eta rule for bottom)
-  - use phantom tags for scopes
-  - think about saner closure API
+{- TODO:
+   Version with glued TC Env but only whnf closures in WTerm
+   Version with closure conversion?
 -}
+{-
+
+  Glued principles:
+
+    1. We infer unreduced and lazy whnf types simulataneously
+
+    2. Whenever we have a Term, we must also have at hand:
+      - its lazy whnf form
+      - its unreduced type
+      - its lazy whnf type
+      - all of the previous for all of its free variables, recursively
+
+    3. We never recompute whnf, types, or whnf of types for any Term
+
+    4. Time and space overhead of storing unreduced terms must be O(N)
+       in the size of the source code, compared to non-glued type checking
+       with beta-eta conversions.
+
+    5. NOT YET IMPLEMENTED: we don't retain more entries in environments
+       than an STG machine would.
+
+    6. No new Terms may be created and stored during type checking,
+       expect when created by PiApp. Since PiApp-s are bounded by
+       source code size, Terms in general are bounded by source code size as well.
+
+    7. No new Var-s may be created. All Var-s come from the source code.
+       The only available operations on Var-s are equality checking and
+       Env insertion/lookup.
+
+-}
+
+
+{-
+  Notes:
+    - Separate raw and core syntax. Core may have type annotations inside spines
+      or elsewhere.
+    - Question: how to properly convert unannotated arg lambdas to annotated?
+    - Include metadata on binders: lam | pi | let | unfolding rules etc.
+
+    - Question: what is the best spine / App data shape?
+      - Outer application first: easier to apply
+      - Inner application first: faster to wapp
+
+    - Can't fully ditch PiApp in favor of metadata:
+          - "PiApp (Sp sp)" y can't be reduced
+          - Only PiApp "PiApp (Pi v a b) y" can be reduced to "b [v := (y, a)]"
+
+    - Have proper env entries for Gen and Bound variables.
+    - One unchanging global env + small closures
+    - Closure conversion for Core syntax.
+    - How to easily switch between untyped and typed local closures?
+    - Unique global binder identifiers
+      - non-shadowing binders enough to implement syntactic bound var equality
+
+  Implementation niceties:
+    put Env in a Reader, use "local"
+    use phantom tags on Env-Term pairs ?
+    Revamp diving and quoting nomeclature, maybe introduce overloading?
+    Think about better scoping and reducing API
+
+    phantom tag Term-s with their Env-s, pass the Env around implicitly,
+      a bit like Reflection?
+
+-}
+
+type Var   = String
+type Gen   = Int
+type Depth = Int
+
+data Sp
+  = Var !Var
+  | Gen !Gen !GType -- only for syntactic equality
+  | App !Sp !Term
+  deriving Show
+
+data Term
+  = Sp !Sp
+  | Pi !Var !Type !Term
+  | Let !Var !Term !Type !Term
+  | Star
+  | Lam !Var !Term
+  | PiApp !Term {-# unpack #-} !Entry -- only in inferred types
+  deriving Show
+
+data WSp
+  = WGen !Gen
+  | WVar !Var -- only for quoting
+  | WApp !WSp WTerm WType
+  deriving Show
+
+data WTerm
+  = WSp !WSp
+  | WPi  {-# unpack #-} !WPi_
+  | WLam {-# unpack #-} !WLam_
+  | WStar
+  deriving Show
+
+type Type    = Term
+type WType   = WTerm
+data Closure = C !Env !Term deriving Show
+data GTerm   = G {-# unpack #-} !Closure WTerm deriving Show
+type GType   = GTerm
+data Entry   = E {-# unpack #-} !GTerm {-# unpack #-} !GType
+instance Show Entry where show _ = "<entry>"
+type Env     = HashMap Var Entry
+data WPi_    = WPi_ !Env !Var !Type WType !Term deriving Show
+data WLam_   = WLam_ !Env !Var !Term deriving Show
+type M       = Either String
+
+-- misc
+--------------------------------------------------------------------------------
+
+gen :: Gen -> GType -> GTerm
+gen g gty = G (C mempty (Sp (Gen g gty))) (WSp (WGen g))
+
+var :: Var -> GTerm
+var v = G (C mempty (Sp (Var v))) (WSp (WVar v))
+
+domG :: WPi_ -> GType
+domG (WPi_ e v a wa b) = G (C e a) wa
+
+domW :: WPi_ -> WType
+domW (WPi_ _ _ _ wa _) = wa
+
+lamVar :: WLam_ -> Var
+lamVar (WLam_ e v t) = v
+
+domVar :: WPi_ -> Var
+domVar (WPi_ _ v _ _ _) = v
+
+getW :: GTerm -> WTerm
+getW (G _ wt) = wt
+
+gstar :: GType
+gstar = G (C mempty Star) WStar
+
+(<:) :: Env -> (Var, GTerm, GType) -> Env
+e <: (v, gt, gty) = M.insert v (E gt gty) e
+
+-- Whnf
+--------------------------------------------------------------------------------
+
+wapp :: WPi_ -> WTerm -> GTerm -> WTerm
+wapp pi (WLam lam) gt = instLam lam pi gt
+wapp pi (WSp  sp ) gt = WSp (WApp sp (getW gt) (domW pi))
+wapp _  w          g  = error "wapp: impossible"
+
+whnfSp :: Env -> Sp -> WTerm
+whnfSp e = fst . go where
+  go :: Sp -> (WTerm, WType)
+  go (Var v)    = let E (G _ wt) gty = e ! v in (wt, getW gty)
+  go Gen{}      = error "whnfSp: Gen"
+  go (App sp t) = let gt = glue e t in case go sp of
+    (wt, WPi pi) -> (wapp pi wt gt, instPi pi gt)
+    _            -> error "whnfSp: non-Pi spine type"
+
+glue :: Env -> Term -> GTerm
+glue e t = G (C e t) (whnf e t)
+
+whnf :: Env -> Term -> WTerm
+whnf !e = \case
+  Sp sp         -> whnfSp e sp
+  Pi v a b      -> WPi (WPi_ e v a (whnf e a) b)
+  Lam v t       -> WLam (WLam_ e v t)
+  Let v t ty t' -> whnf (e <: (v, glue e t, glue e ty)) t'
+  Star          -> WStar
+  PiApp{}       -> error "whnf: PiApp"
+
+-- Quoting to beta normal form
+--------------------------------------------------------------------------------
+
+-- NOTE: quoting to eta-beta normal form requires fresh name generation, or
+-- generic/de Bruijn vars used as actual variables!
+-- That's why we're not doing eta-expansion here.
+-- (it wouldn't be hard though)
+
+quote :: WTerm -> WType -> Term
+quote WStar      _        = Star
+quote (WPi  pi)  _        = Pi (domVar pi) (quote (domW pi) WStar) (quote (quotePi pi) WStar)
+quote (WLam lam) (WPi pi) = Lam (lamVar lam) (quote (quoteLam lam pi) (quotePi pi))
+quote (WSp sp)   _        = Sp (quoteSp sp)
+quote _          _        = error "quote: impossible"
+
+quoteSp :: WSp -> Sp
+quoteSp (WVar v)         = Var v
+quoteSp (WApp sp wt wty) = App (quoteSp sp) (quote wt wty)
+quoteSp WGen{}           = error "quoteSp: WGen"
+
+nfWTy = flip quote WStar
+
+-- Going under binders
+--------------------------------------------------------------------------------
+
+instLam :: WLam_ -> WPi_ -> GTerm -> WTerm
+instLam (WLam_ e v t) pi gt = whnf (e <: (v, gt, domG pi)) t
+
+quoteLam :: WLam_ -> WPi_ -> WType
+quoteLam lam pi = instLam lam pi (var (lamVar lam))
+
+instPi :: WPi_ -> GTerm -> WType
+instPi pi@(WPi_ e v a wa b) gt = whnf (e <: (v, gt, domG pi)) b
+
+quotePi :: WPi_ -> WType
+quotePi pi = instPi pi (var (domVar pi))
+
+instGPi :: Closure -> WPi_ -> GTerm -> GType
+instGPi (C e t) pi gt = G (C e (PiApp t (E gt (domG pi)))) (instPi pi gt)
+
+divePi :: Gen -> WPi_ -> WType
+divePi g pi = instPi pi (gen g (domG pi))
+
+
+-- Beta-eta conversion check
+--------------------------------------------------------------------------------
+
+conv :: WType -> WType -> Bool
+conv t t' = go 0 WStar t t' where
+
+  go :: Gen -> WType -> WTerm -> WTerm -> Bool
+  go !g ty WStar WStar = True
+
+  -- the two divePi entries could be shared by inlining
+  go g ty (WPi pi) (WPi pi') =
+    go g WStar (domW pi) (domW pi') && go (g + 1) WStar (divePi g pi) (divePi g pi')
+
+  go g (WPi pi) t t' = let gvar = gen g (domG pi) in
+    go (g + 1) (divePi g pi) (wapp pi t gvar) (wapp pi t' gvar)
+
+  go g _ (WSp sp) (WSp sp') = goSp g sp sp'
+  go g _ _        _         = False
+
+  goSp :: Gen -> WSp -> WSp -> Bool
+  goSp !g (WGen v)         (WGen v')           = v == v'
+  goSp !g (WVar v)         (WVar v')           = v == v'
+  goSp  g (WApp sp wt wty) (WApp sp' wt' wty') = goSp g sp sp' && go g wty wt wt'
+  goSp  _ _                _                   = False
+
+-- Syntactic equality (semidecision)
+--------------------------------------------------------------------------------
+
+-- | Try to decide equality by doing n-depth delta reduction, eta expansion
+--   and PiApp/Let reduction. Beta reduction is *not* performed.
+--   Returns 'Nothing' if equality can't be decided this way.
+synEqN :: Gen -> Depth -> Closure -> Closure -> WType -> Maybe Bool
+synEqN g d ct ct' wty = case (preproc g wty ct, preproc g wty ct') of
+  (C e t, C e' t') -> case (t, t') of
+    (Star, Star) -> Just True
+
+    (PiApp (Sp sp) (E (G ct _) gty), PiApp (Sp sp') (E (G ct' _) _)) ->
+      True <$ do {guard =<< synEqNSp g d e e' sp sp'; guard =<< synEqN g d ct ct' (getW gty)}
+
+    (Pi v a b, Pi v' a' b') -> (&&) <$> synEqN g d (C e a) (C e' a') WStar <*>
+      (let ga = glue e a; gvar = gen g ga in
+       synEqN (g + 1) d (C (e <: (v, gvar, ga)) b) (C (e' <: (v', gvar, ga)) b') WStar)
+
+    -- (Lam-Lam case covered by synEta)
+    (Sp sp, Sp sp')  -> synEqNSp g d e e' sp sp'
+    (Sp (Var v), t') -> fst <$> varTerm g d e e' v t'
+    (t, Sp (Var v')) -> fst <$> varTerm g d e e' v' t
+    (PiApp{}, _)     -> Nothing
+    (_, PiApp{})     -> Nothing
+    (Sp{}, _)        -> Nothing
+    (_, Sp{})        -> Nothing
+    _                -> Just False
+
+preproc :: Gen -> WType -> Closure -> Closure
+preproc g wty = synEta g wty . bindElim
+
+-- | Move top level Let bindings and reducible PiApp args into
+--   the environment.
+bindElim :: Closure -> Closure
+bindElim (C e t) = case t of
+  PiApp f x -> case bindElim (C e f) of
+    C e (Pi v a b) -> C (M.insert v x e) b
+    C e f          -> C e (PiApp f x)
+  Let v t ty t' -> bindElim (C (e <: (v, glue e ty, glue e t)) t')
+  _ -> C e t
+
+synEta :: Gen -> WType -> Closure -> Closure
+synEta g (WPi pi) (C e t) = case t of
+  Sp sp   -> C e (Sp (App sp (Sp (Gen g (domG pi)))))
+  Lam v t -> C (e <: (v, gen g (domG pi), domG pi)) t
+  _       -> C e t
+synEta _ _ (C e t) = C e t
 
 ptrEq :: a -> a -> Bool
 ptrEq !x !y = isTrue# (reallyUnsafePtrEquality# x y)
 {-# inline ptrEq #-}
 
--- Data
+varVar :: Gen -> Depth -> Env -> Env -> Var -> Var -> Maybe (Bool, WType)
+varVar !g !d !e !e' v v' = case (M.lookup v e, M.lookup v' e') of
+  (Just entry@(E (G (C e t) _) gt), Just entry'@(E (G (C e' t') _) _))
+    | ptrEq entry entry' -> Just (True, getW gt)
+    | d == 0             -> Nothing
+    | otherwise          -> (,getW gt) <$> synEqN g (d - 1) (C e t) (C e' t') (getW gt)
+
+  _ -> Nothing
+
+synEqNSp :: Gen -> Depth -> Env -> Env -> Sp -> Sp -> Maybe Bool
+synEqNSp g d e e' sp sp' = fst <$> go sp sp' where
+  go :: Sp -> Sp -> Maybe (Bool, WType)
+  go (Gen v gty) (Gen v' _)  = Just (v == v', getW gty)
+  go (Var v    ) (Var v'  )  = varVar g d e e' v v'
+  go (Var v    ) sp'         = varTerm g d e e' v (Sp sp')
+  go sp          (Var v')    = varTerm g d e e' v' (Sp sp)
+  go (App sp t) (App sp' t') = do
+    (b, WPi pi) <- go sp sp'
+    guard b
+    guard =<< synEqN g d (C e t) (C e' t') (domW pi)
+    pure (True, instPi pi (glue e t))
+  go _ _ = Nothing
+
+varTerm :: Gen -> Depth -> Env -> Env -> Var -> Term -> Maybe (Bool, WType)
+varTerm g d e e' v t' = do
+  guard (d /= 0)
+  E (G (C e t) _) gt <- M.lookup v e
+  (,getW gt) <$> synEqN g (d - 1) (C e t) (C e' t') (getW gt)
+
+-- Full equality
 --------------------------------------------------------------------------------
 
-type AlphaVar = Int
-type Var = String
+deltaDepth :: Depth
+deltaDepth = 1
 
--- Concrete
-type QType = QTerm
-data QTerm
-  = QVar !Var
-  | QApp !QTerm !QTerm
-  | QPi !Var !QType !QTerm
-  | QLam !Var !QTerm
-  | QLet !Var !QTerm !QTerm
-  | QStar
-  | QAnn !QTerm !QType
-  deriving (Eq)
+eq :: GType -> GType -> Bool
+eq (G ct@(C _ t) wt) (G ct'@(C _ t') wt') =
+  case synEqN 0 deltaDepth ct ct' WStar of
+    Just b -> b
+    _      -> conv wt wt'
 
--- Abstract
-type AType = ATerm
-data ATerm
-  = AVar !Var
-  | AAlpha !AlphaVar
-  | AApp !ATerm !ATerm
-  | APiApp !ATerm !ATerm
-  | APi !Var !AType !ATerm
-  | ALam !Var !AType !ATerm
-  | ALet !Var !AType !ATerm !ATerm
-  | AStar
-  | Close {-# unpack #-} !Closure
-  deriving (Eq)
-
--- Weak head normal
-data Whnf
-  = VVar !Var
-  | VAlpha !AlphaVar
-  | VApp !Whnf Whnf
-  | VPi  !Var !AType {-# unpack #-} !Closure
-  | VLam !Var !AType {-# unpack #-} !Closure
-  | VStar
-  deriving (Eq, Show)
-
-data Closure = C !Env !ATerm
-  deriving (Eq, Show)
-
-_cenv (C e _) = e
-_cterm (C _ t) = t
-
-type GType = Glued
-data Glued = G {-# unpack #-} !Closure Whnf deriving (Eq)
-instance Show Glued where show (G (C _ t) _) = show t
-
-_unreduced (G u _) = u
-_whnf      (G _ v) = v
-
-data Entry = E {-# unpack #-} !Glued {-# unpack #-} !GType deriving (Eq, Show)
-
-_term (E t _) = t
-_type (E _ v) = v
-
-type Env = HashMap Var Entry
-type TM  = Either String
-
-instance IsString ATerm where fromString = AVar
-instance IsString Whnf  where fromString = VVar
-instance IsString QTerm where fromString = QVar
-
--- Reduction
+-- Check & infer
 --------------------------------------------------------------------------------
 
-glued :: Env -> ATerm -> Glued
-glued e t = G (C e t) (whnf e t)
-
-whnf :: Env -> ATerm -> Whnf
-whnf e = \case
-  AApp f x -> case whnf e f of
-    VLam v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e' ty)) e') t
-    f'                 -> VApp f' (whnf e x)
-  APiApp f x -> case whnf e f of
-    VPi  v ty (C e' t) -> whnf (M.insert v (E (glued e x) (glued e' ty)) e') t
-    f'                 -> error "piapp"
-  AVar v         -> maybe (VVar v) (_whnf . _term) $ M.lookup v e
-  ALet v ty t t' -> whnf (M.insert v (E (glued e t) (glued e ty)) e) t'
-  APi  v ty t    -> VPi  v ty (C e t)
-  ALam v ty t    -> VLam v ty (C e t)
-  AStar          -> VStar
-  Close (C e' t) -> whnf e' t
-  AAlpha{}       -> error "whnf: Alpha in ATerm"
-
-isNeutral :: ATerm -> Bool
-isNeutral = \case
-  AApp{}        -> True
-  AAlpha{}      -> True
-  AVar{}        -> True
-  APiApp{}      -> True
-  Close (C _ t) -> isNeutral t
-  _             -> False
-
-quoteVar :: Env -> Var -> GType -> Entry
-quoteVar e v ty = E (G (C e (AVar v)) (VVar v)) ty
-
--- TODO: eta-expansion (need to add Alpha to ATerm too)
-alpha :: Int -> Env -> AType -> Entry
-alpha a e ty = E (G (C e (AAlpha a)) (VAlpha a)) (glued e ty)
-
-nf :: Env -> ATerm -> ATerm
-nf e t = quote (whnf e t)
-
-quote :: Whnf -> ATerm
-quote = \case
-  VVar v            -> AVar v
-  VApp f x          -> AApp (quote f) (quote x)
-  VPi  v ty (C e t) -> APi  v (nf e ty) (nf (M.insert v (quoteVar e v (glued e ty)) e) t)
-  VLam v ty (C e t) -> ALam v (nf e ty) (nf (M.insert v (quoteVar e v (glued e ty)) e) t)
-  VStar             -> AStar
-  VAlpha{}          -> error "quote: Alpha in Whnf"
-
-
--- Equality with n-depth unfolding but no reduction (semidecision)
---------------------------------------------------------------------------------
-
-type Depth = Int
-
-termSemiEqN :: Depth -> Env -> Env -> AlphaVar -> ATerm -> ATerm -> Maybe Bool
-termSemiEqN !d e e' !a t t' = case (t, t') of
-  (Close (C e t), t')  -> termSemiEqN d e e' a t t'
-  (t, Close (C e' t')) -> termSemiEqN d e e' a t t'
-
-  (AVar v, AVar v') ->
-    case (M.lookup v e, M.lookup v' e') of
-      (Just e1@(E (G (C e t) _) _), Just e2@(E (G (C e' t') _) _)) ->
-        if ptrEq e1 e2 then
-          Just True
-        else if d == 0 then
-          Nothing
-        else
-          termSemiEqN (d - 1) e e' a t t'
-      _ -> Nothing
-
-  (AVar v, t') | d == 0    -> Nothing
-               | otherwise -> do
-                   E (G (C e t) _) _ <- M.lookup v e
-                   termSemiEqN (d - 1) e e' a t t'
-  (t, AVar v') | d == 0    -> Nothing
-               | otherwise -> do
-                   E (G (C e' t') _) _ <- M.lookup v' e'
-                   termSemiEqN (d - 1) e e' a t t'
-
-  (AApp f x, AApp f' x') ->
-    True <$ do {guard =<< termSemiEqN d e e' a f f'; guard =<< termSemiEqN d e e' a x x'}
-  (AApp{}, _) -> Nothing
-  (_, AApp{}) -> Nothing
-
-  (ALam v ty t, ALam v' ty' t') -> (&&) <$> termSemiEqN d e e' a ty ty' <*>
-    (let al = alpha a e ty in termSemiEqN d (M.insert v al e) (M.insert v' al e') (a + 1) t t')
-  (APi  v ty t, APi  v' ty' t') -> (&&) <$> termSemiEqN d e e' a ty ty' <*>
-    (let al = alpha a e ty in termSemiEqN d (M.insert v al e) (M.insert v' al e') (a + 1) t t')
-
-  (AAlpha a, AAlpha a') -> Just (a == a')
-  (AStar,    AStar    ) -> Just True
-  _                     -> Just False
-
--- | Reduce top level Pi applications
-reducePiApp :: Env -> ATerm -> ATerm
-reducePiApp e = \case
-  APiApp (APi v ty t) x -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
-  APiApp f x -> case reducePiApp e f of
-    Close (C e (APi v ty t)) -> Close (C (M.insert v (E (glued e x) (glued e ty)) e) t)
-    _ -> APiApp f x
-  t -> t
-
-depth :: Depth
-depth = 1
-
-fullTermSemiEq :: Env -> Env -> ATerm -> ATerm -> Maybe Bool
-fullTermSemiEq e e' t t' =
-  termSemiEqN depth e e' 0 (reducePiApp e t) (reducePiApp e' t')
-
--- Equality with reduction
---------------------------------------------------------------------------------
-
-whnfEq :: Int -> Whnf -> Whnf -> Bool
-whnfEq !b t t' = case (t, t') of
-  (VVar v,   VVar v'   ) -> v == v'
-  (VApp f x, VApp f' x') -> whnfEq b f f' && whnfEq b x x'
-  (VLam v ty (C e t), VLam v' ty' (C e' t')) ->
-    termEq e e' b ty ty' &&
-    let al = alpha b e ty
-    in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
-  (VPi v ty (C e t), VPi v' ty' (C e' t')) ->
-    termEq e e' b ty ty' &&
-    let al = alpha b e ty
-    in termEq (M.insert v al e) (M.insert v' al e') (b + 1) t t'
-  (VStar,    VStar    ) -> True
-  (VAlpha a, VAlpha a') -> a == a'
-  _                     -> False
-
-termEq :: Env -> Env -> Int -> ATerm -> ATerm -> Bool
-termEq e e' !b t t'
-  | isNeutral t || isNeutral t' = case termSemiEqN 0 e e' b t t' of
-    Just True -> True
-    _ -> whnfEq b (whnf e t) (whnf e' t')
-  | otherwise = whnfEq b (whnf e t) (whnf e' t')
-
-gluedEq :: Glued -> Glued -> Bool
-gluedEq (G (C e t) v) (G (C e' t') v') =
-  maybe False id (fullTermSemiEq e e' t t') || whnfEq 0 v v'
-
--- Type checking / elaboration
---------------------------------------------------------------------------------
-
-gstar :: GType
-gstar = G (C mempty AStar) VStar
-
-check :: Env -> QTerm -> GType -> TM ATerm
-check e t want = case (t, _whnf want) of
-  (QLam v t, VPi v' a (C e' b)) -> do
-    let a' = glued e' a
-    t' <- check (M.insert v (quoteVar e v a') e) t
-                (glued (M.insert v' (quoteVar e v a') e') b)
-    pure $ ALam v (Close $ _unreduced a') t'
+check :: Env -> Term -> GType -> M ()
+check !e t want = case (t, want) of
+  (Lam v t, G (C e' tpi) (WPi pi@(WPi_ e'' v' a' wa' b'))) -> do
+    -- Inlining stuff so we explicitly share the Entry
+    let !varv  = var v
+        !dom   = domG pi
+        !entry = E varv dom
+    check (M.insert v entry e) t (G (C e' (PiApp tpi entry)) (whnf (M.insert v' entry e'') b'))
 
   _ -> do
-    (t', has) <- infer e t
-    unless (gluedEq has want) $ Left "type mismatch"
-    pure t'
+    has <- infer e t
+    unless (eq has want) $ throwError "type mismatch"
 
-infer :: Env -> QTerm -> TM (ATerm, Glued)
-infer e = \case
-  QVar v    -> pure (AVar v, _type $ e ! v)
-  QStar     -> pure (AStar, gstar)
-  QAnn t ty -> do
-    ty' <- glued e <$> check e ty gstar
-    t'  <- check e t ty'
-    pure (t', ty')
-  QLam{} -> Left "can't infer type for lambda"
-  QPi v ty t -> do
-    ty' <- check e ty gstar
-    t'  <- check (M.insert v (quoteVar e v (glued e ty')) e) t gstar
-    pure (APi v ty' t', gstar)
-  QLet v t1 t2 -> do
-    (t1', t1t) <- infer e t1
-    (t2', t2t) <- infer (M.insert v (E (glued e t1') t1t) e) t2
-    pure (ALet v (Close (_unreduced t1t)) t1' t2', t2t)
-  QApp f x -> do
-    (f', tf) <- infer e f
-    case _whnf tf of
-      VPi v a (C e' b) -> do
-        let a' = glued e' a
-        x' <- check e x a'
-        pure (AApp f' x',
-              G (C (_cenv $ _unreduced tf) (APiApp (_cterm $ _unreduced tf) (Close (C e x'))))
-                (whnf (M.insert v (E (glued e x') a') e') b))
-      _ -> Left "can't apply to non-function"
+inferSp :: Env -> Sp -> M GType
+inferSp e sp = case sp of
+  Var v    -> let E _ gty = e ! v in pure gty
+  App sp t -> do
+    G spTy wSpTy <- inferSp e sp
+    case wSpTy of
+      WPi pi -> do
+        check e t (domG pi)
+        pure $ instGPi spTy pi (glue e t)
+      _ -> throwError "can't apply non-function"
+  Gen{} -> error "inferSp: Gen"
 
--- print
+infer :: Env -> Term -> M GType
+infer !e t = case t of
+  Sp sp    -> inferSp e sp
+  Star     -> pure gstar
+  Lam{}    -> throwError "can't infer type for lambda"
+  Pi v a b -> do
+    check e a gstar
+    check (e <: (v, var v, glue e a)) b gstar
+    pure gstar
+  Let v t ty t' -> do
+    check e ty gstar
+    let gty = glue e ty
+    check e t gty
+    infer (e <: (v, glue e t, gty)) t'
+  PiApp{} -> error "infer: PiApp"
+
+infer0 :: Term -> M Term
+infer0 = fmap (flip quote WStar . getW) . infer mempty
+
+inferT0 :: Term -> M Term
+inferT0 t = do
+  G (C _ t') _ <- infer mempty t
+  pure t'
+
+eval0 :: Term -> M Term
+eval0 t = do
+  gty <- infer mempty t
+  pure $ quote (whnf mempty t) (getW gty)
+
 --------------------------------------------------------------------------------
 
-instance Show QTerm where showsPrec = prettyQTerm
+instance IsString Term where fromString = Sp . Var
+instance IsString Sp   where fromString = Var
 
-prettyQTerm :: Int -> QTerm -> ShowS
-prettyQTerm prec = go (prec /= 0) where
-
-  unwords' :: [ShowS] -> ShowS
-  unwords' = foldr1 (\x acc -> x . (' ':) . acc)
-
-  spine :: QTerm -> QTerm -> [QTerm]
-  spine f x = go f [x] where
-    go (QApp f y) args = go f (y : args)
-    go t          args = t:args
-
-  go :: Bool -> QTerm -> ShowS
-  go p (QVar i)   = (i++)
-  go p (QApp f x) = showParen p (unwords' $ map (go True) (spine f x))
-  go p (QLam k t) = showParen p
-    (("λ "++) . (k++) . (". "++) . go False t)
-  go p (QPi k a b) = showParen p (arg . (" -> "++) . go False b)
-    where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
-                              else go True a
-  go p QStar = ('*':)
-  go p (QAnn t ty) = showParen p (go False t . (" ∈ "++) . go False ty)
-  go p (QLet v t1 t2) =
-    showParen p (("let "++) . (v++) . (" = "++) . go False t1 . (" in \n"++) .
-                go False t2)
-
-  freeIn :: Var -> QTerm -> Bool
-  freeIn k = go where
-    go (QVar i)      = i == k
-    go (QApp f x)    = go f || go x
-    go (QLam k' t)   = (k' /= k && go t)
-    go (QPi  k' a b) = go a || (k' /= k && go b)
-    go _             = False
-
-prettyATerm :: Int -> ATerm -> ShowS
-prettyATerm prec = go (prec /= 0) where
-
-  unwords' :: [ShowS] -> ShowS
-  unwords' = foldr1 (\x acc -> x . (' ':) . acc)
-
-  spine :: ATerm -> ATerm -> [ATerm]
-  spine f x = go f [x] where
-    go (AApp f y) args = go f (y : args)
-    go t          args = t:args
-
-  go :: Bool -> ATerm -> ShowS
-  go p (AVar i)     = (i++)
-  go p (AAlpha i)   = showParen p (("alpha " ++ show i)++)
-  go p (AApp f x)   = showParen p (unwords' $ map (go True) (spine f x))
-  go p (APiApp f x) = showParen p (unwords' $ map (go True) (spine f x))
-  go p (ALam k a t) = showParen p
-    (("λ "++) . showParen True ((k++) . (" : "++) . go False a) . (". "++) . go False t)
-  go p (APi k a b) = showParen p (arg . (" -> "++) . go False b)
-    where arg = if freeIn k b then showParen True ((k++) . (" : "++) . go False a)
-                              else go True a
-  go p AStar = ('*':)
-  go p (Close (C e t)) = go p t
-  go p (ALet v ty t1 t2) =
-    showParen p (("let "++) . (v++) . (" = "++) .
-                 go False t1 . (" ∈ "++) . go False ty .
-                 (" in \n"++) . go False t2)
-  freeIn :: String -> ATerm -> Bool
-  freeIn k = go where
-    go (AVar i)      = i == k
-    go (AApp f x)    = go f || go x
-    go (ALam k' a t) = go a || (k' /= k && go t)
-    go (APi  k' a b) = go a || (k' /= k && go b)
-    go _             = False
-
-instance Show ATerm where
-  showsPrec = prettyATerm
--- deriving instance Show ATerm
-
--- tests
---------------------------------------------------------------------------------
-
-
-nf0         = nf mempty
-whnf0       = whnf mempty
-infer0      = infer mempty
-infer0'     = fmap (quote . _whnf . snd) . infer0
-
-star    = QStar
-ann     = flip QAnn
-a ==> b = QPi "" a b
-lam     = QLam
-pi      = QPi
-($$)    = QApp
-qlet    = QLet
+a ==> b = Pi "" a b
+Sp sp $$ x = Sp (App sp x)
+_     $$ x = undefined
 infixl 8 $$
-infixr 7 ==>
+infixr 3 ==>
 
 test =
+  Let "id" (Lam "a" $ Lam "x" $ "x") (Pi "z" Star $ "z" ==> "z") $
 
-  qlet "nat"  (pi "r" star $ ("r" ==> "r") ==> "r" ==> "r") $
+  Let "const" (Lam "a" $ Lam "b" $ Lam "x" $ Lam "y" "x")
+              (Pi "a" Star $ Pi "b" Star $ "a" ==> "b" ==> "a") $
+  Let "nat" (Pi "r" Star $ ("r" ==> "r") ==> "r" ==> "r") Star $
 
-  qlet "zero" (ann "nat" (lam "r" $ lam "s" $ lam "z" "z")) $
+  Let "list" (Lam "a" $ Pi "r" Star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")
+             (Star ==> Star) $
 
-  qlet "suc" (ann ("nat" ==> "nat")
-  (lam "a" $ lam "r" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "r" $$ "s" $$ "z"))) $
+  Let "ap" (Lam "a" $ Lam "b" $ Lam "f" $ Lam "x" $ "f" $$ "x")
+           (Pi "a" Star $ Pi "b" Star $ ("a" ==> "b") ==> "a" ==> "b") $
 
-  qlet "add" (ann ("nat" ==> "nat" ==> "nat")
-  (lam "a" $ lam "b" $ lam "r" $ lam "s" $ lam "z" $
-      "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z"))) $
+  Let "f"     (Lam "f" "f")                    ((Star ==> Star) ==> Star ==> Star) $
+  Let "f-eta" (Lam "f" $ Lam "x" $ "f" $$ "x") ((Star ==> Star) ==> Star ==> Star) $
 
-  qlet "mul" (ann ("nat" ==> "nat" ==> "nat")
-  (lam "a" $ lam "b" $ lam "r" $ lam "s" $ lam "z" $
-      "a" $$ "r" $$ ("b" $$ "r" $$ "s") $$ "z")) $
+  -- Leibniz equality
+  Let "eq" (Lam "a" $ Lam "x" $ Lam "y" $ Pi "p" ("a" ==> Star) $ "p" $$ "x" ==> "p" $$ "y")
+           (Pi "a__" Star $ "a__" ==> "a__" ==> Star) $
 
-  qlet "one"      ("suc" $$ "zero") $
-  qlet "two"      ("suc" $$ ("suc" $$ "zero")) $
-  qlet "five"     ("suc" $$ ("add" $$ "two" $$ "two")) $
-  qlet "ten"      ("add" $$ "five" $$ "five") $
-  qlet "hundred"  ("mul" $$ "ten" $$ "ten") $
-  qlet "thousand" ("mul" $$ "ten" $$ "hundred") $
-  qlet "tenK"     ("mul" $$ "hundred" $$ "hundred") $
-  qlet "hundredK" ("mul" $$ "hundred" $$ "thousand") $
+  Let "refl" (Lam "a" $ Lam "x" $ Lam "p" $ Lam "px" "px")
+             (Pi "a_" Star $ Pi "x_" "a_" $ "eq" $$ "a_" $$ "x_" $$ "x_") $
 
-  qlet "id" (ann (pi "x" star $ "x" ==> "x")
-  (lam "a" $ lam "b" "b")) $
+  Let "etaTest"
+    ("refl" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f")
+    ("eq" $$ ((Star ==> Star) ==> Star ==> Star) $$ "f" $$ "f-eta") $
 
-  qlet "const" (ann (pi "a" star $ pi "b" star $ "a" ==> "b" ==> "a")
-  (lam "a" $ lam "b" $ lam "x" $ lam "y" "x")) $
+  Let "z" (Lam "r" $ Lam "s" $ Lam "z" "z") "nat" $
 
-  qlet "list" (ann (star ==> star)
-  (lam "a" $ pi "r" star $ ("a" ==> "r" ==> "r") ==> "r" ==> "r")) $
+  Let "s" (Lam "n" $ Lam "r" $ Lam "s" $ Lam "z" $ "s" $$ ("n" $$ "r" $$ "s" $$ "z"))
+          ("nat" ==> "nat") $
 
-  qlet "nil" (ann (pi "a" star $ "list" $$ "a")
-  (lam "a" $ lam "r" $ lam "c" $ lam "n" $ "n")) $
+  Let "nf" (Lam "n" $ "n" $$ Star $$ (Lam "t" $ Star ==> "t") $$ Star)
+           ("nat" ==> Star) $
 
-  qlet "cons" (ann (pi "a" star $ "a" ==> "list" $$ "a" ==> "list" $$ "a")
-  (lam "a" $ lam "x" $ lam "xs" $ lam "r" $ lam "c" $ lam "n" $
-   "c" $$ "x" $$ ("xs" $$ "r" $$ "c" $$ "n"))) $
+  Let "five" (Lam "r" $ Lam "s" $ Lam "z" $ "s" $$ ("s" $$ ("s" $$ ("s" $$ ("s" $$ "z")))))
+             "nat" $
 
-  qlet "listTest"
-    ("cons" $$ "nat" $$ "ten" $$ ("cons" $$ "nat" $$ "ten" $$ ("nil" $$ "nat"))) $
+  Let "add"
+    (Lam "a" $ Lam "b" $ Lam "r" $ Lam "s" $ Lam "z" $
+    "a" $$ "r" $$ "s" $$ ("b" $$ "r" $$ "s" $$ "z"))
+    ("nat" ==> "nat" ==> "nat") $
 
-  -- unreduced equalities
-  ------------------------------------------------------------
-  qlet "nfunTy" (ann ("nat" ==> star)
-  (lam "n" $ "n" $$ star $$ (lam "t" (star ==> "t")) $$ star)) $
+  Let "mul"
+    (Lam "a" $ Lam "b" $ Lam "r" $ Lam "s" $
+    "a" $$ "r" $$ ("b" $$ "r" $$ "s"))
+    ("nat" ==> "nat" ==> "nat") $
 
-  -- simple unreduced eq (works)
-  qlet "unreduced1" (ann ("nfunTy" $$ "tenK" ==> "nfunTy" $$ "tenK")
-  (lam "f" $ "f")) $
+  Let "ten" ("add" $$ "five" $$ "five") "nat" $
 
-  -- unreduced eq under general function application (doesn't work)
-  -- qlet "unreduced2" (ann (
-  --       "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "zero"
-  --   ==> "const" $$ star $$ "nat" $$ ("nfunTy" $$ "tenK") $$ "one" )
-  -- (lam "f" "f")) $
+  Let "hundred" ("mul" $$ "ten" $$ "ten") "nat" $
 
-  -- unreduced eq under whnf (works)
-  qlet "unreduced3" (ann (
-        "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "zero"
-    ==> "const" $$ star $$ "nat" $$ (star ==> "nfunTy" $$ "tenK") $$ "one" )
-  (lam "f" "f")) $
+  Let "10K" ("mul" $$ "hundred" $$ "hundred") "nat" $
 
-  -- unreduced eq from Pi applications (works)
-  qlet "unreduced4" (ann ("list" $$ ("nfunTy" $$ "tenK")) ("nil" $$ ("nfunTy" $$ "tenK"))) $
+  Let "50K" ("mul" $$ "10K" $$ "five") "nat" $
 
-  "id" $$ star
+  Let "nf" (Lam "n" $ "n" $$ Star $$ (Lam "t" $ Star ==> "t") $$ Star)
+           ("nat" ==> Star) $
+
+  Let "stress1" (Lam "x" "x") ("nf" $$ "50K" ==> "nf" $$ "50K") $
+
+  Let "stress2" (Lam "f" $ Lam "n" $ "f" $$ "n")
+                (("nat" ==> "nf" $$ "50K") ==> "nat" ==> "nf" $$ "50K") $
+
+  "stress2"
+
+checkTest = isRight $ infer0 test
 
 

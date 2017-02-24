@@ -43,6 +43,19 @@ import Debug.Trace
 
 {-
 
+  OPTIMIZATION:
+
+  - "(id $$ h) $$ (id $$ h) ..." has exponentially sized solutions
+    for the holes, however it type checks instantly. That's because the metas get
+    solved without ever instantiating large solutions.
+
+    But what if we want to output an elaborated term, without blowing up in size?
+
+    We can do the following: elaborate *without normalizing* meta solutions, instead
+    extract meta solutions as let bindings into the term. There a couple choices to
+    make here (where to put let-s?), but it would in any case preserve sharing implicit
+    in the metacontext. 
+
   OPEN questions:
 
   - fastest and simplest elimination is something like LambdaCase, similarly to
@@ -123,7 +136,7 @@ infix 3 :$
 data Tm
   = Var !Name
   | Let !Name !Tm !Tm !Tm
-  | Gen !Gen
+  | Gen !Gen  
   | App !Tm !Tm !Name
   | Lam !Name !Tm
   | Pi !Name !Tm !Tm
@@ -160,7 +173,7 @@ vapp :: Val -> Val -> Name -> Val
 vapp t a v = case t of
   VLam v t -> t a 
   h :$ sp  -> h :$ ((v, a) : sp)
-  _        -> error "vapp: impossible"      
+  _        -> error "vapp: impossible" 
 
 eval :: Sub -> Tm -> Val
 eval vs = \case
@@ -514,5 +527,50 @@ test =
   make "foo" ("Eq" $$ h $$ "true" $$ "true")
   ("refl" $$ h $$ h) $
 
-  "foo"
+  "mul" $$ "hundred" $$ "hundred"
+
+test2 =
+
+  make "id" (pi "a" star $ "a" ==> "a")
+  (lam "a" $ lam "x" "x") $
+
+  make "id2" (pi "a" star $ "a" ==> "a")
+  (lam "a" $
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$
+    ("id" $$ h) $$    
+    ("id" $$ h)
+    
+  ) $ 
+
+  "id"
+
+  
+
+  
 

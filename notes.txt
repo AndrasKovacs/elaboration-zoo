@@ -1,4 +1,99 @@
 
+Metavar solution optimization
+
+  1. Use full glued evaluation which returns weak-head normal forms
+     along with unreduced term graphs with explicit sharing.
+     We string along unreduced terms in call-by-name manner, but allocate
+     all of the closures in an explicit heap (array), thereby building
+     a graph structure. Explicit sharing is necessary so we can avoid
+     unsharing terms on renaming.
+
+     Solve metavariables against unreduced term graphs. On solution we
+     throw out all the garbage closures, and copy the live closures to
+     a "global" term graph.
+
+     Notice that:
+       - There's no GC for term graphs aside from what we do ourselves.
+         Either we wait until meta solution for manual GC, or do manual
+         GC while evaluating the term. The latter is obviously more
+         complicated.
+
+       - This is not a lightweight solution. However, it really seems to
+         be the unique solution with optimal sharing. It's not magic, so
+         it's very much able to build up thunk piles like every lazy
+         accumulator, but it's never worse than whnf except when we're
+         accumulating primitive machine-word-sized values (those are
+         cheating!).
+
+       - It's possible to have unobservable sharing with true heap pointers,
+         but still get some sharing by doing checking pointer equality on
+         consecutive closures in environments (and also check entry closures
+         with the tail of the environment itself). This is a simpler and faster
+         implementation with free GC, but I don't know exactly much much sharing
+         it undoes in practice.
+
+  2. Forget about term graphs, solve metavariables for whnfs, hope that approximate
+     occurrence metadata helps us remain fast enough for practical purposes.
+     Occurrence metadata: tag terms with local let/bound var and metavar occurrence.
+     We never compute tags during eval, and Whnf's have no tags. It should be feasible
+     to have exact bitsets of vars in tags, as long as we have a notion of "local"
+     binding group, and only allow meta-free "global" bindings.
+
+     Here, we have glued evaluation, but one that only keeps track of occurrence
+     metadata instead of unreduced terms. So env entries only have an occurrence tag
+     and a lazy whnf value.
+
+     Alternatively: we still have glued eval with terms, in order to be able to
+     instantly return terms when occurrence tags let us to do so. If we don't
+     have unreduced terms, we need to force whnf-s all the way down to Lam and Pi
+     closures, because we will have to convert them to terms and thus tag them
+     all the way up with updated occurrences. But this is getting rather close to
+     the "unobservable sharing" version of solution No. 1.
+
+  3. USE HASHMAPS FOR POINTERS. I think it can be done even with unstable ptrs. We
+     just need to rehash after each gc.
+       - We keep around a small object containing its own pointer as Int#.
+       - We check whether the stored and actual ptr match before each operation.
+       - if they don't, we rehash the table (under uninterruptible mask and without alloc),
+         and realloc the detector object (and the new object goes to Gen 0, of course).
+
+  4. Should we do environment trimming? If we do, we won't have to do manual trimming
+     on unreduced terms for meta solutions. We may also get less space leak and better
+     lookup performance on whnf eval. It's more complex though. Jury's out.
+
+  5. CACHING occurrences. It seems that exactly caching all lambda-bound free variables
+     is very much doable. We do NOT cache let-bound var occurrences. Instead, during
+     elaboration we keep track of the transitive bound-var occurrences for each term
+     and let-binding, but only annotate with these bound-var occurrences. For example:
+
+         \x y -> let foo = x in foo y y
+
+     is annotated
+
+         {} (\x y -> let {x} foo = x in {x y} (foo y y)
+
+     Thus, we know of "foo y y" that it mentions "x" via "foo", but we don't annotate
+     it with the "foo" occurrence.
+
+     When doing glued evalution, we also need to annotate each term thunk with occurrence
+     data. On thunk creation, we look up from the closure the occurence data for each
+     bvar of the term, and bitwise-or them together, and save that as the new occurence
+     data in the new thunk. We can compute occurences lazily.
+
+     Also, we use a single bit in occ. data to singify presence of any metas. Computing
+     meta presence is the following: if any bound-var thunk in the closure has meta or
+     the term itself has meta, the new thunk has meta.
+
+     TODO: think about combining occurrence data with env trimming. Also, think about
+     computing occurrences on env building instead of thunk building.
+
+
+
+
+------------------------------------------------------------
+
+OLD STUFF:
+
 PRIOR ART:
 
   - Coquand's algorithm:
@@ -50,6 +145,6 @@ Closures: what should they contain:
   - Option 2: closures always contain all lexically visible bindings
 
   - Lazy loading? Suppose a module exports a single public function which references tons of private
-    names in its body. We wouldn't want to load everything transitively, or do we? 
+    names in its body. We wouldn't want to load everything transitively, or do we?
 
 

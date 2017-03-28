@@ -1,4 +1,30 @@
 
+
+Dependent pattern matching notes:
+  - Use "split" like miniTT and cubicaltt.
+  - When substituting type indices in patterns, substitute the outer indices for the pattern indices.
+    Coq does this in the other order, which is rather awful, because it renders any
+    external definitions (or the recursive function we're defining) useless, and requires us to litter
+    the code with inversion lemmas. Agda basically does this in the right direction. This may or may not
+    require using "dotted" patterns. If we leave out the dotted patterns, nothing bad happens, it's just
+    that the should-be-dotted variables are useless and subsequent types don't refer to them.
+
+Adding eliminators
+  - Use a variant of Bernardy's external parametricity transform,
+    where we can add an extra argument which contains elimination methods
+    of a signature.
+  - Can we use parametricity transform for generic programming?
+  - Problem: handling type parameters doesn't seem to work well.
+    - We would need to eliminate neutral "f params" expressions instead of simply "f" variables.
+      E. g. "f" is "List" and "params" is "Nat". Then, we want to give elim method for "List Nat",
+      and replace each "list Nat" with the method. But what if we use the "List Nat" eliminator on
+      a value of "List Bool"? It's not good if we have to check at evaluation time whether the occurring parameters
+      are definitionally equal to the method parameters! Or shall we just bite the bullet and check anyway?
+      
+
+
+--------------------------------------------------------------------------------
+
 Metavar solution optimization
 
   1. Use full glued evaluation which returns weak-head normal forms

@@ -8,7 +8,7 @@ import System.IO.Unsafe
 import Control.Monad.Fix
 
 -- question: can we lazily compute a value from an ST ref/array, so
--- that we first read the ST state when the value it is forced, not when
+-- that we first read the ST state when the value is forced, not when
 -- the thunk is created?
 
 -- test :: ST s Int

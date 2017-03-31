@@ -1,5 +1,4 @@
 {-# language BangPatterns, Strict, LambdaCase, PatternGuards, OverloadedStrings #-}
-
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
 {-|
@@ -31,25 +30,39 @@ Things to ponder
      to refresh "bar" in the new value environment.During conversion check
      and lhs unification we need to refresh neutrals headed by bound variables.
 
-     Where should we store BVar substitutions?
-
-       - Just put them into the value environment. Could be fast enough.
+     Where/how should we store BVar substitutions?
 
 
 TODO: revamp value environments to accomodate bound vars and their substitutions.
-
 -}
 
+import qualified Data.Text as T
 
 
--- import Control.Monad
--- import Data.Maybe
--- import qualified Data.Text as T
--- import Data.Map.Strict (Map)
--- import qualified Data.Map.Strict as M
--- import Data.List
--- import Data.Monoid
--- import Control.Monad.State.Strict
+
+type Name    = T.Text
+type Unfold  = Int
+type Generic = Int
+type Sub a   = [(Name, a)]
+type ValEnv  = Sub ValEntry
+
+data ValEntry
+  = VE_Defined ~Val Unfold
+  | VE_Bound
+  | VE_Substituted ~Val
+
+data TyInfo
+  = TI_Con Name
+  | TI_Inductive
+
+
+data Head
+data Tm
+data Val
+
+
+{-
+
 
 -- type Name    = T.Text
 -- type Unfold  = Int
@@ -317,3 +330,5 @@ TODO: revamp value environments to accomodate bound vars and their substitutions
 --         check tys vs a ta
 --         pure $ tb (eval vs a)
 --       _ -> Left "infer: can't apply non-function"
+
+-}

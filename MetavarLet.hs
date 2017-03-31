@@ -1,102 +1,24 @@
 
 {-# language
   PatternSynonyms, BangPatterns, MagicHash, PatternGuards,
-  DataKinds, LambdaCase, ViewPatterns, TupleSections,
+  DataKinds, LambdaCase, ViewPatterns, TupleSections, Strict,
   TypeFamilies, GADTs, EmptyCase, OverloadedStrings #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
 module MetavarLet where
 
 import Prelude hiding (pi)
-
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-
+import qualified Data.HashSet as HS
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 
-import Control.Arrow
-import Control.Exception
-import Data.Function
 import Data.List
 import Data.String
-
-import Control.Monad
-import Control.Monad.Primitive
+import Data.Maybe
+import System.IO.Unsafe
 import Data.IORef
-
-import Debug.Trace
-
-{- Concept:
-  Based onMetavarNoEta3, but we have Let. This requires a value env for
-  type checking. 
-
-  Metavars don't have substitution or context type, they simply have
-  closed (iterated Pi) types.
-
-  Type errors simply throw IO exceptions. In the future we will have even erroneous
-  terms fully elaborated, except that ill-typed terms are converted into guarded
-  constants. This way we can neatly gather all type errors for reporting, and
-  can also support deferred type errors.
-
--}
-
-{-
-
-  OPTIMIZATION:
-
-  - "(id $$ h) $$ (id $$ h) ..." has exponentially sized solutions
-    for the holes, however it type checks instantly. That's because the metas get
-    solved without ever instantiating large solutions.
-
-    But what if we want to output an elaborated term, without blowing up in size?
-
-    We can do the following: elaborate *without normalizing* meta solutions, instead
-    extract meta solutions as let bindings into the term. There a couple choices to
-    make here (where to put let-s?), but it would in any case preserve sharing implicit
-    in the metacontext. 
-
-  OPEN questions:
-
-  - fastest and simplest elimination is something like LambdaCase, similarly to
-    Agda and miniTT.
-
-  - should we have n-ary pattern lambda like Agda? And elaborate patterns into optimized
-    case trees? (probably yes).
-
-  - how to do "with pattern" or smart case:
-
-    - translate to separate definition as in Agda/Idris?
-      - but try to do it a more performant way than in Agda, maybe with
-        slightly more annotation required from programmers?
-
-    - have a smart case primitive?
-
-  - When to unfold fixpoints or reclets
-
-    - Unfolding only terminates when it's applied to all structurally rec. args
-
-      - only unfold fully applied reclets?
-        - but we can have meaningful partial application
-        - specify decreasing argument
-
-      - always unfold reclets when the topmost \case reduces with an argument
-        - but then we have to make
-
-    - One thing's for sure: we never want to unfold a reclet into a neutral
-      \case. We only unfold if the \case can be applied to smth and thus disappears.
-
-  - efficient renaming of values
-    - Krikpe closures / function space with renaming?
-
-  - best way to glue?
-    - can we only store term environments in term closures
-
-  - Sharing-preserving renaming/sub: check if subexpressions unchanged
-    with ptrEquality
-
--}
-
 
 -- Syntax
 --------------------------------------------------------------------------------
@@ -104,467 +26,509 @@ import Debug.Trace
 type Name   = String
 type Meta   = Int
 type Gen    = Int
-type Sub    = [(Name, Val)]
-type Cxt    = [(Name, Either Type Type)]
+type Ty     = Val
+type Sub a  = [(Name, a)]
+type Env    = Sub (Maybe Val)        -- Nothing: bound, Just: defined
+type Cxt    = Sub (Either Ty Ty)     -- Left: bound, Right: defined
 type Ren    = HashMap (Either Name Gen) Name
-type Type   = Val
-data MEntry = MEntry {_mty :: Type, _solution :: !(Maybe Val)}
-type MCxt   = IntMap MEntry
-type M      = IO
+type MCxt   = IntMap Val
+type Spine  = Sub (Val, Icit)
+data Icit   = Expl | Impl deriving (Eq, Show)
 
 data Raw
-  = RVar !Name
-  | RLet !Name !Raw !Raw !Raw
-  | RApp !Raw !Raw
-  | RLam !Name !Raw
-  | RPi !Name !Raw !Raw
+  = RVar Name
+  | RLet Name Raw Raw Raw
+  | RApp Raw Raw Icit
+  | RLam Name Icit Raw
+  | RPi Name Icit Raw Raw
   | RStar
+  | RNoInsert
   | RHole
+  deriving Show
 
 data Head
-  = VMeta !Meta
-  | VVar !Name
-  | VGen !Gen
+  = VMeta Meta
+  | VVar Name
+  | VGen Gen
 
 data Val
-  = !Head :$ !Sub
-  | VLam !Name !(Val -> Val)
-  | VPi !Name !Val !(Val -> Val)
+  = Head :$ Spine
+  | VLam Name Icit (Val -> Val)
+  | VPi Name Icit Val (Val -> Val)
   | VStar
 infix 3 :$
 
 data Tm
-  = Var !Name
-  | Let !Name !Tm !Tm !Tm
-  | Gen !Gen  
-  | App !Tm !Tm !Name
-  | Lam !Name !Tm
-  | Pi !Name !Tm !Tm
+  = Var Name
+  | Gen Gen    
+  | Let Name Tm Tm Tm
+  | App Tm Tm Name Icit
+  | Lam Name Icit Tm
+  | Pi Name Icit Tm Tm
   | Star
-  | Meta !Meta
-
+  | Meta Meta
+  deriving Show
 
 -- Our nice global state, reset before use please
 --------------------------------------------------------------------------------
 
 {-# noinline mcxt #-}
 mcxt :: IORef MCxt
-mcxt = unsafeInlineIO (newIORef mempty)
+mcxt = unsafeDupablePerformIO (newIORef mempty)
 
 {-# noinline freshMeta #-}
 freshMeta :: IORef Int
-freshMeta = unsafeInlineIO (newIORef 0)
+freshMeta = unsafeDupablePerformIO (newIORef 0)
 
 reset :: IO ()
 reset = do
   writeIORef mcxt mempty
   writeIORef freshMeta 0
 
-lookupMeta :: Meta -> MEntry
-lookupMeta m = unsafeInlineIO $ ((IM.! m) <$> readIORef mcxt)
+inst :: Meta -> Maybe Val
+inst m = unsafeDupablePerformIO $ (IM.lookup m <$> readIORef mcxt)
 
 -- Evaluation (modulo global mcxt)
 --------------------------------------------------------------------------------
 
-inst :: Meta -> Maybe Val
-inst = _solution . lookupMeta
+vapp :: Val -> Val -> Name -> Icit -> Val
+vapp t ~a x i = case t of
+  VLam x i t -> t a 
+  h :$ sp    -> h :$ ((x, (a, i)) : sp)
+  _          -> error "vapp: impossible" 
 
-vapp :: Val -> Val -> Name -> Val
-vapp t a v = case t of
-  VLam v t -> t a 
-  h :$ sp  -> h :$ ((v, a) : sp)
-  _        -> error "vapp: impossible" 
-
-eval :: Sub -> Tm -> Val
+eval :: Env -> Tm -> Val
 eval vs = \case
-  Var v         -> maybe (VVar v :$ []) refresh (lookup v vs)
-  Let v e' ty e -> eval ((v, eval vs e'):vs) e
-  App f a v     -> vapp (eval vs f) (eval vs a) v
-  Lam v t       -> VLam v $ \a -> eval ((v, a):vs) t
-  Pi v a b      -> VPi v (eval vs a) $ \a -> eval ((v, a):vs) b
+  Var x         -> maybe (VVar x :$ []) refresh (fromJust $ lookup x vs)
+  Let x e' ty e -> eval ((x, Just (eval vs e')):vs) e
+  App f a x i   -> vapp (eval vs f) (eval vs a) x i
+  Lam x i t     -> VLam x i $ \a -> eval ((x, Just a):vs) t
+  Pi x i a b    -> VPi x i (eval vs a) $ \a -> eval ((x, Just a):vs) b
   Star          -> VStar
   Meta i        -> maybe (VMeta i :$ []) refresh (inst i)                   
   Gen{}         -> error "eval: impossible"
 
 refresh :: Val -> Val
 refresh = \case
-  VMeta i :$ sp | Just t <- inst i -> refresh (foldr (\(v, a) t -> vapp t a v) t sp)
+  VMeta i :$ sp | Just t <- inst i ->
+                  refresh (foldr (\(x, (a, i)) t -> vapp t a x i) t sp)
   t -> t
 
 quote :: Val -> Tm
 quote = go where
   goHead = \case
-    VMeta i -> Meta i
-    VVar v  -> Var v
-    VGen i  -> Gen i
+    VMeta m -> Meta m
+    VVar x  -> Var x
+    VGen g  -> Gen g
   go t = case refresh t of
-    h :$ sp   -> foldr (\(v, a) t -> App t (go a) v) (goHead h) sp    
-    VLam v t  -> Lam v (go (t (VVar v :$ [])))
-    VPi v a b -> Pi v (go a) (go (b (VVar v :$ [])))
-    VStar     -> Star  
+    h :$ sp     -> foldr (\(x, (a, i)) t -> App t (go a) x i) (goHead h) sp    
+    VLam x i t  -> Lam x i (go (t (VVar x :$ [])))
+    VPi x i a b -> Pi x i (go a) (go (b (VVar x :$ [])))
+    VStar       -> Star
 
 -- Unification
 --------------------------------------------------------------------------------
 
-invert :: Sub -> M Ren
-invert = foldM go HM.empty where
-  go r (v, t) = case t of
-    VVar v' :$ [] | HM.member (Left v') r -> pure $ HM.delete (Left v') r
-                  | otherwise             -> pure $ HM.insert (Left v') v r
-    VGen i  :$ [] | HM.member (Right i) r -> pure $ HM.delete (Right i) r
-                  | otherwise             -> pure $ HM.insert (Right i) v r
-    _ -> error "inversion"
+lams :: Spine -> Tm -> Tm
+lams sp t = foldl' (\t (x, (a, i)) -> Lam x i t) t sp
 
-renameRhs :: Meta -> Ren -> Tm -> M Tm
-renameRhs occur r = go r where
-  go :: Ren -> Tm -> M Tm
+invert :: Spine -> Ren
+invert = foldl' go HM.empty where
+  go r (x, (a, _)) =
+    let var = case a of
+          VVar x' :$ [] -> Left x'
+          VGen i  :$ [] -> Right i
+          _             -> error "Meta substitution is not a renaming"
+    in HM.alter (maybe (Just x) (\_ -> Nothing)) var r
+
+rename :: Meta -> Ren -> Tm -> Tm
+rename occur = go where
   go r = \case
-    Var v         -> maybe (error "scope") (pure . Var) (HM.lookup (Left v) r)
-    Gen i         -> maybe (error "scope") (pure . Var) (HM.lookup (Right i) r)
-    Let v e' ty e -> Let v <$> go r e' <*> go r ty <*> go r e
-    App f a v     -> App <$> go r f <*> go r a <*> pure v
-    Lam v t       -> Lam v <$> go (HM.insert (Left v) v r) t
-    Pi v a b      -> Pi v <$> go r a <*> go (HM.insert (Left v) v r) b
-    Star          -> pure Star
+    Var x         -> maybe (error "scope") Var (HM.lookup (Left x) r)
+    Gen g         -> maybe (error "scope") Var (HM.lookup (Right g) r)
+    Let x e' ty e -> Let x (go r e') (go r ty) (go r e)
+    App f a x i   -> App  (go r f) (go r a) x i
+    Lam x i t     -> Lam x i (go (HM.insert (Left x) x r) t)
+    Pi x i a b    -> Pi x i (go r a) (go (HM.insert (Left x) x r) b)
+    Star          -> Star
     Meta i | i == occur -> error "occurs"
-           | otherwise  -> pure $ Meta i
+           | otherwise  -> Meta i  
 
-addLams :: Sub -> Tm -> Tm
-addLams sp t = foldl (\t (v, _) -> Lam v t) t sp
+solve :: Meta -> Spine -> Val -> IO ()
+solve m sp t = do
+  let t' = lams sp (rename m (invert sp) (quote t))
+  modifyIORef' mcxt $ IM.insert m (eval [] t')
 
-solveMeta :: Meta -> Sub -> Val -> M ()
-solveMeta m sp t = do
-  ren <- invert sp
-  t   <- addLams sp <$> renameRhs m ren (quote t)
-  modifyIORef' mcxt $ IM.adjust (\e -> e {_solution = Just $ eval [] t}) m
+gen :: Gen -> Val
+gen g = VGen g :$ []
 
-unify :: Val -> Val -> M ()
+matchIcit :: Icit -> Icit -> IO ()
+matchIcit i i' = if i == i'
+  then pure ()
+  else error "can't match explicit binder with implicit"
+
+unify :: Val -> Val -> IO ()
 unify t t' = go 0 t t' where
-
-  go :: Int -> Val -> Val -> M ()
+  
+  go :: Gen -> Val -> Val -> IO ()
   go !g t t' = case (refresh t, refresh t') of
     (VStar, VStar) -> pure ()
     
-    (VLam v t, VLam v' t') -> do
-      let gen = VGen g :$ []
-      go (g + 1) (t gen) (t' gen)
-      
-    (VPi v a b, VPi v' a' b') -> do
-      go g a a'
-      let gen = VGen g :$ []
-      go (g + 1) (b gen) (b' gen)      
+    (VLam x i t, VLam x' i' t') -> go (g + 1) (t (gen g)) (t' (gen g))
     
-    (VVar v  :$ sp, VVar v'  :$ sp') | v == v' -> goSub g sp sp'
-    (VGen i  :$ sp, VGen i'  :$ sp') | i == i' -> goSub g sp sp'
-    (VMeta i :$ sp, VMeta i' :$ sp') | i == i' -> goSub g sp sp'
-    (VMeta i :$ sp, t              ) -> solveMeta i sp t
-    (t,             VMeta i  :$ sp ) -> solveMeta i sp t
+    (VLam x i t, t')   -> go (g + 1) (t (gen g)) (vapp t' (gen g) x i)
+    (t, VLam x' i' t') -> go (g + 1) (vapp t (gen g) x' i') (t' (gen g))
+      
+    (VPi x i a b, VPi x' i' a' b') -> do
+      matchIcit i i'
+      go g a a'
+      go (g + 1) (b (gen g)) (b' (gen g))      
+    
+    (VVar x  :$ sp, VVar x'  :$ sp') | x == x' -> goSpine g sp sp'
+    (VGen i  :$ sp, VGen i'  :$ sp') | i == i' -> goSpine g sp sp'
+    (VMeta m :$ sp, VMeta m' :$ sp') | m == m' -> goSpine g sp sp'
+    (VMeta m :$ sp, t              ) -> solve m sp t
+    (t,             VMeta m  :$ sp ) -> solve m sp t
     
     (t, t') ->
       error $ "can't unify\n" ++ show (quote t) ++ "\nwith\n" ++  show (quote t')
 
-  goSub :: Int -> Sub -> Sub -> M ()
-  goSub g ((_, a):as) ((_, b):bs) = goSub g as bs >> go g a b
-  goSub g []          []          = pure ()
-  goSub _ _           _           = error "unify Sp: impossible"
+  goSpine :: Gen -> Spine -> Spine -> IO ()
+  goSpine g sp sp' = case (sp, sp') of
+    ((_, (a, _)):as, (_, (b, _)):bs)  -> goSpine g as bs >> go g a b
+    ([]            , []            )  -> pure ()
+    _                                 -> error "unify spine: impossible"  
+
 
 -- Elaboration
 --------------------------------------------------------------------------------
 
-ext :: (Name, Either Type Type) -> Cxt -> Cxt
-ext x cxt = x : deleteBy ((==) `on` fst) x cxt
-
-addPis :: Sub -> Tm -> Tm
-addPis sp t = foldl (\t (v, a) -> Pi v (quote a) t) t sp
-
-newMeta :: Cxt -> Type -> M Tm
-newMeta cxt ty = do  
+newMeta :: Cxt -> IO Tm
+newMeta cxt = do  
   m <- readIORef freshMeta
   writeIORef freshMeta (m + 1)
+  let bvars = HS.toList $ HS.fromList [x | (x, Left{}) <- cxt]
+  pure $ foldr (\x t -> App t (Var x) x Expl) (Meta m) bvars
   
-  let cxt' = [(v, ty) | (v, Left ty) <- cxt]
-      ty'  = eval [] $ addPis cxt' (quote ty)
-      t    = foldr (\(v, _) t -> App t (Var v) v) (Meta m) cxt'
-      
-  modifyIORef' mcxt $ IM.insert m (MEntry ty' Nothing)
-  pure t
-
-check :: Cxt -> Sub -> Raw -> Type -> M Tm
-check cxt vs t want = case (t, want) of
-  (RLam v t, VPi _ a b) -> do
-    Lam v <$> check (ext (v, Left a) cxt) vs t (b (VVar v :$ []))
+check :: Cxt -> Env -> Raw -> Ty -> IO Tm
+check cxt vs t want = case (t, want) of  
   (RHole, _) ->
-    newMeta cxt want
+    newMeta cxt
+    
+  (RLam x i t, VPi _ i' a b) | i == i' -> 
+    Lam x i <$> check ((x, Left a): cxt) ((x, Nothing):vs) t (b (VVar x :$ []))
+    
+  (t, VPi x Impl a b) -> 
+    Lam x Impl <$> check ((x, Left a): cxt) ((x, Nothing):vs) t (b (VVar x :$ []))
+    
   (t, _) -> do
     (t, has) <- infer cxt vs t
     t <$ unify has want
 
-infer :: Cxt -> Sub -> Raw -> M (Tm, Type)
+insertMetas :: Cxt -> Env -> (Tm, Ty) -> IO (Tm, Ty)
+insertMetas cxt vs (t, ty) = case ty of
+  VPi x Impl a b -> do
+    m <- newMeta cxt
+    insertMetas cxt vs (App t m x Impl, (b (eval vs m)))
+  _ -> pure (t, ty)      
+
+infer :: Cxt -> Env -> Raw -> IO (Tm, Ty)
 infer cxt vs = \case
-  RVar v ->
-    maybe (error $ "Variable: " ++ v ++ " not in scope")
-          (\ty -> pure (Var v, either id id ty))
-          (lookup v cxt)
-  RStar     -> pure (Star, VStar)
-  RPi v a b -> do
+  RApp f RNoInsert i -> do
+    matchIcit i Expl
+    infer' cxt vs f
+  t -> infer' cxt vs t >>= insertMetas cxt vs
+
+infer' :: Cxt -> Env -> Raw -> IO (Tm, Ty)
+infer' cxt vs = \case
+  RStar ->
+    pure (Star, VStar)
+    
+  RNoInsert ->
+    error "unexpected NoInsert"
+    
+  RVar x -> maybe
+    (error $ "Variable: " ++ x ++ " not in scope")
+    (\ty -> pure (Var x, either id id ty))
+    (lookup x cxt)
+    
+  RApp f RNoInsert i -> do
+    matchIcit i Expl
+    infer cxt vs f
+    
+  RApp f a i -> do
+    (f, ty) <- infer' cxt vs f
+    case ty of
+      VPi x i' ta tb -> do
+        a' <- case (i', i) of
+          (Expl, i)    -> matchIcit i Expl >> check cxt vs a ta
+          (Impl, Impl) -> check cxt vs a ta
+          (Impl, Expl) -> newMeta cxt
+        pure (App f a' x i', tb (eval vs a'))
+      _ -> error "can only apply to function"
+      
+  RPi x i a b -> do
     a <- check cxt vs a VStar
-    let a' = eval vs a
-    b <- check (ext (v, Left a') cxt) vs b VStar
-    pure (Pi v a b, VStar)
-  RApp f a -> do
-    (f, tf) <- infer cxt vs f
-    case tf of
-      VPi v ta tb -> do
-        a <- check cxt vs a ta
-        pure (App f a v, tb (eval vs a))
-      _ -> error "can't apply non-function"
-  RLet v e1 t e2 -> do
+    let ~a' = eval vs a
+    b <- check ((x, Left a'): cxt) vs b VStar
+    pure (Pi x i a b, VStar)
+    
+  RLet x e1 t e2 -> do
     t <- check cxt vs t VStar
-    let t' = eval vs t
+    let ~t' = eval vs t
     e1 <- check cxt vs e1 t'
-    let e1' = eval vs e1
-    (e2, te2) <- infer (ext (v, Right t') cxt) ((v, e1'):vs) e2
-    pure (Let v e1 t e2, te2)
-  RLam v t -> do
-    error $ "can't infer type for lambda: " ++ show (RLam v t)
-  RHole -> error "can't infer type for hole"
+    let ~e1' = eval vs e1
+    (e2, ~te2) <- infer ((x, Right t'): cxt) ((x, Just e1'):vs) e2
+    pure (Let x e1 t e2, te2)
 
-getSp :: Tm -> [(Name, Tm)] ->  (Tm, [(Name, Tm)])
-getSp (App f a v) sp = getSp f ((v, a):sp)
-getSp t           sp = (t, sp)
+  RLam x i t -> do
+    ~ma <- eval vs <$> newMeta cxt
+    (t, ty) <- infer ((x, Left ma):cxt) ((x, Nothing):vs) t
+    pure (Lam x i t, VPi x i ma (\a -> eval ((x, Just a):vs) (quote ty)))   
+    
+  RHole -> do
+    m1 <- newMeta cxt
+    m2 <- newMeta cxt
+    pure (m1, eval vs m2)
 
-zonk :: Sub -> Tm -> Tm
-zonk vs = \case
-  Var v        -> Var v
-  Meta v       -> maybe (Meta v) quote (inst v)  
-  Star         -> Star
-  Pi v a b     -> Pi v (zonk vs a) (zonk vs b)
-  App f a v    -> case getSp f [(v, a)] of
-    (Meta i, sp) | Just t <- inst i -> quote (foldl' (\t (v, a) -> vapp t (eval vs a) v) t sp)
-    (t     , sp) -> foldl' (\t (v, a) -> App t (zonk vs a) v) t sp
-  Lam v t      -> Lam v (zonk vs t)
-  Let v e t e' -> Let v (zonk vs e) (zonk vs t) (zonk ((v, eval vs e):vs) e')    
-  _            -> error "zonk: impossible Gen"
+tmSpine :: Tm -> (Tm, Sub (Tm, Icit))
+tmSpine t = go t [] where
+  go (App f a x i) sp = go f ((x, (a, i)):sp)
+  go t             sp = (t, sp)    
+
+-- zonk :: Spine -> Tm -> Tm
+-- zonk env = \case
+--   Var x        -> Var x
+--   Meta m       -> maybe (Meta m) quote (inst m)  
+--   Star         -> Star
+--   Pi x i a b   -> Pi x i (zonk env a) (zonk env b)
+--   App f a x i  -> _
+
+--   Lam x i t    -> Lam x i (zonk env t)
+--   Let x e t e' -> _
+--   _            -> error "zonk: impossible Gen"
 
 --------------------------------------------------------------------------------
 
-infer0 :: Raw -> M Tm
+infer0 :: Raw -> IO Tm
 infer0 r = quote . snd <$> (reset *> infer [] [] r)
 
-elab0 :: Raw -> M Tm
+elab0 :: Raw -> IO Tm
 elab0 r = fst <$> (reset *> infer [] [] r)
 
-zonk0 :: Raw -> M Tm
-zonk0 r = zonk [] . fst <$> (reset *> infer [] [] r)
+-- zonk0 :: Raw -> IO Tm
+-- zonk0 r = zonk [] . fst <$> (reset *> infer [] [] r)
 
-nf0 :: Raw -> M Tm
+nf0 :: Raw -> IO Tm
 nf0 r = quote . eval [] . fst <$> (reset *> infer [] [] r)
 
+{-
 -- Printing
 --------------------------------------------------------------------------------
 
-prettyTm :: Int -> Tm -> ShowS
-prettyTm prec = go (prec /= 0) where
+-- prettyTm :: Int -> Tm -> ShowS
+-- prettyTm prec = go (prec /= 0) where
 
-  unwords' :: [ShowS] -> ShowS
-  unwords' = foldr1 (\x acc -> x . (' ':) . acc)
+--   unwords' :: [ShowS] -> ShowS
+--   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
 
-  spine :: Tm -> Tm -> [Tm]
-  spine f x = go f [x] where
-    go (App f y _) args = go f (y : args)
-    go t           args = t:args
+--   spine :: Tm -> Tm -> [Tm]
+--   spine f x = go f [x] where
+--     go (App f y _) args = go f (y : args)
+--     go t           args = t:args
 
-  lams :: String -> Tm -> ([String], Tm)
-  lams v t = go [v] t where
-    go vs (Lam v t) = go (v:vs) t
-    go vs t         = (vs, t)
+--   lams :: String -> Tm -> ([String], Tm)
+--   lams v t = go [v] t where
+--     go vs (Lam v t) = go (v:vs) t
+--     go vs t         = (vs, t)
 
-  go :: Bool -> Tm -> ShowS
-  go p (Var v)        = (v++)
-  go p (Let v e t e') =
-    (v++) . (" : "++) . go False t . ("\n"++) .
-    (v++) . (" = "++) . go False e . ("\n\n"++) .
-    go False e'
-  go p (Meta v)       = (("?"++).(show v++))
-  go p (App f x _)    = showParen p (unwords' $ map (go True) (spine f x))
-  go p (Lam v t)      = case lams v t of
-    (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
-  go p (Pi v a b) = showParen p (arg . (" -> "++) . go False b)
-    where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
-                              else go True a
-  go p Star    = ('*':)
-  go p (Gen g) = ("~"++).(show g++)
+--   go :: Bool -> Tm -> ShowS
+--   go p (Var v)        = (v++)
+--   go p (Let v e t e') =
+--     (v++) . (" : "++) . go False t . ("\n"++) .
+--     (v++) . (" = "++) . go False e . ("\n\n"++) .
+--     go False e'
+--   go p (Meta v)       = (("?"++).(show v++))
+--   go p (App f x _)    = showParen p (unwords' $ map (go True) (spine f x))
+--   go p (Lam v t)      = case lams v t of
+--     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
+--   go p (Pi v a b) = showParen p (arg . (" -> "++) . go False b)
+--     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
+--                               else go True a
+--   go p Star    = ('*':)
+--   go p (Gen g) = ("~"++).(show g++)
 
-instance Show Tm where
-  showsPrec = prettyTm
+-- instance Show Tm where
+--   showsPrec = prettyTm
 
-instance IsString Tm where
-  fromString = Var
+-- instance IsString Tm where
+--   fromString = Var
+
+-- -- --------------------------------------------------------------------------------
+
+-- prettyRaw :: Int -> Raw -> ShowS
+-- prettyRaw prec = go (prec /= 0) where
+
+--   unwords' :: [ShowS] -> ShowS
+--   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
+
+--   spine :: Raw -> Raw -> [Raw]
+--   spine f x = go f [x] where
+--     go (RApp f y) args = go f (y : args)
+--     go t          args = t:args
+
+--   lams :: String -> Raw -> ([String], Raw)
+--   lams v t = go [v] t where
+--     go vs (RLam v t) = go (v:vs) t
+--     go vs t          = (vs, t)
+
+--   go :: Bool -> Raw -> ShowS
+--   go p (RVar v)        = (v++)
+--   go p (RLet v e t e') =
+--     (v++) . (" : "++) . go False t . ("\n"++) .
+--     (v++) . (" = "++) . go False e . ("\n\n"++) .
+--     go False e'
+--   go p RHole           = ('_':)
+--   go p (RApp f x)      = showParen p (unwords' $ map (go True) (spine f x))
+--   go p (RLam v t)      = case lams v t of
+--     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
+--   go p (RPi v a b) = showParen p (arg . (" -> "++) . go False b)
+--     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
+--                               else go True a
+--   go p RStar = ('*':)
+
+-- instance Show Raw where
+--   showsPrec = prettyRaw
+
+-- instance IsString Raw where
+--   fromString = RVar
 
 -- --------------------------------------------------------------------------------
 
-prettyRaw :: Int -> Raw -> ShowS
-prettyRaw prec = go (prec /= 0) where
+-- pi            = RPi
+-- lam           = RLam
+-- star          = RStar
+-- tlam a b      = pi a star b
+-- ($$)          = RApp
+-- h             = RHole
+-- make v t e e' = RLet v e t e'
 
-  unwords' :: [ShowS] -> ShowS
-  unwords' = foldr1 (\x acc -> x . (' ':) . acc)
+-- infixl 9 $$
 
-  spine :: Raw -> Raw -> [Raw]
-  spine f x = go f [x] where
-    go (RApp f y) args = go f (y : args)
-    go t          args = t:args
+-- (==>) a b = pi "_" a b
+-- infixr 8 ==>
 
-  lams :: String -> Raw -> ([String], Raw)
-  lams v t = go [v] t where
-    go vs (RLam v t) = go (v:vs) t
-    go vs t          = (vs, t)
+-- test =
+--   make "id" (pi "a" star $ "a" ==> "a")
+--   (lam "a" $ lam "x" "x") $
 
-  go :: Bool -> Raw -> ShowS
-  go p (RVar v)        = (v++)
-  go p (RLet v e t e') =
-    (v++) . (" : "++) . go False t . ("\n"++) .
-    (v++) . (" = "++) . go False e . ("\n\n"++) .
-    go False e'
-  go p RHole           = ('_':)
-  go p (RApp f x)      = showParen p (unwords' $ map (go True) (spine f x))
-  go p (RLam v t)      = case lams v t of
-    (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
-  go p (RPi v a b) = showParen p (arg . (" -> "++) . go False b)
-    where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
-                              else go True a
-  go p RStar = ('*':)
+--   make "const" (pi "a" h $ pi "b" h $ "a" ==> "b" ==> "a")
+--   (lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x") $
 
-instance Show Raw where
-  showsPrec = prettyRaw
+--   make "Nat" star
+--   (pi "n" h $ ("n" ==> "n") ==> "n" ==> "n") $
 
-instance IsString Raw where
-  fromString = RVar
+--   make "z" "Nat"
+--   (lam "n" $ lam "s" $ lam "z" "z") $
 
---------------------------------------------------------------------------------
+--   make "s" ("Nat" ==> "Nat")
+--   (lam "a" $ lam "n" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "n" $$ "s" $$ "z")) $
 
-pi            = RPi
-lam           = RLam
-star          = RStar
-tlam a b      = pi a star b
-($$)          = RApp
-h             = RHole
-make v t e e' = RLet v e t e'
+--   make "add" ("Nat" ==> "Nat" ==> "Nat")
+--   (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
+--    "a" $$ "n" $$ "s" $$ ("b" $$ "n" $$ "s" $$ "z")) $
 
-infixl 9 $$
-
-(==>) a b = pi "_" a b
-infixr 8 ==>
-
-test =
-  make "id" (pi "a" star $ "a" ==> "a")
-  (lam "a" $ lam "x" "x") $
-
-  make "const" (pi "a" h $ pi "b" h $ "a" ==> "b" ==> "a")
-  (lam "a" $ lam "b" $ lam "x" $ lam "y" $ "x") $
-
-  make "Nat" star
-  (pi "n" h $ ("n" ==> "n") ==> "n" ==> "n") $
-
-  make "z" "Nat"
-  (lam "n" $ lam "s" $ lam "z" "z") $
-
-  make "s" ("Nat" ==> "Nat")
-  (lam "a" $ lam "n" $ lam "s" $ lam "z" $ "s" $$ ("a" $$ "n" $$ "s" $$ "z")) $
-
-  make "add" ("Nat" ==> "Nat" ==> "Nat")
-  (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
-   "a" $$ "n" $$ "s" $$ ("b" $$ "n" $$ "s" $$ "z")) $
-
-  make "mul" ("Nat" ==> "Nat" ==> "Nat")
-  (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
-   "a" $$ "n" $$ ("b" $$ "n" $$ "s") $$ "z") $
+--   make "mul" ("Nat" ==> "Nat" ==> "Nat")
+--   (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
+--    "a" $$ "n" $$ ("b" $$ "n" $$ "s") $$ "z") $
   
-  make "one"     "Nat" ("s" $$ "z") $
-  make "two"     "Nat" ("s" $$ "one") $
-  make "five"    "Nat" ("s" $$ ("add" $$ "two" $$ "two")) $
-  make "ten"     "Nat" ("add" $$ "five" $$ "five") $
-  make "hundred" "Nat" ("mul" $$ "ten" $$ "ten") $
+--   make "one"     "Nat" ("s" $$ "z") $
+--   make "two"     "Nat" ("s" $$ "one") $
+--   make "five"    "Nat" ("s" $$ ("add" $$ "two" $$ "two")) $
+--   make "ten"     "Nat" ("add" $$ "five" $$ "five") $
+--   make "hundred" "Nat" ("mul" $$ "ten" $$ "ten") $
 
-  make "comp"
-       (pi "a" h $ pi "b" h $ pi "c" h $
-       ("b" ==> "c") ==> ("a" ==> "b") ==> "a" ==> "c")
-  (lam "a" $ lam "b" $ lam "c" $ lam "f" $ lam "g" $ lam "x" $
-    "f" $$ ("g" $$ "x")) $
+--   make "comp"
+--        (pi "a" h $ pi "b" h $ pi "c" h $
+--        ("b" ==> "c") ==> ("a" ==> "b") ==> "a" ==> "c")
+--   (lam "a" $ lam "b" $ lam "c" $ lam "f" $ lam "g" $ lam "x" $
+--     "f" $$ ("g" $$ "x")) $
 
-  make "ap"
-    (pi "a" h $
-     pi "b" ("a" ==> star) $
-     pi "f" (pi "x" h $ "b" $$ "x") $
-     pi "x" h $ "b" $$ "x")
-  (lam "a" $ lam "b" $ lam "f" $ lam "x" $ "f" $$ "x") $
+--   make "ap"
+--     (pi "a" h $
+--      pi "b" ("a" ==> star) $
+--      pi "f" (pi "x" h $ "b" $$ "x") $
+--      pi "x" h $ "b" $$ "x")
+--   (lam "a" $ lam "b" $ lam "f" $ lam "x" $ "f" $$ "x") $
 
-  make "dcomp"
-    (pi "A" h $
-     pi "B" ("A" ==> h) $
-     pi "C" (pi "a" h $ "B" $$ "a" ==> star) $
-     pi "f" (pi "a" h $ pi "b" h $ "C" $$ "a" $$ "b") $
-     pi "g" (pi "a" h $ "B" $$ "a") $
-     pi "a" h $
-     "C" $$ h $$ ("g" $$ "a"))
-    (lam "A" $ lam "B" $ lam "C" $
-     lam "f" $ lam "g" $ lam "a" $ "f" $$ h $$ ("g" $$ "a")) $
+--   make "dcomp"
+--     (pi "A" h $
+--      pi "B" ("A" ==> h) $
+--      pi "C" (pi "a" h $ "B" $$ "a" ==> star) $
+--      pi "f" (pi "a" h $ pi "b" h $ "C" $$ "a" $$ "b") $
+--      pi "g" (pi "a" h $ "B" $$ "a") $
+--      pi "a" h $
+--      "C" $$ h $$ ("g" $$ "a"))
+--     (lam "A" $ lam "B" $ lam "C" $
+--      lam "f" $ lam "g" $ lam "a" $ "f" $$ h $$ ("g" $$ "a")) $
 
-  make "Eq" (pi "A" star $ "A" ==> "A" ==> star)
-  (lam "A" $ lam "x" $ lam "y" $ pi "P" ("A" ==> star) $ ("P" $$ "x") ==> ("P" $$ "y")) $
+--   make "Eq" (pi "A" star $ "A" ==> "A" ==> star)
+--   (lam "A" $ lam "x" $ lam "y" $ pi "P" ("A" ==> star) $ ("P" $$ "x") ==> ("P" $$ "y")) $
 
-  make "refl" (pi "A" star $ pi "x" "A" $ "Eq" $$ "A" $$ "x" $$ "x")
-  (lam "A" $ lam "x" $ lam "P" $ lam "px" "px") $
+--   make "refl" (pi "A" star $ pi "x" "A" $ "Eq" $$ "A" $$ "x" $$ "x")
+--   (lam "A" $ lam "x" $ lam "P" $ lam "px" "px") $
 
-  make "Bool" star
-  (pi "B" h $ "B" ==> "B" ==> "B") $
+--   make "Bool" star
+--   (pi "B" h $ "B" ==> "B" ==> "B") $
 
-  make "true" "Bool"
-  (lam "B" $ lam "t" $ lam "f" "t") $
+--   make "true" "Bool"
+--   (lam "B" $ lam "t" $ lam "f" "t") $
 
-  make "false" "Bool"
-  (lam "B" $ lam "t" $ lam "f" "f") $
+--   make "false" "Bool"
+--   (lam "B" $ lam "t" $ lam "f" "f") $
 
-  make "foo" ("Eq" $$ h $$ "true" $$ "true")
-  ("refl" $$ h $$ h) $
+--   make "foo" ("Eq" $$ h $$ "true" $$ "true")
+--   ("refl" $$ h $$ h) $
 
-  "mul" $$ "hundred" $$ "hundred"
+--   "mul" $$ "hundred" $$ "hundred"
 
-test2 =
+-- test2 =
 
-  make "id" (pi "a" star $ "a" ==> "a")
-  (lam "a" $ lam "x" "x") $
+--   make "id" (pi "a" star $ "a" ==> "a")
+--   (lam "a" $ lam "x" "x") $
 
-  make "id2" (pi "a" star $ "a" ==> "a")
-  (lam "a" $
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$
-    ("id" $$ h) $$    
-    ("id" $$ h)    
-  ) $ 
-  "id"
+--   make "id2" (pi "a" star $ "a" ==> "a")
+--   (lam "a" $
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$
+--     ("id" $$ h) $$    
+--     ("id" $$ h)    
+--   ) $ 
+--   "id"
 
+-}

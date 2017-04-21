@@ -44,7 +44,6 @@ data Raw
   | RStar
   | RNoInsert
   | RHole
-  deriving Show
 
 data Head
   = VMeta Meta
@@ -60,14 +59,12 @@ infix 3 :$
 
 data Tm
   = Var Name
-  | Gen Gen    
   | Let Name Tm Tm Tm
   | App Tm Tm Name Icit
   | Lam Name Icit Tm
   | Pi Name Icit Tm Tm
   | Star
   | Meta Meta
-  deriving Show
 
 -- Our nice global state, reset before use please
 --------------------------------------------------------------------------------
@@ -106,7 +103,6 @@ eval vs = \case
   Pi x i a b    -> VPi x i (eval vs a) $ \a -> eval ((x, Just a):vs) b
   Star          -> VStar
   Meta i        -> maybe (VMeta i :$ []) refresh (inst i)                   
-  Gen{}         -> error "eval: impossible"
 
 refresh :: Val -> Val
 refresh = \case
@@ -119,7 +115,7 @@ quote = go where
   goHead = \case
     VMeta m -> Meta m
     VVar x  -> Var x
-    VGen g  -> Gen g
+    VGen{}  -> error "quote: impossible VGen"
   go t = case refresh t of
     h :$ sp     -> foldr (\(x, (a, i)) t -> App t (go a) x i) (goHead h) sp    
     VLam x i t  -> Lam x i (go (t (VVar x :$ [])))
@@ -145,7 +141,6 @@ rename :: Meta -> Ren -> Tm -> Tm
 rename occur = go where
   go r = \case
     Var x         -> maybe (error "scope") Var (HM.lookup (Left x) r)
-    Gen g         -> maybe (error "scope") Var (HM.lookup (Right g) r)
     Let x e' ty e -> Let x (go r e') (go r ty) (go r e)
     App f a x i   -> App  (go r f) (go r a) x i
     Lam x i t     -> Lam x i (go (HM.insert (Left x) x r) t)
@@ -292,21 +287,23 @@ infer' cxt vs = \case
     pure (m1, eval vs m2)
 
 tmSpine :: Tm -> (Tm, Sub (Tm, Icit))
-tmSpine t = go t [] where
-  go (App f a x i) sp = go f ((x, (a, i)):sp)
-  go t             sp = (t, sp)    
+tmSpine = \case
+  App f a x i -> ((x, (a, i)):) <$> tmSpine f
+  t           -> (t, [])
 
--- zonk :: Spine -> Tm -> Tm
--- zonk env = \case
---   Var x        -> Var x
---   Meta m       -> maybe (Meta m) quote (inst m)  
---   Star         -> Star
---   Pi x i a b   -> Pi x i (zonk env a) (zonk env b)
---   App f a x i  -> _
-
---   Lam x i t    -> Lam x i (zonk env t)
---   Let x e t e' -> _
---   _            -> error "zonk: impossible Gen"
+zonk :: Env -> Tm -> Tm
+zonk env = \case
+  Var x        -> Var x
+  Meta m       -> maybe (Meta m) quote (inst m)  
+  Star         -> Star
+  Pi x i a b   -> Pi x i (zonk env a) (zonk env b)
+  App f a x i  -> let (h, sp) = tmSpine (App f a x i)
+                  in case h of
+                       Meta m | Just v <- inst m ->
+                         quote (foldr (\(x, (t, i)) f -> vapp f (eval env t) x i) v sp)
+                       _ -> foldr (\(x, (t, i)) f -> App f (zonk env t) x i) h sp
+  Lam x i t    -> Lam x i (zonk ((x, Nothing): env) t)
+  Let x e t e' -> Let x (zonk env e) (zonk env t) (zonk ((x, Just (eval env e)) : env) e')
 
 --------------------------------------------------------------------------------
 
@@ -316,94 +313,61 @@ infer0 r = quote . snd <$> (reset *> infer [] [] r)
 elab0 :: Raw -> IO Tm
 elab0 r = fst <$> (reset *> infer [] [] r)
 
--- zonk0 :: Raw -> IO Tm
--- zonk0 r = zonk [] . fst <$> (reset *> infer [] [] r)
+zonk0 :: Raw -> IO Tm
+zonk0 r = zonk [] . fst <$> (reset *> infer [] [] r)
 
 nf0 :: Raw -> IO Tm
 nf0 r = quote . eval [] . fst <$> (reset *> infer [] [] r)
 
-{-
--- Printing
+
 --------------------------------------------------------------------------------
 
--- prettyTm :: Int -> Tm -> ShowS
--- prettyTm prec = go (prec /= 0) where
+prettyTm :: Int -> Tm -> ShowS
+prettyTm prec = go (prec /= 0) where
 
---   unwords' :: [ShowS] -> ShowS
---   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
+  unwords' :: [ShowS] -> ShowS
+  unwords' = foldr1 (\x acc -> x . (' ':) . acc)
 
---   spine :: Tm -> Tm -> [Tm]
---   spine f x = go f [x] where
---     go (App f y _) args = go f (y : args)
---     go t           args = t:args
+  lams :: Name -> Tm -> ([Name], Tm)
+  lams v t = go [v] t where
+    go xs (Lam x i t) = go (x:xs) t
+    go xs t           = (xs, t)
 
---   lams :: String -> Tm -> ([String], Tm)
---   lams v t = go [v] t where
---     go vs (Lam v t) = go (v:vs) t
---     go vs t         = (vs, t)
+  freeIn :: Name -> Tm -> Bool
+  freeIn x = \case
+    Var x'         -> x == x'
+    App f a x i    -> freeIn x f || freeIn x a
+    Lam x' i t     -> if x == x' then False else freeIn x t
+    Pi x' i a b    -> freeIn x a || if x == x' then False else freeIn x b
+    Let x' t ty t' -> freeIn x t || freeIn x ty || if x == x' then False else freeIn x t'
+    Meta _         -> False
+    Star           -> False
 
---   go :: Bool -> Tm -> ShowS
---   go p (Var v)        = (v++)
---   go p (Let v e t e') =
---     (v++) . (" : "++) . go False t . ("\n"++) .
---     (v++) . (" = "++) . go False e . ("\n\n"++) .
---     go False e'
---   go p (Meta v)       = (("?"++).(show v++))
---   go p (App f x _)    = showParen p (unwords' $ map (go True) (spine f x))
---   go p (Lam v t)      = case lams v t of
---     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
---   go p (Pi v a b) = showParen p (arg . (" -> "++) . go False b)
---     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
---                               else go True a
---   go p Star    = ('*':)
---   go p (Gen g) = ("~"++).(show g++)
+  go :: Bool -> Tm -> ShowS
+  go p = \case
+    Var x   -> (x++)
+    t@App{} -> let (h, sp) = tmSpine t
+                   goArg (x, (t, i)) = case i of
+                     Impl -> ('{':).go True t.('}':)
+                     Expl -> go True t
+               in showParen p $ unwords' (go True h : map goArg sp)               
+    Lam x i t   -> case lams x t of
+      (vs, t) -> showParen p (("λ "++) . (unwords (reverse vs)++) . (". "++) . go False t)
+    Pi x i a b -> showParen p (arg . (" → "++) . go False b)
+      where arg = if freeIn x b then showParen True ((x++) . (" : "++) . go False a)
+                                else go False a
+    Let x t ty t' ->
+      (x++) . (" : "++) . go False ty . ("\n"++) .
+      (x++) . (" = "++) . go False t  . ("\n\n"++) .
+      go False t'
+    Star   -> ('*':)
+    Meta m -> (("?"++).(show m++))
 
--- instance Show Tm where
---   showsPrec = prettyTm
+instance IsString Tm where fromString = Var
+instance Show Tm     where showsPrec  = prettyTm
 
--- instance IsString Tm where
---   fromString = Var
 
--- -- --------------------------------------------------------------------------------
-
--- prettyRaw :: Int -> Raw -> ShowS
--- prettyRaw prec = go (prec /= 0) where
-
---   unwords' :: [ShowS] -> ShowS
---   unwords' = foldr1 (\x acc -> x . (' ':) . acc)
-
---   spine :: Raw -> Raw -> [Raw]
---   spine f x = go f [x] where
---     go (RApp f y) args = go f (y : args)
---     go t          args = t:args
-
---   lams :: String -> Raw -> ([String], Raw)
---   lams v t = go [v] t where
---     go vs (RLam v t) = go (v:vs) t
---     go vs t          = (vs, t)
-
---   go :: Bool -> Raw -> ShowS
---   go p (RVar v)        = (v++)
---   go p (RLet v e t e') =
---     (v++) . (" : "++) . go False t . ("\n"++) .
---     (v++) . (" = "++) . go False e . ("\n\n"++) .
---     go False e'
---   go p RHole           = ('_':)
---   go p (RApp f x)      = showParen p (unwords' $ map (go True) (spine f x))
---   go p (RLam v t)      = case lams v t of
---     (vs, t) -> showParen p (("\\"++) . (unwords (reverse vs)++) . (". "++) . go False t)
---   go p (RPi v a b) = showParen p (arg . (" -> "++) . go False b)
---     where arg = if v /= "_" then showParen True ((v++) . (" : "++) . go False a)
---                               else go True a
---   go p RStar = ('*':)
-
--- instance Show Raw where
---   showsPrec = prettyRaw
-
--- instance IsString Raw where
---   fromString = RVar
-
--- --------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 -- pi            = RPi
 -- lam           = RLam
@@ -531,4 +495,3 @@ nf0 r = quote . eval [] . fst <$> (reset *> infer [] [] r)
 --   ) $ 
 --   "id"
 
--}

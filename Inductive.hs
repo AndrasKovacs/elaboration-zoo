@@ -1,192 +1,261 @@
 {-# language BangPatterns, Strict, LambdaCase, PatternGuards, OverloadedStrings #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-{-|
-Design:
-- Indexed inductive families + dependent pattern matching + recursive definitions.
-- Type in Type, no positivity check, manual annotation for structurally decreasing params.
-- No built-in mutual recursion/induction (but encodable, of course).
-- A single structurally decr. argument for each recursive function.
-- Recursive definitions are unfolded iff they are applied to their decreasing
-  argument, and the argument is canonical (i. e. non-neutral).
-
-
-Things to ponder
-
-  1. Dependent pattern matching actually causes *bound* variables to be
-     arbitrarily substituted during type checking! For example:
-
-       foo : (A : U)(x y : A) -> x ≡ y -> y ≡ x
-       foo A x y =
-         let bar : A × A × A
-             bar = x , x , x
-         in λ {refl ->
-                let baz : bar ≡ (y , y , y)
-                    bar = refl
-                in refl}
-
-     Here, we may first evaluate "bar" lazily to whnf, but later
-     in the pattern lambda "x" gets substituted to "y", so we need
-     to refresh "bar" in the new value environment.During conversion check
-     and lhs unification we need to refresh neutrals headed by bound variables.
-
-     Where/how should we store BVar substitutions?
-
---------------------------------------------------------------------------------
-
-**About dependent patterns**
-
-- In Agda, if there are multiple pattern args, on any split the outer bindings can be refined.
-- In Coq, no outer binding can be ever refined.
-- We could in principle implement dep. pattern match which can refine *any* outer binding.
-
-But: refining outer bindings makes it unsafe and non-type-preserving to evaluate under splits.
-
-REFERENCE: http://gallium.inria.fr/~remy/coercions/Scherer-Remy!fth@long2014.pdf
-   "Full reduction in the face of absurdity"
-
-Example:
-
-data Foo A : Set where
-  Nat  : Foo Nat
-  Bool : Foo Bool
-
-f : ∀ {A} → A → Foo A → A
-f = λ a (λ Nat → a + 0; Bool → not a)
-
-Now, "f 0" reduces to (λ Nat → 0; Bool → not 0). Here, "not 0" is ill typed.
-In the "Bool" branch we're operating under an assumed false definitional equality.
-
-What can we do about this?
-
-- The Agda way is to have all refinable bindings encapsulated in a single pattern, and
-  a pattern is not unfolded unless it's applied all formal args:
-
-  f : ∀ {A} → A → Foo A → A
-  f a Nat  = a + 0
-  f a Bool = not a
-
-  Now, "f 0" is not unfoldable since it's missing an argument.
-
-- In Coq, there's only single argument split which can't refine outside things.
-
-Question: what needs to be implemented if we have arbitrary refinement, like in "f" above?
-
-Can we rewrite dep match to typecase?
-
-      f : ∀ {A} → A → Foo A → A
-      f = λ {A} a → case A of
-        Nat  → (λ Nat → a + 0)
-        Bool → (λ Bool → not a)
-
-    Now, "f {Nat} 0" reduces to ((λ Nat → 0) : Foo Nat → Nat)
-
-    The overall goal is to eliminate impossible cases during eval (?). But it's not very efficient
-    via unification. Also not clear what happens with stuck unification, like:
-
-       f : Set → Set
-       x : Set
-       a : f x
-       -----------
-       f {f x} a |-> ?
-
-    "f x ~ Nat" and "f x ~ Bool" both get stuck, and (λ Nat a + 0; Bool → not a) is ill-typed.
-
-    Not worth it.
-
-Solution: never evaluate under case split. Use dumb syntactic equality for split bodies (like mini-tt does).
-
-
---------------------------------------------------------------------------------
--- Latest version to consider
---------------------------------------------------------------------------------
-
-Consider mini-tt's solution to symbol unfolding: just never evaluate under case split.
-This works well even without termination information, because structurally recursive functions
-can only make structurally recursive calls under splits.
-
-  add = λ a (λ (zero → a; suc b → suc (add a b)))
-
-We can mindlessly delta-reduce add, but when we check conversion
-to another body, the recursive "add" never gets unfolded because it's
-under a split.
-
-Question though: what about structural recursion via function call? "f x" is structurally
-smaller than "f" for all "x", and we can get an "f" input without case split. Then recursive
-calls may not be under split, but they must be structural, so unfolding again terminates, if
-the function itself terminates.
-
-Design idea: use mini-tt's case split eval rule, but alongside the high-powered dep patterns
-with arbitrary outer refinement.
-
-In contrary to mini-tt/PiSigma, there's just no need for intensional equalities for types
-and functions. In the long run, we just want univalence for types and funext for functions,
-so who cares about intension. Even if we don't get univalence, we can make our own universes of
-codes with as much intensional equality as needed.
-
-
--- Delayed instantiation:
-
-When elaborating in checking direction, do NOT evaluate the target type if
-its shape already matches the term at hand.
-
-Special rule for checking "((λ p. t) x) <= B"? Case expr. on variables can desugar to
-this, may be useful for desugaring nested patterns.
-
-
-
--}
-
 import qualified Data.Text as T
+import Data.Maybe
 import Control.Monad
+import Control.Monad.State.Strict
+import Control.Monad.Except
+import Control.Arrow
+import GHC.Prim
+import GHC.Types
 
-type Name  = T.Text
-type Gen   = Int
-type Sub a = [(Name, a)]
-type Env   = Sub (Maybe Val)
-type Ty    = Tm
-type VTy   = Val
+type Name   = T.Text
+type Gen    = Int
+type Sub a  = [(Name, a)]
+type Vals   = Sub ValEntry
+type Ty     = Tm
+type VTy    = Val
+type RTy    = RTm
+type Id     = Int
+
+data ValEntry
+  = VEBound        -- ^ Bound variable
+  | VERec Id ~Val  -- ^ Recursive definition (relative to some term)
+  | VEDef ~Val     -- ^ Non-recursive definition
+
+data RTm
+  = RName Name
+  | RApp RTm RTm
+  | RLam Name RTm
+  | RSplit [(Pat, RTm)]
+  | RPi Name RTy RTy
+  | RLet Name RTm RTy RTm
+  | RInd Name RTy (Sub RTy) RTm
+  | RU
+
+data Pat
+  = PCon Name [Name]
+  | PAny Name
 
 data Tm
   = Var Name
+  | DCon Name
+  | TCon Name
   | App Tm Tm
   | Lam Name Tm
   | Split [(Pat, Tm)]
   | Pi Name Ty Tm
-  | Let Name Ty Tm Tm
+  | Let Id Name Ty Tm Tm
+  | Ind Name Ty (Sub Ty) Tm
   | U
 
-data Pat
-  = PCon Name [Name]
-  | PAny  
+data Head
+  = HBound Name
+  | HRec Id Name
+  | HGen Gen
+  | HDCon Name
+  | HTCon Name
+  | HSplit Vals [(Pat, Tm)]
+
+vbound x = VNe (HBound x) []
+vgen   g = VNe (HGen g  ) []
+vdcon  x = VNe (HDCon x ) []
+vtcon  x = VNe (HTCon x ) []
+vrec i x = VNe (HRec i x) []
 
 data Val
-  = VVar Name
-  | VGen Gen
-  | VApp Val ~Val  
-  | VLam Name Env Tm
-  | VSplit Env [(Pat, Tm)]
-  | VPi Name VTy Env Tm
+  = VNe Head [Val]
+  | VLam Name Vals Tm
+  | VSplit Vals [(Pat, Tm)]
+  | VPi Name VTy Vals Tm
   | VU
 
+--------------------------------------------------------------------------------
+
+appSplit :: Bool -> Vals -> [(Pat, Tm)] -> Val -> Val
+appSplit urec vs ps a = case a of
+  VNe (HDCon x) args -> match x args ps
+  _                  -> matchAny a ps
+  where
+    match :: Name -> [Val] -> [(Pat, Tm)] -> Val
+    match x args ((PCon x' xs, t):ps)
+      | x == x'   = eval urec (zipWith (\v x -> (x, VEDef v)) args xs ++ vs) t
+      | otherwise = match x args ps
+    match x args ((PAny x', t):ps) = eval urec ((x', VEDef (VNe (HDCon x) args)):vs) t
+    match x args [] = error "inexhaustive pattern"
+
+    matchAny :: Val -> [(Pat, Tm)] -> Val
+    matchAny a ((PAny x, t):ps) = eval urec ((x, VEDef a):vs) t
+    matchAny a ((_,      _):ps) = matchAny a ps
+    matchAny _ []               = VNe (HSplit vs ps) [a]
+
+vapp :: Bool -> Val -> Val -> Val
+vapp urec f ~a = case f of
+  VLam x e t   -> eval urec ((x, VEDef a):e) t
+  VSplit vs ps -> appSplit urec vs ps a
+  VNe x vs     -> VNe x (a:vs)
+  _            -> error "vapp"
+
+evalVar :: Bool -> Name -> Vals -> Val
+evalVar urec x vs = case fromJust $ lookup x vs of
+  VEBound   -> vbound x
+  VEDef a   -> a
+  VERec i a -> if urec then a else vrec i x
+
+eval :: Bool -> Vals -> Tm -> Val
+eval urec e = \case
+  Var x           -> evalVar urec x e
+  DCon x          -> vdcon x
+  TCon x          -> vtcon x
+  App f a         -> vapp urec (eval urec e f) (eval urec e a)
+  Lam x t         -> VLam x e t
+  Split ps        -> VSplit e ps
+  Pi x a b        -> VPi x (eval urec e a) e b
+  Let i x ty t t' -> let ~vt = eval urec ((x, VERec i vt):e) t
+                     in eval urec ((x, VEDef vt):e) t'
+  Ind x t cs t'   -> eval urec e t'
+  U               -> VU
+
+--------------------------------------------------------------------------------
+
+data TyEntry
+  = EInd VTy (Sub VTy)
+  | EVar ~VTy
+  | ECon VTy
+
+type Types = Sub TyEntry
+type M = StateT Int (Either T.Text)
+
+ptrEq :: a -> a -> Bool
+ptrEq !a !b = isTrue# (reallyUnsafePtrEquality# a b)
+
+conv :: Bool -> Val -> Val -> Bool
+conv urec = go 0 where
+  go :: Gen -> Val -> Val -> Bool
+  go g VU VU = True
+  go g (VPi x a vs b) (VPi x' a' vs' b') =
+    go g a a' && let gen = vgen g in
+    go (g+1) (eval urec ((x, VEDef gen):vs) b) (eval urec ((x', VEDef gen):vs') b')
+  go g (VLam x vs t) (VLam x' vs' t') =
+    let gen = vgen g in
+    go (g+1) (eval urec ((x, VEDef gen):vs) t) (eval urec ((x', VEDef gen):vs') t')
+  go g t (VLam x' vs' t') =
+    let gen = vgen g in
+    go (g+1) (vapp urec t gen) (eval urec ((x', VEDef gen):vs') t')
+  go g (VLam x vs t) t' =
+    let gen = vgen g in
+    go (g+1) (eval urec ((x, VEDef gen):vs) t) (vapp urec t' gen)
+  go g (VNe h vs) (VNe h' vs') = goHead g h h' && goSp g vs vs'
+  go g t@(VSplit vs ps) t'@(VSplit vs' ps') = ptrEq t t' || goSplit g vs ps vs' ps'
+  go g _ _ = False
+
+  goPat :: Gen -> Pat -> Pat -> Maybe (Gen, Vals, Vals)
+  goPat g (PAny x) (PAny x') =
+    let e = VEDef $ vgen g
+    in Just (g + 1, [(x, e)], [(x', e)])
+  goPat g (PCon x xs) (PCon x' xs')
+    | x == x' =
+      let g' = g + length xs
+          gs = map (VEDef . vgen) [g+1..g']
+      in Just (g', zip xs gs, zip xs' gs)
+  goPat _ _ _ = Nothing
+
+  goSplit :: Gen -> Vals -> [(Pat, Tm)] -> Vals -> [(Pat, Tm)] -> Bool
+  goSplit g vs ((p, t):ps) vs' ((p', t'):ps') = case goPat g p p' of
+    Just (g', gens, gens') ->
+      conv False (eval False (gens++vs) t) (eval False (gens'++vs') t')
+      &&
+      goSplit g vs ps vs' ps'
+    Nothing -> False
+  goSplit g _ [] _ [] = True
+  goSplit _ _ _ _ _ = False
+
+  goHead :: Gen -> Head -> Head -> Bool
+  goHead g h h' = case (h, h') of
+    (HBound x,     HBound x'     ) -> x == x'
+    (HGen g,       HGen g'       ) -> g == g'
+    (HDCon x,      HDCon x'      ) -> x == x'
+    (HTCon x,      HTCon x'      ) -> x == x'
+    (HSplit vs ps, HSplit vs' ps') -> goSplit g vs ps vs' ps'
+    (HRec i x,     HRec i' x'    ) -> x == x' && i == i'
+    _ -> False
+
+  goSp :: Gen -> [Val] -> [Val] -> Bool
+  goSp g vs vs' = case (vs, vs') of
+    (v:vs , v':vs') -> go g v v' && goSp g vs vs'
+    ([]   , []    ) -> True
+    (_    , _     ) -> error "goSp: impossible"
 
 
+data Perhaps = Yes | No | Dunno
+
+-- | Unify indices and stuff in patterns
+unifyPat :: Types -> Val -> Val -> State Vals Perhaps
+unifyPat ts t t' = _
+
+check :: Types -> Vals -> RTm -> VTy -> M Tm
+check ts vs t ty = case (t, ty) of
+  (RLam x t, VPi x' a vs' b) -> do
+    t <- check ((x, EVar a):ts) ((x, VEBound):vs) t (eval True ((x', VEBound):vs') b)
+    pure (Lam x t)
+  (RSplit ps, VPi x' a vs' b) ->
+    case a of
+      VNe (HTCon ind) ixes -> do
+        let EInd ity cty = fromJust $ lookup ind ts
+        undefined
 
 
+      _ -> throwError "cannot split on non-inductive type"
+  (t, ty) -> do
+    (t, tty) <- infer ts vs t
+    unless (conv True tty ty) $
+      throwError "type mismatch"
+    pure t
 
-vapp :: Val -> Val -> Val
-vapp (VLam x e t)  ~a = eval ((x, Just a):e) t
-vapp (VSplit e ps) ~a = go ps where
-  h = vhead a
+inferName :: Types -> Name -> M (Tm, VTy)
+inferName ts x = case lookup x ts of
+  Nothing    -> throwError "name not in scope"
+  Just entry -> case entry of
+    EInd ty _ -> pure (TCon x, ty)
+    ECon ty   -> pure (DCon x, ty)
+    EVar ty   -> pure (Var x, ty)
 
+elabInd :: Types -> Vals -> Name -> RTy -> Sub RTy -> M (Ty, Sub Ty)
+elabInd ts vs x ty cs = undefined
 
-  
-vapp f             ~a = VApp f a
+infer :: Types -> Vals -> RTm -> M (Tm, VTy)
+infer ts vs = \case
+  RName x   -> inferName ts x
+  RLam x t  -> throwError "can't infer type for lambda"
+  RPi x a b -> do
+    a <- check ts vs a VU
+    b <- check ((x, EVar (eval True vs a)):ts) ((x, VEBound):vs) b VU
+    pure (Pi x a b, VU)
+  RLet x ty t t' -> do
+    i <- get <* modify (+1)
+    ty <- check ts vs t VU
+    let ~vty = eval True vs ty
+    t <- check ((x, EVar vty):ts) ((x, VEBound):vs) t vty
+    let ~vt = eval True ((x, VERec i vt):vs) t
+    (t', t'ty) <- infer ((x, EVar vty):ts) ((x, VEDef vt):vs) t'
+    pure (Let i x ty t t', t'ty)
+  RApp f a -> do
+    (f, fty) <- infer ts vs f
+    case fty of
+      VPi x aty vs' b -> do
+        a <- check ts vs a aty
+        let ~va = eval True vs a
+        pure (App f a, eval True ((x, VEDef va):vs) b)
+      _ -> throwError "infer: expected function type"
+  RU -> pure (U, VU)
+  RInd x ty cs t' -> do
+    (ty, cs) <- elabInd ts vs x ty cs
+    let ~vty = eval True vs ty
+    let vcs  = map (second (eval True vs)) cs
+    let ts'  = map (second ECon) vcs ++ (x, EInd vty vcs) : ts
+    (t', t'ty) <- infer ts' vs t'
+    pure (Ind x ty cs t', t'ty)
+  RSplit ps -> throwError "cannot infer type for split"
 
-eval :: Env -> Tm -> Val
-eval e = \case
-  Var x   -> maybe (VVar x) id (join $ lookup x e)
-  App f x -> _
-
-  
 

@@ -10,6 +10,19 @@ import Control.Arrow
 import GHC.Prim
 import GHC.Types
 
+
+
+
+{-
+import qualified Data.Text as T
+import Data.Maybe
+import Control.Monad
+import Control.Monad.State.Strict
+import Control.Monad.Except
+import Control.Arrow
+import GHC.Prim
+import GHC.Types
+
 type Name   = T.Text
 type Gen    = Int
 type Sub a  = [(Name, a)]
@@ -258,4 +271,4 @@ infer ts vs = \case
     pure (Ind x ty cs t', t'ty)
   RSplit ps -> throwError "cannot infer type for split"
 
-
+-}

@@ -1,5 +1,127 @@
 
-{-|
+
+** The issue with (recursive) function closures **
+
+We would like to be able to externally reason about local bindings.
+In Agda, local bindings can be λ-lifted to outer scope:
+
+  f : A → B → C
+  f a b = foo
+    module f where
+      foo : C
+      foo = ...
+  
+  f.foo : A → B → C
+
+This is pretty good actually, and we'd like to implement something like this.
+But I'd really like to implement this as simply and efficiently as possible and
+I'm not there yet.
+
+- If we implement this by always lifting out everything to the program top level,
+  that causes significant bloat in elaborated terms, because every definition has
+  to be replaced with the lifted definition applied to all captured variables.
+
+- I don't know how to elegantly combine universal λ-lifting, recursive let and structural
+  case split equality. If we have "let rec f : A → B" in a closure, if we lift it to
+  "f' : C → D → A → B", then how do we represent recursion only after the last argument?
+  We can introduce "Fix" but we're using recursive lets specifically to avoid Fix.
+  Also, can we partially apply as in "f' foo bar" and have "f'" reduce?
+
+- We need to keep track of scope depths for lifting, because the number of lifted args
+  to each binding changes with depth.
+
+
+Proposal #1:
+  1. Make every let block behave like an anonymous record (module). Disallow let shadowing for simplicity.
+  2. Introduce an evaluation strategy which stops at the first let block.
+  3. Use this "let block eval" to refer to any inner let. The captured environment of closures
+     becomes implicit through the "let block eval" call instead of explicit lifting or other
+     explicit closure representation.
+
+Example. We use dot for field access.
+
+  f : A → B → C
+  f a b =
+    let
+      foo : C
+      foo = ...
+    in foo
+
+  a : A
+  b : B
+  (f a b .foo) : C
+
+Another:
+
+  f : ℕ → ℕ → ℕ
+  f = λ zero  → let res  = id in res ∘ (+10)
+        suc _ → let res2 = const zero in res2 ∘ (+10)
+
+  f zero : ℕ → ℕ             -- = (+10)
+  f zero .res : ℕ → ℕ        -- = id {ℕ}
+
+  f (suc zero) .res2 : ℕ → ℕ  -- = const zero
+
+Note that scope checking relies on evaluation! "f zero .res2" is ill-typed.
+
+What if an "e" expression evaluates to "let σ : Γ in t" with "t : Δ" having record type as well?
+Then the type of "e .field" depends on whether Γ has "field" or Δ has "field". This is
+a bit icky. We need a different field selector for "let". Or, a selector that projects
+"σ" out of "let σ : Γ in t"?
+
+That would be weird but amusing. Suppose it is postfix "&". Then "t &" evaluates t to
+the first "let σ : Γ in t'" and returns Γ as a value of an anonymous record/telescope. But
+& is typeable only in a metaprogramming sense; we pull out Γ from the evaluated term.
+
+  f : ℕ → ℕ → ℕ
+  f = λ n → let
+  
+    g : ℕ → ℕ
+    g = λ zero   → n
+          suc n' → suc (g n')
+
+    in g ∘ (+10)
+
+Now, how to best display the whnf of "f n" for neutral n? Just unfolding g
+would be stupid; it would contain a recursive "g" but no indication that it is
+recursive. Not unfolding, on the other hand, would have to indicate the captured
+"n".
+
+  f 5 = (f 5 & .g) ∘ (+10)
+
+(Even with Fix, the Agda way of referring to local bindings is useful, sure, we
+can just write out the Fix body unambiguously, but that can be huge ass, so
+we might as well remember that the expression is actually bound to a name.)
+
+How to print the above? In any case we have to remember that the [a := 5] substitution comes
+from applying f to 5. Or simply don't give a damn and print closures are they are? So,
+we notice that "g" is immediately defined as a split lambda, so we print g in a closure,
+like ⟨g, [a := 5]⟩? The issue is that we don't let the user write explicit substitutions, so
+why should we print stuff which isn't valid input?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+
+--------------------------------------------------------------------------------
 
 ** Recursion notes: **
 
@@ -50,10 +172,7 @@ Advantages:
   - no mandatory multiple split pattern definitions
   - no mandatory structural recursion annotation
   - call by need all the way
--}
 
-
-{-|
 Design:
 - Indexed inductive families + dependent pattern matching + recursive definitions.
 - Type in Type, no positivity check, manual annotation for structurally decreasing params.
@@ -187,4 +306,3 @@ its shape already matches the term at hand.
 
 Special rule for checking "((λ p. t) x) <= B"? Case expr. on variables can desugar to
 this, may be useful for desugaring nested patterns.
--}

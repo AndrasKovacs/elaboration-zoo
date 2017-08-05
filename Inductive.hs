@@ -24,6 +24,7 @@ Implementation:
     case splitting lambdas.
   - Mixed call-by-need/call-by-name environment machine evaluation
     + Purely call-by-need for meta-ground terms
+  - Existing metas are frozen before elaborating each inductive data def.
 
 Possible features:
   - Consistency:
@@ -31,7 +32,13 @@ Possible features:
     + Termination check
     + Positivity check
 
--}  
+Questions:
+  - How to prevent metas being solved by later (out-of-scope) declared inductive types.
+    + Before elaborating an inductive decl, freeze all existing metas.
+      * Works but kind of crude, prevents many valid solutions.
+    + Work out a more precise scoping system.
+
+-}
 
 module Inductive where
 
@@ -62,7 +69,7 @@ type Ty          = Tm
 
 data Icit        = Impl | Expl
 data LamBinder   = LBIcit Icit Name | LBNamed Name Name | LBUnused
-data SplitInfo   = SBIcit Icit | SBName Name 
+data SplitInfo   = SIIcit Icit | SINamed Name
 data AppType     = ATIcit Icit | ATNamed Name
 
 type PiBinder    = (Name, Icit)
@@ -74,24 +81,25 @@ type Sub a       = [(Name, a)]
 type Spine       = Sub (Val, AppType)
 type Values      = Sub (Maybe Val)
 type Types       = Sub TypeEntry
-type Metas       = IntMap Val
+data MetaEntry   = MESolved Val | MEFrozen | MEUnsolved
+type Metas       = IntMap MetaEntry
 
 data Raw
   = RSym Name
-  | RLet Name Raw Raw Raw  
-  | RApp Raw Raw AppInfo   
+  | RLet Name Raw Raw Raw
+  | RApp Raw Raw AppInfo
   | RLam LamBinder Raw
   | RSplit SplitInfo [(Pattern, Raw)]
   | RFix Int Name Raw
   | RPi PiBinder Raw
-  | RArrow 
+  | RArrow
   | RStar
-  | RStopInsert Raw 
+  | RStopInsert Raw
   | RHole
 
 data RawDefinition
   = RDDefine Raw Raw
-  | RDInductive Raw (Sub Raw) 
+  | RDInductive Raw (Sub Raw)
 
 type RawProg = Sub RawDefinition
 
@@ -114,7 +122,7 @@ data Tm
 data Definition
   = DDefine Ty Tm
   | DInductive Ty (Sub Ty)
- 
+
 type Prog = Sub Definition
 
 --------------------------------------------------------------------------------
@@ -135,6 +143,10 @@ data Val
   | VArrow ~VTy ~VTy
   | VStar
 
+-- data Cases
+--   = CDefault Name Tm
+--   | CEmpty
+--   | CCase Name [Name] Tm Cases
 
 -- Metacontext
 --------------------------------------------------------------------------------
@@ -153,62 +165,59 @@ reset = do
   writeIORef freshMeta 0
 
 inst ∷ Meta → Maybe Val
-inst m = unsafeDupablePerformIO (IM.lookup m <$> readIORef mcxt)
+inst m = unsafeDupablePerformIO $ do
+  entry ← (IM.! m) <$> readIORef mcxt
+  pure $ case entry of
+    MESolved t → Just t
+    _          → Nothing
 
-
--- Evaluation 
+-- Evaluation
 --------------------------------------------------------------------------------
+
+-- | Invariant: we don't have split lambdas that are equivalent to single lambdas.
+--   Those are converted to single lambdas elaboration time.
+--   Actually, what we have is a non-empty list of constructor cases terminated by either
+--   Nil or a default case. TODO: make this precise in types.
+
+-- Note: only use split lambdas for everything?
+evalSplitApp ∷ SplitInfo → Values → [(Pattern, Tm)] → AppInfo → Val → Val
+evalSplitApp si vs cases ai@(x, i) u = case u of
+  VNeutral (HDCon c) sp → select cases
+    where
+      addSp (x:xs) ((x', (a, i)):sp) = (x, Just a) : addSp xs sp
+      addSp [] [] = vs
+      addSp _  _  = error "evalSplit.addSp: impossible underapplied constructor"
+
+      select ((PCon c' xs, t):cases)
+        | c == c'   = eval (addSp xs sp) t
+        | otherwise = select cases
+      select ((PDefault x, t) : []) = eval ((x, Just u):vs) t
+      select _ = error "evalSplit: impossible non-exhaustive case split"
+
+  u → VNeutral (HSplit si vs cases) [(x, (u, i))]
 
 vAppSpine ∷ Val → Spine → Val
 vAppSpine = foldr (\(x, (a, i)) t → vApp t a (x, i))
 
-
--- Invariant: we don't have split lambdas that are equivalent to single lambdas.
-evalSplitApp ∷ SplitInfo → Values → [(Pattern, Tm)] → AppInfo → Val → Val
-evalSplitApp si vs cases ai@(x, i) u = case u of
-  VNeutral (HDCon x) sp → select cases
-    where select [] = undefined
-  u → VNeutral (HSplit si vs cases) [(x, (u, i))]
-
-
-  
-  
-
-
-  
-  -- u → case cases of
-  --   [(PDefault x, t)] → eval ((x, Just u):vs) t
-  --   _ → VNeutral (HSplit
-  
-  -- go ((PCon c xs, t): cases) u@(VNeutral (HDCon c') sp)
-  --   | c == c' =      
-  --     let addSp []     []                = vs
-  --         addSp (x:xs) ((x', (a, i)):sp) = (x, Just a) : addSp xs sp
-  --         addSp _      _                 = error "evalSplit.addSp: impossible underapplied constructor"
-  --     in eval (addSp xs sp) t      
-  --   | otherwise = go cases u
-  -- go ((PDefault, t) : []) u = eval vs t
-  -- go _ _ = error "evalSplit: impossible non-exhaustive case split"
-
 vApp ∷ Val → Val → AppInfo → Val
-vApp t ~u ai@(x, appType) = case t of  
+vApp t ~u ai@(x, appType) = case t of
   VLam i vs t' → case i of
     LBIcit  _ x → eval ((x, Just u):vs) t'
     LBNamed _ x → eval ((x, Just u):vs) t'
-    LBUnused    → eval vs t'    
+    LBUnused    → eval vs t'
   VNeutral h@(HFix n x vs t') sp → case (n, u) of
     (0, VNeutral (HDCon _) _) → vAppSpine (eval ((x, Just (VNeutral h [])):vs) t') sp
-    _ → VNeutral (HFix (n - 1) x vs t') ((x, (u, appType)) : sp)    
-  VNeutral (HSplit si vs cases) [] → evalSplitApp si vs cases ai u      
-  VNeutral h sp → VNeutral h ((x, (u, appType)) : sp)  
+    _ → VNeutral (HFix (n - 1) x vs t') ((x, (u, appType)) : sp)
+  VNeutral (HSplit si vs cases) [] → evalSplitApp si vs cases ai u
+  VNeutral h sp → VNeutral h ((x, (u, appType)) : sp)
   _ → error "vApp: impossible non-function argument"
 
 eval ∷ Values → Tm → Val
-eval vs = \case  
+eval vs = \case
   Var  x        → maybe (VNeutral (HVar x) []) refresh $ fromJust $ lookup x vs
   DCon x        → VNeutral (HDCon x) []
-  TCon x        → VNeutral (HTCon x) []  
-  Split i cases → VNeutral (HSplit i vs cases) []  
+  TCon x        → VNeutral (HTCon x) []
+  Split i cases → VNeutral (HSplit i vs cases) []
   Let x a t u   → eval ((x, Just (eval vs u)) : vs) t
   App t u i     → vApp (eval vs t) (eval vs u) i
   Lam i t       → VLam i vs t
@@ -217,7 +226,7 @@ eval vs = \case
   Arrow a b     → VArrow (eval vs a) (eval vs b)
   Meta m        → maybe (VNeutral (HMeta m) []) refresh $ inst m
   Star          → VStar
-  
+
 refresh ∷ Val → Val
 refresh = \case
   VNeutral (HMeta m) sp | Just t ← inst m → vAppSpine t sp
@@ -228,7 +237,7 @@ quote = go . refresh where
 
   goNeu ∷ Tm → Spine → Tm
   goNeu = foldr (\(x, (u, i)) t → App t (go u) (x, i))
-  
+
   goPat ∷ Values → (Pattern, Tm) → (Pattern, Tm)
   goPat vs (p, t) = case p of
     PCon x xs → (p, nf (map (,Nothing) xs ++ vs) t)
@@ -246,7 +255,7 @@ quote = go . refresh where
       HTCon c           → goNeu (TCon c) sp
       HFix n x vs t     → Fix n x (nf ((x, Nothing):vs) t)
       HSplit i vs cases → Split i (map (goPat vs) cases)
-      HGen _            → error "quote: impossible generic variable"      
+      HGen _            → error "quote: impossible generic variable"
     VLam i vs t → case i of
       LBIcit  _ x → Lam i (nf ((x, Nothing):vs) t)
       LBNamed _ x → Lam i (nf ((x, Nothing):vs) t)

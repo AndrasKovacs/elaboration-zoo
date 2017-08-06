@@ -1,4 +1,4 @@
-{-# language BangPatterns, MagicHash, LambdaCase, Strict, CPP #-}
+{-# language BangPatterns, MagicHash, LambdaCase, Strict, CPP, PatternGuards #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
 {-|
@@ -38,6 +38,10 @@ Questions:
       * Works but kind of crude, prevents many valid solutions.
     + Work out a more precise scoping system.
 
+Impl TODOS:
+  - API for working with closures
+  - Special check case for applying lambda to bound variable
+    + (Dependent standalone match expression can be desugared to this)
 -}
 
 module Inductive where
@@ -47,10 +51,12 @@ import Prelude hiding (pi)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 
+import Data.HashSet (HashSet)
+import qualified Data.HashSet as HS
+
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
 
-import Control.Arrow
 import Data.IORef
 import Data.Hashable
 import Data.List
@@ -58,7 +64,6 @@ import Data.Maybe
 import Data.String
 import System.IO.Unsafe
 
--- Syntax
 --------------------------------------------------------------------------------
 
 type Name        = String
@@ -66,35 +71,36 @@ type Meta        = Int
 type Gen         = Int
 type VTy         = Val
 type Ty          = Tm
-
-data Icit        = Impl | Expl
-data LamBinder   = LBIcit Icit Name | LBNamed Name Name | LBUnused
-data SplitInfo   = SIIcit Icit | SINamed Name
-data AppType     = ATIcit Icit | ATNamed Name
-
-type PiBinder    = (Name, Icit)
-type AppInfo     = (Name, AppType)
-data TypeEntry   = TENonTCon ~VTy | TETCon ~VTy
-data Pattern     = PDefault Name | PCon Name [Name]
-
+data Icit        = Impl | Expl deriving Eq
+type NameOrIcit  = Either Name Icit
+data TyEntry     = TETCon ~VTy (Sub VTy) | TEDCon ~VTy Name | TEBound ~VTy | TEDefined ~VTy
+data ValEntry    = VEBound | VEDefined ~Val
 type Sub a       = [(Name, a)]
-type Spine       = Sub (Val, AppType)
-type Values      = Sub (Maybe Val)
-type Types       = Sub TypeEntry
+type Vals        = Sub ValEntry
+type Tys         = Sub TyEntry
+type Spine       = Sub (Val, Icit)
+type Renaming    = HashMap (Either Name Gen) Name
 data MetaEntry   = MESolved Val | MEFrozen | MEUnsolved
 type Metas       = IntMap MetaEntry
+
+-- Raw syntax
+--------------------------------------------------------------------------------
+
+data RawCases
+  = RCDefault Name Raw
+  | RCEmpty
+  | RCCase Name (Sub (Either Icit Name)) Raw RawCases
 
 data Raw
   = RSym Name
   | RLet Name Raw Raw Raw
-  | RApp Raw Raw AppInfo
-  | RLam LamBinder Raw
-  | RSplit SplitInfo [(Pattern, Raw)]
+  | RApp Raw Raw NameOrIcit
+  | RLam NameOrIcit RawCases
   | RFix Int Name Raw
-  | RPi PiBinder Raw
-  | RArrow
+  | RPi Name Icit Raw Raw
+  | RArrow Raw Raw
   | RStar
-  | RStopInsert Raw
+  | RStopMetaInsertion Raw
   | RHole
 
 data RawDefinition
@@ -103,18 +109,24 @@ data RawDefinition
 
 type RawProg = Sub RawDefinition
 
+-- Core terms
 --------------------------------------------------------------------------------
+
+data Cases
+  = CDefault Name Tm
+  | CEmpty
+  | CCase Name [Name] Tm Cases
 
 data Tm
   = Var Name
+  | Gen Gen
   | DCon Name
   | TCon Name
   | Let Name Ty Tm Tm
-  | App Tm Tm AppInfo
-  | Lam LamBinder Tm
-  | Split SplitInfo [(Pattern, Tm)]
+  | App Tm Tm Name Icit
+  | Lam Icit Cases
   | Fix Int Name Tm
-  | Pi PiBinder Ty Tm
+  | Pi Name Icit Ty Tm
   | Arrow Ty Ty
   | Star
   | Meta Meta
@@ -125,6 +137,7 @@ data Definition
 
 type Prog = Sub Definition
 
+-- Core values
 --------------------------------------------------------------------------------
 
 data Head
@@ -133,20 +146,15 @@ data Head
   | HDCon Name
   | HTCon Name
   | HGen Gen
-  | HFix Int Name Values Tm
-  | HSplit SplitInfo Values [(Pattern, Tm)]
+  | HFix Int Name Vals Tm
+  | HLam Icit Vals Cases
 
 data Val
-  = VNeutral Head Spine
-  | VLam LamBinder Values Tm
-  | VPi PiBinder ~VTy Values Tm
+  = VApp Head Spine
+  | VLam Icit Vals Cases
+  | VPi Name Icit ~VTy Vals Ty
   | VArrow ~VTy ~VTy
   | VStar
-
--- data Cases
---   = CDefault Name Tm
---   | CEmpty
---   | CCase Name [Name] Tm Cases
 
 -- Metacontext
 --------------------------------------------------------------------------------
@@ -164,330 +172,417 @@ reset = do
   writeIORef mcxt mempty
   writeIORef freshMeta 0
 
-inst ∷ Meta → Maybe Val
-inst m = unsafeDupablePerformIO $ do
-  entry ← (IM.! m) <$> readIORef mcxt
-  pure $ case entry of
-    MESolved t → Just t
-    _          → Nothing
+freeze ∷ IO ()
+freeze = modifyIORef' mcxt (IM.map (\case MEUnsolved → MEFrozen; e → e))
+
+inst ∷ Meta → MetaEntry
+inst m = unsafeDupablePerformIO (readIORef mcxt) IM.! m
 
 -- Evaluation
 --------------------------------------------------------------------------------
 
--- | Invariant: we don't have split lambdas that are equivalent to single lambdas.
---   Those are converted to single lambdas elaboration time.
---   Actually, what we have is a non-empty list of constructor cases terminated by either
---   Nil or a default case. TODO: make this precise in types.
-
--- Note: only use split lambdas for everything?
-evalSplitApp ∷ SplitInfo → Values → [(Pattern, Tm)] → AppInfo → Val → Val
-evalSplitApp si vs cases ai@(x, i) u = case u of
-  VNeutral (HDCon c) sp → select cases
-    where
-      addSp (x:xs) ((x', (a, i)):sp) = (x, Just a) : addSp xs sp
-      addSp [] [] = vs
-      addSp _  _  = error "evalSplit.addSp: impossible underapplied constructor"
-
-      select ((PCon c' xs, t):cases)
-        | c == c'   = eval (addSp xs sp) t
-        | otherwise = select cases
-      select ((PDefault x, t) : []) = eval ((x, Just u):vs) t
-      select _ = error "evalSplit: impossible non-exhaustive case split"
-
-  u → VNeutral (HSplit si vs cases) [(x, (u, i))]
-
 vAppSpine ∷ Val → Spine → Val
-vAppSpine = foldr (\(x, (a, i)) t → vApp t a (x, i))
+vAppSpine = foldr (\(x, (a, i)) t → vApp t a x i)
 
-vApp ∷ Val → Val → AppInfo → Val
-vApp t ~u ai@(x, appType) = case t of
-  VLam i vs t' → case i of
-    LBIcit  _ x → eval ((x, Just u):vs) t'
-    LBNamed _ x → eval ((x, Just u):vs) t'
-    LBUnused    → eval vs t'
-  VNeutral h@(HFix n x vs t') sp → case (n, u) of
-    (0, VNeutral (HDCon _) _) → vAppSpine (eval ((x, Just (VNeutral h [])):vs) t') sp
-    _ → VNeutral (HFix (n - 1) x vs t') ((x, (u, appType)) : sp)
-  VNeutral (HSplit si vs cases) [] → evalSplitApp si vs cases ai u
-  VNeutral h sp → VNeutral h ((x, (u, appType)) : sp)
-  _ → error "vApp: impossible non-function argument"
+inst1 ∷ Vals → Name → Val → Tm → Val
+inst1 vs x ~t u = eval ((x, VEDefined t):vs) u
 
-eval ∷ Values → Tm → Val
+instN ∷ Vals → [Name] → Spine → Tm → Val
+instN vs xs sp t = eval (go xs sp) t where
+  go (x:xs) ((_, (a, _)):sp) = (x, VEDefined a) : go xs sp
+  go [] [] = vs
+  go _  _  = error "instN: mismatch between bindings and values"
+
+vApp ∷ Val → Val → Name → Icit → Val
+vApp t ~u ux ui = case t of
+  VLam ti vs cs → case cs of
+    CDefault x' t' → inst1 vs x' u t'
+    _              → case u of
+      VApp (HDCon c) sp → select cs where
+          select (CCase c' xs t' cs)
+            | c == c'   = instN vs xs sp t'
+            | otherwise = select cs
+          select (CDefault x' t') = inst1 vs x' u t'
+          select CEmpty           = error "Non-exhaustive case split."
+      _ → VApp (HLam ti vs cs) [(ux, (u, ui))]
+
+  VApp h sp → case h of
+    HFix n fx vs t' → case (n, u) of
+      (0, VApp (HDCon _) _) → vAppSpine (eval ((fx, VEDefined (VApp h [])):vs) t') sp
+      _ → VApp (HFix (n - 1) fx vs t') ((ux, (u, ui)) : sp)
+    _ → VApp h ((ux, (u, ui)) : sp)
+
+  _ → error "Impossible non-function application."
+
+eval ∷ Vals → Tm → Val
 eval vs = \case
-  Var  x        → maybe (VNeutral (HVar x) []) refresh $ fromJust $ lookup x vs
-  DCon x        → VNeutral (HDCon x) []
-  TCon x        → VNeutral (HTCon x) []
-  Split i cases → VNeutral (HSplit i vs cases) []
-  Let x a t u   → eval ((x, Just (eval vs u)) : vs) t
-  App t u i     → vApp (eval vs t) (eval vs u) i
-  Lam i t       → VLam i vs t
-  Fix n x t     → VNeutral (HFix n x vs t) []
-  Pi i a b      → VPi i (eval vs a) vs b
-  Arrow a b     → VArrow (eval vs a) (eval vs b)
-  Meta m        → maybe (VNeutral (HMeta m) []) refresh $ inst m
-  Star          → VStar
+  Var  x      → case fromJust (lookup x vs) of
+                  VEBound     → VApp (HVar x) []
+                  VEDefined t → refresh t
+  DCon x      → VApp (HDCon x) []
+  TCon x      → VApp (HTCon x) []
+  Gen g       → VApp (HGen g)  []
+  Let x a t u → inst1 vs x (eval vs t) u
+  App t u x i → vApp (eval vs t) (eval vs u) x i
+  Lam i cs    → VLam i vs cs
+  Fix n x t   → VApp (HFix n x vs t) []
+  Pi x i a b  → VPi x i (eval vs a) vs b
+  Arrow a b   → VArrow (eval vs a) (eval vs b)
+  Meta m      → case inst m of
+                  MESolved t → refresh t
+                  _          → VApp (HMeta m) []
+  Star        → VStar
 
 refresh ∷ Val → Val
 refresh = \case
-  VNeutral (HMeta m) sp | Just t ← inst m → vAppSpine t sp
+  VApp (HMeta m) sp | MESolved t ← inst m → refresh (vAppSpine t sp)
   t → t
 
 quote ∷ Val → Tm
 quote = go . refresh where
+  goSpine ∷ Tm → Spine → Tm
+  goSpine = foldr (\(x, (u, i)) t → App t (go u) x i)
 
-  goNeu ∷ Tm → Spine → Tm
-  goNeu = foldr (\(x, (u, i)) t → App t (go u) (x, i))
+  goClosure1 ∷ Name → Vals → Tm → Tm
+  goClosure1 x vs t = go (eval ((x, VEBound):vs) t)
 
-  goPat ∷ Values → (Pattern, Tm) → (Pattern, Tm)
-  goPat vs (p, t) = case p of
-    PCon x xs → (p, nf (map (,Nothing) xs ++ vs) t)
-    PDefault x → (p, nf vs t)
+  goClosureN ∷ [Name] → Vals → Tm → Tm
+  goClosureN xs vs t = go (eval (foldr (\x → ((x, VEBound):)) vs xs) t)
 
-  nf ∷ Values → Tm → Tm
-  nf vs t = go (eval vs t)
+  goCases ∷ Vals → Cases → Cases
+  goCases vs = \case
+    CCase c xs t cs → CCase c xs (goClosureN xs vs t) (goCases vs cs)
+    CDefault x t    → CDefault x (goClosure1 x vs t)
+    CEmpty          → CEmpty
 
   go ∷ Val → Tm
   go = \case
-    VNeutral h sp → case h of
-      HVar x            → goNeu (Var x)  sp
-      HMeta m           → goNeu (Meta m) sp
-      HDCon c           → goNeu (DCon c) sp
-      HTCon c           → goNeu (TCon c) sp
-      HFix n x vs t     → Fix n x (nf ((x, Nothing):vs) t)
-      HSplit i vs cases → Split i (map (goPat vs) cases)
-      HGen _            → error "quote: impossible generic variable"
-    VLam i vs t → case i of
-      LBIcit  _ x → Lam i (nf ((x, Nothing):vs) t)
-      LBNamed _ x → Lam i (nf ((x, Nothing):vs) t)
-      LBUnused    → Lam i (nf vs t)
-    VPi (x, i) a vs b → Pi (x, i) (go a) (nf ((x, Nothing):vs) b)
-    VArrow a b        → Arrow (go a) (go b)
-    VStar             → Star
+    VApp h sp → goSpine t sp where
+      t = case h of
+        HVar x        → Var x
+        HMeta m       → Meta m
+        HDCon c       → DCon c
+        HTCon c       → TCon c
+        HFix n x vs t → Fix n x (goClosure1 x vs t)
+        HLam i vs cs  → Lam i (goCases vs cs)
+        HGen g        → Gen g
+    VLam i vs cs   → Lam i (goCases vs cs)
+    VPi x i a vs b → Pi x i (go a) (goClosure1 x vs b)
+    VArrow a b     → Arrow (go a) (go b)
+    VStar          → Star
 
-nf ∷ Values → Tm → Tm
+nf ∷ Vals → Tm → Tm
 nf vs t = quote (eval vs t)
-
---------------------------------------------------------------------------------
-
-
-
-{-
-
-eval :: Env -> Tm -> Val
-eval vs = \case
-  Var x         -> maybe (VVar x :$ []) refresh (maybe (error x) id $ lookup x vs)
-  Let x e' ty e -> eval ((x, Just (eval vs e')):vs) e
-  App f a x i   -> vapp (eval vs f) (eval vs a) x i
-  Lam x i t     -> VLam x i $ \a -> eval ((x, Just a):vs) t
-  Pi x i a b    -> VPi x i (eval vs a) $ \a -> eval ((x, Just a):vs) b
-  Star          -> VStar
-  Meta i        -> maybe (VMeta i :$ []) refresh (inst i)
-
-refresh :: Val -> Val
-refresh = \case
-  VMeta i :$ sp | Just t <- inst i ->
-                  refresh (foldr (\(x, (a, i)) t -> vapp t a x i) t sp)
-  t -> t
-
-quote :: Val -> Tm
-quote = go where
-  goHead = \case
-    VMeta m -> Meta m
-    VVar x  -> Var x
-    VGen{}  -> error "quote: impossible VGen"
-  go t = case refresh t of
-    h :$ sp     -> foldr (\(x, (a, i)) t -> App t (go a) x i) (goHead h) sp
-    VLam x i t  -> Lam x i (go (t (VVar x :$ [])))
-    VPi x i a b -> Pi x i (go a) (go (b (VVar x :$ [])))
-    VStar       -> Star
 
 -- Unification
 --------------------------------------------------------------------------------
 
-lams :: Spine -> Tm -> Tm
-lams sp t = foldl' (\t (x, (a, i)) -> Lam x i t) t sp
-
-invert :: Spine -> Ren
+invert ∷ Spine → Renaming
 invert = foldl' go HM.empty where
   go r (x, (a, _)) =
     let var = case a of
-          VVar x' :$ [] -> Left x'
-          VGen i  :$ [] -> Right i
-          _             -> error "Meta substitution is not a renaming"
-    in HM.alter (maybe (Just x) (\_ -> Nothing)) var r
+          VApp (HVar x') [] → Left x'
+          VApp (HGen g)  [] → Right g
+          _                 → error "Metavariable substitution is not a renaming."
+    in HM.alter (maybe (Just x) (\_ → Nothing)) var r
 
-rename :: Meta -> Ren -> Tm -> Tm
+rename ∷ Meta → Renaming → Tm → Tm
 rename occur = go where
+  goCases ∷ Renaming → Cases → Cases
+  goCases r = \case
+    CEmpty → CEmpty
+    CDefault x t → CDefault x (go (HM.insert (Left x) x r) t)
+    CCase c xs t cs →
+      CCase c xs (go (foldl' (\r x → HM.insert (Left x) x r) r xs) t) (goCases r cs)
+
+  go ∷ Renaming → Tm → Tm
   go r = \case
-    Var x         -> maybe (error $ show ("scope", x, r)) Var (HM.lookup (Left x) r)
-    Let x e' ty e -> Let x (go r e') (go r ty) (go r e)
-    App f a x i   -> App  (go r f) (go r a) x i
-    Lam x i t     -> Lam x i (go (HM.insert (Left x) x r) t)
-    Pi x i a b    -> Pi x i (go r a) (go (HM.insert (Left x) x r) b)
-    Star          -> Star
-    Meta i | i == occur -> error "occurs"
-           | otherwise  -> Meta i
+    Var x         → maybe (error "Scope check") Var (HM.lookup (Left x) r)
+    Gen g         → maybe (error "Scope check") Var (HM.lookup (Right g) r)
+    DCon c        → DCon c
+    TCon c        → TCon c
+    Let x e' ty e → Let x (go r e') (go r ty) (go r e)
+    App f a x i   → App (go r f) (go r a) x i
+    Lam i cs      → Lam i (goCases r cs)
+    Pi x i a b    → Pi x i (go r a) (go (HM.insert (Left x) x r) b)
+    Arrow a b     → Arrow (go r a) (go r b)
+    Star          → Star
+    Fix n x t     → Fix n x (go (HM.insert (Left x) x r) t)
+    Meta i | i == occur → error "Occurs check."
+           | otherwise  → Meta i
 
-solve :: Meta -> Spine -> Val -> IO ()
+pattern Lam1 ∷ Name → Icit → Tm → Tm
+pattern Lam1 x i t = Lam i (CDefault x t)
+
+pattern VLam1 ∷ Name → Icit → Vals → Tm → Val
+pattern VLam1 x i vs t = VLam i vs (CDefault x t)
+
+lams ∷ Spine → Tm → Tm
+lams sp t = foldl' (\t (x, (_, i)) → Lam1 x i t) t sp
+
+solve ∷ Meta → Spine → Val → IO ()
 solve m sp t = do
-  -- print ("solve", m, map (second $ first quote) sp, quote t)
-  let t' = lams sp (rename m (invert sp) (quote t))
-  modifyIORef' mcxt $ IM.insert m (eval [] t')
+  modifyIORef' mcxt $ IM.update
+    (\case MEFrozen   → error "Can't solve frozen metavariable"
+           MESolved _ → error "Impossible: attempted to solve solved metavariable"
+           MEUnsolved → Just (MESolved (eval [] (lams sp (rename m (invert sp) (quote t))))))
+    m
 
-gen :: Gen -> Val
-gen g = VGen g :$ []
+vGen ∷ Gen → Val
+vGen g = VApp (HGen g) []
 
-matchIcit :: Icit -> Icit -> IO ()
-matchIcit i i' = if i == i'
-  then pure ()
-  else error "can't match explicit binder with implicit"
+matchIcit ∷ Icit → Icit → IO ()
+matchIcit i i' =
+  if i == i' then pure ()
+             else error "Implicit-explicit binder mismatch"
 
-unify :: Val -> Val -> IO ()
+unify ∷ Val → Val → IO ()
 unify t t' = go 0 t t' where
 
-  go :: Gen -> Val -> Val -> IO ()
-  go !g t t' = case (refresh t, refresh t') of
-    (VStar, VStar) -> pure ()
+  goCases ∷ Gen → Vals → Vals → Cases → Cases → IO ()
+  goCases g vs vs' (CCase c xs t cs) (CCase c' xs' t' cs') = do
+    if c == c' then pure () else error "Can't unify"
 
-    (VLam x i t, VLam x' i' t') -> go (g + 1) (t (gen g)) (t' (gen g))
+    let goCase g vs vs' [] [] = go g (eval vs t) (eval vs' t')
+        goCase g vs vs' (x:xs) (x':xs') =
+          goCase (g + 1) ((x, VEDefined (vGen g)):vs) ((x', VEDefined (vGen g)):vs') xs xs'
+        goCase _ _ _ _ _ = error "Impossible constructor arity mismatch"
 
-    (VLam x i t, t')   -> go (g + 1) (t (gen g)) (vapp t' (gen g) x i)
-    (t, VLam x' i' t') -> go (g + 1) (vapp t (gen g) x' i') (t' (gen g))
+    goCase g vs vs' xs xs'
 
-    (VPi x i a b, VPi x' i' a' b') -> do
-      matchIcit i i'
-      go g a a'
-      go (g + 1) (b (gen g)) (b' (gen g))
+  goCases g vs vs' (CDefault x t) (CDefault x' t') =
+    go (g + 1) (inst1 vs x (vGen g) t) (inst1 vs' x' (vGen g) t')
+  goCases g _ _ CEmpty CEmpty = pure ()
+  goCases g _ _ _      _      = error "Can't unify"
 
-    (VVar x  :$ sp, VVar x'  :$ sp') | x == x' -> goSpine g sp sp'
-    (VGen i  :$ sp, VGen i'  :$ sp') | i == i' -> goSpine g sp sp'
-    (VMeta m :$ sp, VMeta m' :$ sp') | m == m' -> goSpine g sp sp'
-    (VMeta m :$ sp, t              ) -> solve m sp t
-    (t,             VMeta m  :$ sp ) -> solve m sp t
-
-    (t, t') ->
-      error $ "can't unify\n" ++ show (quote t) ++ "\nwith\n" ++  show (quote t')
-
-  goSpine :: Gen -> Spine -> Spine -> IO ()
+  goSpine ∷ Gen → Spine → Spine → IO ()
   goSpine g sp sp' = case (sp, sp') of
-    ((_, (a, _)):as, (_, (b, _)):bs)  -> goSpine g as bs >> go g a b
-    ([]            , []            )  -> pure ()
-    _                                 -> error "unify spine: impossible"
+    ((_, (t, _)):sp, (_, (t', _)):sp') → goSpine g sp sp' >> go g t t'
+    ([]            , []              ) → pure ()
+    _                                  → error "Unify spine: impossible spine length mismatch"
 
+  goHead ∷ Gen → Head → Head → IO ()
+  goHead g h h' = case (h, h') of
+    (HVar x       , HVar x'          ) | x == x' → pure ()
+    (HTCon c      , HTCon c'         ) | c == c' → pure ()
+    (HDCon c      , HDCon c'         ) | c == c' → pure ()
+    (HGen g       , HGen g'          ) | g == g' → pure ()
+    (HMeta m      , HMeta m'         ) | m == m' → pure ()
+    (HLam i vs cs , HLam i' vs' cs'  ) | i == i' → goCases g vs vs' cs cs'
+    (HFix n x vs t, HFix n' x' vs' t') | n == n' →
+      go (g + 1) (inst1 vs x (vGen g) t) (inst1 vs' x' (vGen g) t')
+    (h, h') → error "Application head mismatch"
+
+  go ∷ Gen → Val → Val → IO ()
+  go g t t' = case (refresh t, refresh t') of
+    (VStar, VStar) → pure ()
+
+    (VLam1 x i vs t, VLam1 x' i' vs' t') →
+      go (g + 1) (inst1 vs x (vGen g) t) (inst1 vs' x' (vGen g) t')
+
+    (VLam1 x i vs t, t')    → go (g + 1) (inst1 vs x (vGen g) t) (vApp t' (vGen g) x i)
+    (t, VLam1 x' i' vs' t') → go (g + 1) (vApp t (vGen g) x' i') (inst1 vs' x' (vGen g) t')
+
+    (VLam _ vs cs, VLam _ vs' cs') → goCases g vs vs' cs cs'
+
+    (VPi x i a vs b, VPi x' i' a' vs' b') | i == i' → do
+      go g a a'
+      go (g + 1) (inst1 vs x (vGen g) b) (inst1 vs' x' (vGen g) b')
+
+    (VApp h sp, VApp h' sp') → do
+      goHead g h h'
+      goSpine g sp sp'
+
+    (VArrow a b, VArrow a' b') → do
+      go g a a'
+      go g b b'
+
+    (VApp (HMeta m) sp, t')  → solve m sp t'
+    (t, VApp (HMeta m') sp') → solve m' sp' t
+
+    (t, t') → error "Can't unify"
 
 -- Elaboration
 --------------------------------------------------------------------------------
 
-hashNub :: (Eq a, Hashable a) => [a] -> [a]
+hashNub :: (Eq a, Hashable a) ⇒ [a] → [a]
 hashNub = snd . foldr go (HS.empty, []) where
   go a (!seen, !as) | HS.member a seen = (seen, as)
   go a (seen, as) = (HS.insert a seen, a:as)
 
-newMeta :: Cxt -> IO Tm
-newMeta cxt = do
-  m <- readIORef freshMeta
+newMeta ∷ Tys → IO Tm
+newMeta as = do
+  m ← readIORef freshMeta
   writeIORef freshMeta (m + 1)
-  let bvars = hashNub [x | (x, Left{}) <- cxt]
+  modifyIORef' mcxt (IM.insert m MEUnsolved)
+  let bvars = hashNub [x | (x, TEBound{}) ← as]
+      mkApp = foldr (\x t → App t (Var x) x Expl) (Meta m)
+  pure $ mkApp bvars
 
-  -- print $ ("newMeta", m, map (second $ either quote quote) cxt)
-  -- print bvars
+data MetaInsertion = MIUntilName Name | MIInsert | MINoInsert
 
-  pure $ foldr (\x t -> App t (Var x) x Expl) (Meta m) bvars
+-- | Expects up-to-date type as input.
+insertMetas ∷ Tys → Vals → MetaInsertion → IO (Tm, VTy) → IO (Tm, VTy)
+insertMetas as vs ins inp = case ins of
+  MINoInsert → inp
+  MIInsert   → uncurry go =<< inp where
+    go t (VPi x Impl a vs' b) = do
+      m ← newMeta as
+      go (App t m x Impl) (inst1 vs' x (eval vs m) b)
+    go t a = pure (t, a)
+  MIUntilName x → uncurry go =<< inp where
+    go t (VPi x' Impl a vs' b)
+      | x == x'   = pure (t, VPi x' Impl a vs' b)
+      | otherwise = do
+          m ← newMeta as
+          go (App t m x Impl) (inst1 vs' x (eval vs m) b)
+    go t a = error "Expected named implicit argument"
 
-check :: Cxt -> Env -> Raw -> Ty -> IO Tm
-check cxt vs t want = case (t, want) of
-  (RHole, _) ->
-    newMeta cxt
+vVar ∷ Name → Val
+vVar x = VApp (HVar x) []
 
-  (RLam x i t, VPi _ i' a b) | i == i' ->
-    Lam x i <$> check ((x, Left a): cxt) ((x, Nothing):vs) t (b (VVar x :$ []))
+-- | Apply a type constructor to a spine of new metas.
+newTConMetaSpine ∷ Tys → Vals → VTy → IO Spine
+newTConMetaSpine = go [] where
+  go sp as vs (VPi bx i a bvs b) = do
+    m ← eval vs <$> newMeta as
+    go ((bx, (m, i)):sp) ((bx, TEBound a):as) ((bx, VEBound):vs) (inst1 vs bx m b)
+  go sp _ _ VStar = pure sp
+  go _  _ _ _     = error "Impossible non-Type return type for type constructor"
 
-  (t, VPi x Impl a b) -> do
-    let x' = if freeInRaw x t then x ++ show (length cxt) else x
-    t <- check ((x', Left a): cxt) ((x', Nothing):vs) t (b (VVar x' :$ []))
-    pure $ Lam x' Impl t
+getTConInfo ∷ Tys → Name → IO (VTy, Sub VTy)
+getTConInfo as tcon = do
+  case lookup tcon as of
+    Just (TETCon a dcons) → pure (a, dcons)
+    _ → error "Impossible missing type constructor info"
 
-  (RLet x e1 t e2, _) -> do
-    t <- check cxt vs t VStar
+-- | Check cases with a known inductive domain type.
+checkIndCases ∷ Tys → Vals → RawCases → (Name, Spine, VTy, Sub VTy) → (Name, Vals, Ty) → IO Cases
+checkIndCases as vs cs (tcon, sp, a, dcons) (bx, bvs, b) = _
+
+checkCases ∷ Tys → Vals → RawCases → VTy → (Name, Vals, Ty) → IO Cases
+checkCases as vs cs a (bx, bvs, b) = case a of
+  VApp (HTCon tcon) sp → do
+    (tconTy, dcons) ← getTConInfo as tcon
+    checkIndCases as vs cs (tcon, sp, tconTy, dcons) (bx, bvs, b)
+  VApp (HMeta m) sp → case cs of
+    RCEmpty → error "Ambiguous empty case split"
+    RCDefault x t →
+      CDefault x <$> check ((x, TEBound a):as) ((x, VEBound):vs) t (inst1 bvs bx (vVar x) b)
+    RCCase c _ _ _ → do
+      case lookup c as of
+        Nothing → error "Constructor not in scope"
+        Just (TEDCon _ tcon) → do
+          (tconTy, dcons) ← getTConInfo as tcon
+          sp ← newTConMetaSpine as vs tconTy
+          checkIndCases as vs cs (tcon, sp, tconTy, dcons) (bx, bvs, b)
+        Just _ → error "Expected constructor in case split"
+  a → case cs of
+    RCDefault x t →
+      CDefault x <$> check ((x, TEBound a):as) ((x, VEBound):vs) t (inst1 bvs bx (vVar x) b)
+    _ → error "Cannot split cases on non-inductive type"
+
+check ∷ Tys → Vals → Raw → VTy → IO Tm
+check as vs t a = case (t, a) of
+
+  (RLam i cs, VPi x i' a vs' b) | either (==x) (==i') i → do
+    Lam i' <$> checkCases as vs cs a (x, vs', b)
+
+  (t, VPi x Impl a vs' b) → do
+    let x' = x ++ show (length as)
+    t ← check ((x', TEBound a):as) ((x', VEBound):vs) t (inst1 vs' x (vVar x') b)
+    pure (Lam1 x' Impl t)
+
+  (RHole, _) →
+    newMeta as
+
+  (RLet x a t u, b) → do
+    a ← check as vs a VStar
+    let ~a' = eval vs a
+    t ← check as vs t a'
     let ~t' = eval vs t
-    e1 <- check cxt vs e1 t'
-    let ~e1' = eval vs e1
-    e2 <- check ((x, Right t'): cxt) ((x, Just e1'):vs) e2 want
-    pure (Let x e1 t e2)
+    u ← check ((x, TEDefined a'):as) ((x, VEDefined t'):vs) u b
+    pure (Let x a t u)
 
-  (t, _) -> do
-    (t, has) <- infer cxt vs t
-    t <$ unify has want
+  (t, a) -> do
+    (t, a') <- infer as vs MIInsert t
+    unify a a'
+    pure t
 
-insertMetas :: Cxt -> Env -> (Tm, Ty) -> IO (Tm, Ty)
-insertMetas cxt vs (t, ty) = case ty of
-  VPi x Impl a b -> do
-    m <- newMeta cxt
-    insertMetas cxt vs (App t m x Impl, b (eval vs m))
-  _ -> pure (t, ty)
-
-infer :: Cxt -> Env -> Raw -> IO (Tm, Ty)
-infer cxt vs = \case
-  RNoInsert t -> infer' cxt vs t
-  t -> insertMetas cxt vs =<< infer' cxt vs t
-
-infer' :: Cxt -> Env -> Raw -> IO (Tm, Ty)
-infer' cxt vs = \case
-  RStar ->
+-- | Returns up-to-date types.
+infer ∷ Tys → Vals → MetaInsertion → Raw → IO (Tm, VTy)
+infer as vs ins = \case
+  RStar →
     pure (Star, VStar)
 
-  RNoInsert t ->
-    infer' cxt vs t
+  RStopMetaInsertion t →
+    infer as vs MINoInsert t
 
-  RVar x -> do
-    maybe
-      (error $ "Variable: " ++ x ++ " not in scope")
-      (\ty -> pure (Var x, either id id ty))
-      (lookup x cxt)
+  RSym x → insertMetas as vs ins $
+    case lookup x as of
+      Nothing → error "Symbol not in scope"
+      Just e  → pure $ case e of
+        TETCon a _  → (TCon x, refresh a)
+        TEDCon a _  → (DCon x, refresh a)
+        TEBound a   → (Var  x, refresh a)
+        TEDefined a → (Var  x, refresh a)
 
-  RApp f a i -> do
-    (f, ty) <- case i of
-      Expl -> infer cxt vs f
-      Impl -> infer' cxt vs f
-    case ty of
-      VPi x i' ta tb -> do
-        matchIcit i i'
-        a <- check cxt vs a ta
-        pure (App f a x i', tb (eval vs a))
-      -- VMeta m :$ sp -> do
-      --   (a, ta) <- infer cxt vs a
-      --   let x  = "x" ++ show (length cxt)
-      --   tb <- newMeta ((x, Left ta):cxt)
-      --   unify (VMeta m :$ sp)
-      --         (VPi x i ta (\v -> eval ((x, Just v):vs) tb))
-      --   pure (App f a x i, eval ((x, Just (eval vs a)):vs) tb)
-      _ -> error "expected a function"
+  RApp t u i → insertMetas as vs ins $ do
+    let ins = case i of
+          Left x     → MIUntilName x
+          Right Impl → MINoInsert
+          Right Expl → MIInsert
+    (t, a) ← infer as vs ins t
+    case a of
+      VPi x i' a vs' b → do
+        case i of
+          Right i → matchIcit i i'
+          _       → pure ()
+        u ← check as vs u a
+        pure (App t u x i', inst1 vs' x (eval vs u) b)
+      _ → error "Expected a function in application"
 
-  RPi x i a b -> do
-    a <- check cxt vs a VStar
-    let ~a' = eval vs a
-    b <- check ((x, Left a'): cxt) ((x, Nothing):vs) b VStar
+  RPi x i a b → do
+    a ← check as vs a VStar
+    b ← check ((x, TEBound (eval vs a)):as) ((x, VEBound):vs) b VStar
     pure (Pi x i a b, VStar)
 
-  RLet x e1 t e2 -> do
-    t <- check cxt vs t VStar
+  RArrow a b → do
+    a ← check as vs a VStar
+    b ← check as vs b VStar
+    pure (Arrow a b, VStar)
+
+  RLet x a t u → do
+    a ← check as vs a VStar
+    let ~a' = eval vs a
+    t ← check as vs t a'
     let ~t' = eval vs t
-    e1 <- check cxt vs e1 t'
-    let ~e1' = eval vs e1
-    (e2, ~te2) <- infer' ((x, Right t'): cxt) ((x, Just e1'):vs) e2
-    pure (Let x e1 t e2, te2)
+    infer ((x, TEDefined a'):as) ((x, VEDefined t'):vs) ins u
 
-  RLam x i t -> do
-    ~ma <- eval vs <$> newMeta cxt
-    (t, ty) <- infer ((x, Left ma):cxt) ((x, Nothing):vs) t
-    pure (Lam x i t, VPi x i ma (\a -> eval ((x, Just a):vs) (quote ty)))
+  RLam i cs → insertMetas as vs ins $ do
+    i ← case i of
+      Left x → error "Can't use named argument for inferred lambda"
+      Right i → pure i
+    a ← eval vs <$> newMeta as
+    let xa = "x" ++ show (length as)
+    b ← newMeta ((xa, TEBound a):as)
+    let ty = VPi xa i a vs b
+    t ← check as vs (RLam (Right i) cs) ty
+    pure (t, ty)
 
-  RHole -> do
-    m1 <- newMeta cxt
-    m2 <- newMeta cxt
-    pure (m1, eval vs m2)
+  RFix n x t → insertMetas as vs ins $ do
+    a ← eval vs <$> newMeta as
+    let xa = "x" ++ show (length as)
+    t ← check ((xa, TEBound a):as) ((xa, VEBound):vs) t a
+    pure (t, refresh a)
 
---------------------------------------------------------------------------------
+  RHole → do
+    m₁ ← newMeta as
+    m₂ ← newMeta as
+    pure (m₁, eval vs m₂)
+
+
+{-
 
 tmSpine :: Tm -> (Tm, Sub (Tm, Icit))
 tmSpine = \case

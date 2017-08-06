@@ -48,6 +48,7 @@ data Raw
 
 data Tm
   = Var Name
+  | Gen Gen
   | Let Name Tm Tm Tm
   | App Tm Tm Name Icit
   | Lam Name Icit Tm
@@ -102,6 +103,7 @@ eval vs = \case
   App f a x i   -> vapp (eval vs f) (eval vs a) x i
   Lam x i t     -> VLam x i $ \a -> eval ((x, Just a):vs) t
   Pi x i a b    -> VPi x i (eval vs a) $ \a -> eval ((x, Just a):vs) b
+  Gen g         -> VGen g :$ []
   Star          -> VStar
   Meta i        -> maybe (VMeta i :$ []) refresh (inst i)
 
@@ -116,7 +118,7 @@ quote = go where
   goHead = \case
     VMeta m -> Meta m
     VVar x  -> Var x
-    VGen{}  -> error "quote: impossible VGen"
+    VGen g  -> Gen g
   go t = case refresh t of
     h :$ sp     -> foldr (\(x, (a, i)) t -> App t (go a) x i) (goHead h) sp
     VLam x i t  -> Lam x i (go (t (VVar x :$ [])))
@@ -145,6 +147,7 @@ rename occur = go where
     Let x e' ty e -> Let x (go r e') (go r ty) (go r e)
     App f a x i   -> App  (go r f) (go r a) x i
     Lam x i t     -> Lam x i (go (HM.insert (Left x) x r) t)
+    Gen g         -> maybe (error $ show ("scope", g, r)) Var (HM.lookup (Right g) r)
     Pi x i a b    -> Pi x i (go r a) (go (HM.insert (Left x) x r) b)
     Star          -> Star
     Meta i | i == occur -> error "occurs"
@@ -152,7 +155,6 @@ rename occur = go where
 
 solve :: Meta -> Spine -> Val -> IO ()
 solve m sp t = do
-  -- print ("solve", m, map (second $ first quote) sp, quote t)
   let t' = lams sp (rename m (invert sp) (quote t))
   modifyIORef' mcxt $ IM.insert m (eval [] t')
 
@@ -211,16 +213,10 @@ newMeta cxt = do
   writeIORef freshMeta (m + 1)
   let bvars = hashNub [x | (x, Left{}) <- cxt]
 
-  -- print $ ("newMeta", m, map (second $ either quote quote) cxt)
-  -- print bvars
-
   pure $ foldr (\x t -> App t (Var x) x Expl) (Meta m) bvars
 
 check :: Cxt -> Env -> Raw -> Ty -> IO Tm
 check cxt vs t want = case (t, want) of
-  (RHole, _) ->
-    newMeta cxt
-
   (RLam x i t, VPi _ i' a b) | i == i' ->
     Lam x i <$> check ((x, Left a): cxt) ((x, Nothing):vs) t (b (VVar x :$ []))
 
@@ -236,6 +232,9 @@ check cxt vs t want = case (t, want) of
     let ~e1' = eval vs e1
     e2 <- check ((x, Right t'): cxt) ((x, Just e1'):vs) e2 want
     pure (Let x e1 t e2)
+
+  (RHole, _) ->
+    newMeta cxt
 
   (t, _) -> do
     (t, has) <- infer cxt vs t
@@ -276,13 +275,6 @@ infer' cxt vs = \case
         matchIcit i i'
         a <- check cxt vs a ta
         pure (App f a x i', tb (eval vs a))
-      -- VMeta m :$ sp -> do
-      --   (a, ta) <- infer cxt vs a
-      --   let x  = "x" ++ show (length cxt)
-      --   tb <- newMeta ((x, Left ta):cxt)
-      --   unify (VMeta m :$ sp)
-      --         (VPi x i ta (\v -> eval ((x, Just v):vs) tb))
-      --   pure (App f a x i, eval ((x, Just (eval vs a)):vs) tb)
       _ -> error "expected a function"
 
   RPi x i a b -> do
@@ -338,6 +330,7 @@ zonk env t = case t of
                        _ -> foldr (\(x, (t, i)) f -> App f (zonk env t) x i) h sp
   Lam x i t    -> Lam x i (zonk ((x, Nothing): env) t)
   Let x e t e' -> Let x (zonk env e) (zonk env t) (zonk ((x, Just (eval env e)) : env) e')
+  Gen _        -> error "Impossible Gen"
 
 --------------------------------------------------------------------------------
 
@@ -383,6 +376,7 @@ freeIn x = \case
   Lam x' i t     -> if x == x' then False else freeIn x t
   Pi x' i a b    -> freeIn x a || if x == x' then False else freeIn x b
   Let x' t ty t' -> freeIn x t || freeIn x ty || if x == x' then False else freeIn x t'
+  Gen _          -> error "Impossible Gen"
   Meta _         -> False
   Star           -> False
 
@@ -430,6 +424,7 @@ prettyTm prec = go (prec /= 0) where
       go False t'
     Star   -> ('*':)
     Meta m -> (("?"++).(show m++))
+    Gen _  -> error "Impossible Gen"
 
 instance IsString Tm where fromString = Var
 instance Show Tm where showsPrec = prettyTm
@@ -482,18 +477,18 @@ infixl 9 ⊗
 infixr 8 ==>
 
 test =
-  -- LET(const, (ALL(a) ALL(b) a ==> b ==> a), (LAM(x) LAM(y) x))
-  -- LET(the, (PI(a, star) a ==> a), (LAM(a) LAM(x) x))
-  -- LET(id, (ALL(a) a ==> a), (LAM(x) x))
-  -- LET(nat, star, (PI(n, star) (n ==> n) ==> n ==> n))
-  -- LET(z, nat, (LAM(n) LAM(s) LAM(z) z))
-  -- LET(five, nat, (LAM(n) LAM(s) LAM(z) s ∙ (s ∙ (s ∙ (s ∙ (s ∙ z))))))
+  LET(const, (ALL(a) ALL(b) a ==> b ==> a), (LAM(x) LAM(y) x))
+  LET(the, (PI(a, star) a ==> a), (LAM(a) LAM(x) x))
+  LET(id, (ALL(a) a ==> a), (LAM(x) x))
+  LET(nat, star, (PI(n, star) (n ==> n) ==> n ==> n))
+  LET(z, nat, (LAM(n) LAM(s) LAM(z) z))
+  LET(five, nat, (LAM(n) LAM(s) LAM(z) s ∙ (s ∙ (s ∙ (s ∙ (s ∙ z))))))
 
-  -- LET(s, (nat ==> nat), (LAM(a) LAM(n) LAM(s) LAM(z) s ∙ (a ∙ n ∙ s ∙ z)))
-  -- LET(add, (nat ==> nat ==> nat), (LAM(a) LAM(b) LAM(n) LAM(s) LAM(z) a ∙ n ∙ s ∙ (b ∙ n ∙ s ∙ z)))
-  -- LET(mul, (nat ==> nat ==> nat), (LAM(a) LAM(b) LAM(n) LAM(s) a ∙ n ∙ (b ∙ n ∙ s)))
-  -- LET(ten, nat, (add ∙ five ∙ five))
-  -- LET(hundred, nat, (mul ∙ ten ∙ ten))
+  LET(s, (nat ==> nat), (LAM(a) LAM(n) LAM(s) LAM(z) s ∙ (a ∙ n ∙ s ∙ z)))
+  LET(add, (nat ==> nat ==> nat), (LAM(a) LAM(b) LAM(n) LAM(s) LAM(z) a ∙ n ∙ s ∙ (b ∙ n ∙ s ∙ z)))
+  LET(mul, (nat ==> nat ==> nat), (LAM(a) LAM(b) LAM(n) LAM(s) a ∙ n ∙ (b ∙ n ∙ s)))
+  LET(ten, nat, (add ∙ five ∙ five))
+  LET(hundred, nat, (mul ∙ ten ∙ ten))
 
   LET(eq, (ALL(a) a ==> a ==> star), (ILAM(a) LAM(x) LAM(y) PI(p, (a ==> star)) p ∙ x ==> p ∙ y))
   LET(refl, (ALL(a) PI(x, a) eq ∙ x ∙ x), (LAM(x) LAM(p) LAM(px) px))
@@ -511,59 +506,4 @@ test =
       (LAM(a) LAM(x) LAM(f) LAM(p) f ∙ p))
 
   refl ∙ noIns ap
-
-
-    -- (forall "a" $ forall "b" $ "a" ==> "b" ==> "a")
-    -- (lam "x" $ lam "y" $ "x") $
-
---   make "the"
---     (pi "a" h $ "a" ==> "a")
---     (lam "a" $ lam "x" "x") $
-
---   make "id"
---     (forall "a" $ "a" ==> "a")
---     (lam "x" "x") $
-
---   makeh "pair"
---    (lam "A" $ lam "B" $ forall "P" $ ("A" ==> "B" ==> "P") ==> "P") $
-
---   make "ap"
---     (forall "a" $ forall "b" $ ("a" ==> "b") ==> "a" ==> "b")
---     (lam "f" $ lam "x" $ "f" ∙ "x") $
-
---   -- make "stress"
---   --   (forall "a" $ "a" ==> "a")
---   --   (
---   --    "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙
---   --    "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id" ∙ "id"  ) $
-
---   makeh "Nat"
---     (pi "n" h $ ("n" ==> "n") ==> "n" ==> "n") $
-
---   make "z"
---     "Nat"
---     (lam "n" $ lam "s" $ lam "z" "z") $
-
---   make "s"
---     ("Nat" ==> "Nat")
---     (lam "a" $ lam "n" $ lam "s" $ lam "z" $ "s" ∙ ("a" ∙ "n" ∙ "s" ∙ "z")) $
-
---   make "add"
---     ("Nat" ==> "Nat" ==> "Nat")
---     (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
---       "a" ∙ "n" ∙ "s" ∙ ("b" ∙ "n" ∙ "s" ∙ "z")) $
-
---   make "mul"
---     ("Nat" ==> "Nat" ==> "Nat")
---     (lam "a" $ lam "b" $ lam "n" $ lam "s" $ lam "z" $
---        "a" ∙ "n" ∙ ("b" ∙ "n" ∙ "s") ∙ "z") $
-
---   make "one"     "Nat" ("s" ∙ "z") $
---   make "two"     "Nat" ("s" ∙ "one") $
---   make "five"    "Nat" ("s" ∙ ("add" ∙ "two" ∙ "two")) $
---   make "ten"     "Nat" ("add" ∙ "five" ∙ "five") $
---   make "hundred" "Nat" ("mul" ∙ "ten" ∙ "ten") $
-
---   "hundred"
-
 

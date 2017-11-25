@@ -100,27 +100,6 @@ like ⟨g, [a := 5]⟩? The issue is that we don't let the user write explicit s
 why should we print stuff which isn't valid input?
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-
-
-
-
-
-
 --------------------------------------------------------------------------------
 
 ** Recursion notes: **
@@ -231,7 +210,7 @@ In the "Bool" branch we're operating under an assumed false definitional equalit
 What can we do about this?
 
 - The Agda way is to have all refinable bindings encapsulated in a single pattern, and
-  a pattern is not unfolded unless it's applied all formal args:
+  a pattern is not unfolded unless it's applied to all formal args:
 
   f : ∀ {A} → A → Foo A → A
   f a Nat  = a + 0

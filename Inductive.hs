@@ -193,9 +193,12 @@ instN vs xs sp t = eval (go xs sp) t where
   go [] [] = vs
   go _  _  = error "instN: mismatch between bindings and values"
 
+vVar ∷ Name → Val
+vVar x = VApp (HVar x) []
+
 vApp ∷ Val → Val → Name → Icit → Val
 vApp t ~u ux ui = case t of
-  VLam ti vs cs → case cs of
+  VLam i vs cs → case cs of
     CDefault x' t' → inst1 vs x' u t'
     _              → case u of
       VApp (HDCon c) sp → select cs where
@@ -204,7 +207,7 @@ vApp t ~u ux ui = case t of
             | otherwise = select cs
           select (CDefault x' t') = inst1 vs x' u t'
           select CEmpty           = error "Non-exhaustive case split."
-      _ → VApp (HLam ti vs cs) [(ux, (u, ui))]
+      _ → VApp (HLam i vs cs) [(ux, (u, ui))]
 
   VApp h sp → case h of
     HFix n fx vs t' → case (n, u) of
@@ -217,7 +220,7 @@ vApp t ~u ux ui = case t of
 eval ∷ Vals → Tm → Val
 eval vs = \case
   Var  x      → case fromJust (lookup x vs) of
-                  VEBound     → VApp (HVar x) []
+                  VEBound     → vVar x
                   VEDefined t → refresh t
   DCon x      → VApp (HDCon x) []
   TCon x      → VApp (HTCon x) []
@@ -438,9 +441,6 @@ insertMetas as vs ins inp = case ins of
           go (App t m x Impl) (inst1 vs' x (eval vs m) b)
     go t a = error "Expected named implicit argument"
 
-vVar ∷ Name → Val
-vVar x = VApp (HVar x) []
-
 -- | Apply a type constructor to a spine of new metas.
 newTConMetaSpine ∷ Tys → Vals → VTy → IO Spine
 newTConMetaSpine = go [] where
@@ -504,10 +504,14 @@ check as vs t a = case (t, a) of
     u ← check ((x, TEDefined a'):as) ((x, VEDefined t'):vs) u b
     pure (Let x a t u)
 
+  -- (RApp (RLam i cs) (RSym x) i', b) | Just VEBound ← lookup x vs →
+  --   _
+
   (t, a) -> do
     (t, a') <- infer as vs MIInsert t
     unify a a'
     pure t
+
 
 -- | Returns up-to-date types.
 infer ∷ Tys → Vals → MetaInsertion → Raw → IO (Tm, VTy)
@@ -581,7 +585,7 @@ infer as vs ins = \case
     m₂ ← newMeta as
     pure (m₁, eval vs m₂)
 
-
+--------------------------------------------------------------------------------
 {-
 
 tmSpine :: Tm -> (Tm, Sub (Tm, Icit))

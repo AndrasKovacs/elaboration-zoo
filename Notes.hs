@@ -20,7 +20,7 @@ eval :: Tms -> Vals -> Tm -> Val
 eval ts vs t = case t of
   Var i -> vs !! (length vs - i - 1)
   App f x -> case (eval ts vs f, eval ts vs x, mkC ts x) of
-    (VLam vs' ts' t, vx, !cx) -> traceShow "x" $ eval (cx:ts') (vx:vs') t
+    (VLam vs' ts' t, vx, !cx) -> eval (cx:ts') (vx:vs') t
     (f, vx, cx)               -> VApp f cx vx
   Lam t -> VLam vs ts t
 

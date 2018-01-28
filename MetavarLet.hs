@@ -1,4 +1,5 @@
 {-# language BangPatterns, MagicHash, LambdaCase, Strict, CPP, TupleSections #-}
+{-# language StandaloneDeriving #-}
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
 module MetavarLet where

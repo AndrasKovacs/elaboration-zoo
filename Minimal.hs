@@ -99,7 +99,6 @@ infer cxt@(vs, ts, d) = \case
       _ -> Left "Can't apply non-function"
 
 
-
 -- Sugar & examples
 --------------------------------------------------------------------------------
 
@@ -241,4 +240,3 @@ stress =
   lam "x" (nFunTy $$ million) $
   cons $$ (nFunTy $$ million) $$ "x" $$
   (nil $$ (nFunTy $$ million))
-

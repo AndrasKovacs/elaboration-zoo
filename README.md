@@ -1,3 +1,3 @@
 # tcbe
 
-Currently, the Haskell files are just thrown in without regard to anything. You can read the `LambdaInference.md` file if you'd like something coherent.
+This repository is currently in a highly incoherent and deprecated state. If you're interested in a small TT implementation, look at [this](https://github.com/AndrasKovacs/smalltt) instead.

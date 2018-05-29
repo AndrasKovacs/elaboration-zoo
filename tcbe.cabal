@@ -1,59 +1,37 @@
-name:                tcbe
-version:             0.1.0.0
-synopsis:            Dependent type checking by evaluation
-homepage:            http://github.com/AndrasKovacs/tcbe
-license:             BSD3
-license-file:        LICENSE
-author:              András Kovács
-maintainer:          puttamalac@gmail.com
-copyright:           2016 András Kovács
-category:            Web
-build-type:          Simple
-cabal-version:       >=1.10
+-- This file has been generated from package.yaml by hpack version 0.28.2.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: cfd496a827c0ac5d2780520e5e784c1e47e3d8cd6311d28b86f2ec913c7b67b2
 
-executable tcbe
-  default-language: Haskell2010
-  main-is: Main.hs
-  ghc-options: -rtsopts -O2
-  build-depends:
-                base,
-                bytestring,
-                containers,
-                ghc-prim,
-                hashable,
-                mtl,
-                megaparsec,
-                text,
-                unordered-containers,
-                microlens,
-                microlens-th,
-                microlens-mtl
-
-library
-  other-modules:
-                Syntax, NoInfer, Minimal, Nameful,
-                GluedTC, DBIndex,
-                NoInferNameful, MetavarLet
-  ghc-options:
-                -rtsopts -O2
-  build-depends:
-                base,
-                bytestring,
-                containers,
-                ghc,
-                ghc-prim,
-                hashable,
-                mtl,
-                primitive,
-                megaparsec,
-                text,
-                unordered-containers,
-                microlens,
-                microlens-th,
-                microlens-mtl
-
-  default-language:    Haskell2010
+name:           tcbe
+version:        0.1.0.0
+description:    Notes on dependent type checking & inference
+category:       Language
+homepage:       https://github.com/AndrasKovacs/tcbe#readme
+bug-reports:    https://github.com/AndrasKovacs/tcbe/issues
+author:         András Kovács
+maintainer:     puttamalac@gmail.com
+copyright:      2018 András Kovács
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+cabal-version:  >= 1.10
 
 source-repository head
-  type:     git
+  type: git
   location: https://github.com/AndrasKovacs/tcbe
+
+library
+  exposed-modules:
+      DepTCCubes
+      DepTCHoles
+  other-modules:
+      Paths_tcbe
+  hs-source-dirs:
+      ./.
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , mtl
+  default-language: Haskell2010

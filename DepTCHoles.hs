@@ -4,6 +4,9 @@
 
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
+{- Simple implementation of elaborator with type holes and pattern
+    unification -}
+
 module DepTCHoles where
 
 import Prelude hiding (all)

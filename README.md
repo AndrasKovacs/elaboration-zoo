@@ -1,3 +1,3 @@
 # tcbe
 
-This repository is currently in a transient state. If you're interested in a small TT implementation, look at [this](https://github.com/AndrasKovacs/smalltt) instead.
+See "MinimalTC" for a very minimal dependent type checker, based on Coquand's algorithm. For something more substantial, look at [this](https://github.com/AndrasKovacs/smalltt) instead.

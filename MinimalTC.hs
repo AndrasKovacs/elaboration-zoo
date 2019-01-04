@@ -25,7 +25,6 @@ data Tm
   | U                  -- U
   | Pi Name Ty Ty      -- (x : A) -> B
   | Let Name Ty Tm Tm  -- let x : A = t in u
-  deriving Show
 
 data Val
   = VVar Name
@@ -151,6 +150,53 @@ infer0 t =
 
 unsafeNf0 :: Tm -> IO ()
 unsafeNf0 t = infer0 t >> print (nf0 t)
+
+-- printing
+------------------------------------------------------------
+
+prettyTm :: Int -> Tm -> ShowS
+prettyTm prec = go (prec /= 0) where
+
+  goArg :: Tm -> ShowS
+  goArg t = go True t
+
+  goPiBind :: Name -> Tm -> ShowS
+  goPiBind x a =
+    showParen True ((x++) . (" : "++) . go False a)
+
+  goLamBind :: Name -> ShowS
+  goLamBind x = (x++)
+
+  goLam :: Tm -> ShowS
+  goLam (Lam x t) = (' ':) . goLamBind x . goLam t
+  goLam t         = (". "++) . go False t
+
+  goPi :: Bool -> Tm -> ShowS
+  goPi p (Pi x a b)
+    | x /= "_" = goPiBind x a . goPi True b
+    | otherwise =
+       (if p then (" → "++) else id) .
+       go (case a of App{} -> False; _ -> True) a .
+       (" → "++) . go False b
+  goPi p t = (if p then (" -> "++) else id) . go False t
+
+  go :: Bool -> Tm -> ShowS
+  go p = \case
+    Var x -> (x++)
+
+    App (App t u) u' ->
+      showParen p (go False t . (' ':) . goArg u . (' ':) . goArg u')
+
+    App t u  -> showParen p (go True t . (' ':) . goArg u)
+    Lam x t  -> showParen p (("λ "++) . goLamBind x . goLam t)
+    Pi x a b -> showParen p (goPi False (Pi x a b))
+
+    Let x a t u ->
+      ("let "++) . (x++) . (" : "++) . go False a . ("\n    = "++)
+      . go False t  . ("\nin\n"++) . go False  u
+    U      -> ('*':)
+
+instance Show Tm where showsPrec = prettyTm
 
 -- Syntactic sugar for inputting terms
 ------------------------------------------------------------

@@ -7,9 +7,25 @@
 
 {-|
 Minimal implementation of an elaborator with holes and pattern unification.
-We use non-shadowing names everywhere instead of indices or levels for simplicity.
 
-Additional references: Ulf Norell's PhD thesis, chapter 3.
+Further reading, roughly in preferred order:
+
+    - Ulf Norell's PhD thesis, chapter 3,
+      http://www.cse.chalmers.se/~ulfn/papers/thesis.pdf This is the closest to
+      the current implementation, also provides the most concise and digestible
+      introduction to unification, implicit insertion and constraint
+      postponing. A good reference to the implementation in Agda, but covers only a
+      small part of the current far more sophisticated Agda.
+    - http://www.cse.chalmers.se/~abela/unif-sigma-long.pdf Very good resource
+      for some of the advanced tricks in Agda (which are not explained in the
+      previous reference), but it's a bit heavier read, and by itself not very
+      helpful with respect to actual implementation.
+    - https://www.irif.fr/~sozeau/research/publications/drafts/unification-jfp.pdf
+      This Coq unifier guide goes into lots of delicious dirty details. Very good
+      read, although I disagree with a fair number of design decisions there.
+
+
+### Brief explanation
 
 Take a program with a hole, like:
 
@@ -23,11 +39,23 @@ Take a program with a hole, like:
 
     id2
 
+The goal of the elaborator is to fill the holes in a sensible way. Sensible is
+fairly subjective, but we always expect that elaboration output is well-typed.
+
+Agda additionally adheres to the following principle: only fill a hole if there
+is a unique solution. This is generally a good principle, because non-unique
+solutions require arbitrary choices, which in turn makes for a fragile and more
+annoying programming experience. While Coq generally adheres to this principle,
+it is a lot more lax than Agda and occasionaly makes unforced choices, for
+pragmatic reasons. Our current implementation is between Agda and Coq in this
+matter, but since it is very bare-bones, there are comparatively few design choice
+to be made.
+
 For every hole in the program, we create a metavariable, or meta in short.
 Metas are conceptually in a topmost-level mutual let block, and we can plug a
 hole by solving the meta corresponding to the hole.
 
-However, notice that the hole has two bound variables, "A" and "x" in scope.  If
+However, notice that the hole has two bound variables, "A" and "x" in scope. If
 a meta is always at top level, how can the solution depend on local variables?
 The simplest way is to make each meta a function which abstracts over all local
 bound variables in the scope of the hole.
@@ -51,37 +79,42 @@ plugs the hole with α applied to the local bound variables. Note that metas
 don't have to abstract over local *definitions*, because those can be always
 unfolded in meta solutions.
 
+(Putting all metas in a topmost-level mutual block is *not* a good idea
+for real implementations. It's better to have more precise scoping. The current
+solution is just the simplest one.)
+
 In classic Hindley-Milner inference, the situation is similar except that
   a) there are only closed types, i.e. types which depend on nothing.
-  b) holes can't stand for arbitrary terms, only for monomorphic types.
+  b) holes can't stand for arbitrary terms, only for types.
 
-In H-M we would solve metas by simple structural unification. In depenent
-type theory, most metas are *by default* solved with functions, because
-metas abstract over local variables.
+In H-M we solve metas by simple first-order structural unification, and
+the occurs check is the only noteworthy complication.
 
-(Note: putting all metas in a topmost-level mutual block is *not* a good idea
- for real implementations, it's better to have more precise scoping. The current
- solution is just the simplest one.)
+In dependent type theory, metas are usually solved with functions,
+because they abstract over local variables.
 
-Hence, the notable change to unification is that we need to give functions
-as solutions. Solvable equations look like this generally:
+Hence, the notable change to unification is that we need to produce functions
+as solutions. Immediately solvable equations look like this generally:
 
-    α [t₁, t₂, t₃ ... tₙ] =? u
+    α t₁ t₂ t₃ ... tₙ =? u
 
-where the left side is a meta "α" applied to n number of terms. We may call this
-a "meta-headed" equation. Meta-headed equations have unique solutions up
-to βη-conversion if the so-called "pattern condition" holds.
+where the left side is a meta "α" applied to a spine (sequence) of terms. We may
+call this a "meta-headed" equation. Meta-headed equations have unique solutions
+up to βη-conversion if the so-called "pattern condition" holds.
 
-Let us abbreviate a sequence of terms, (like t₁...tₙ) with σ, δ, and so on. Let
-"FreeVars(t)" denote the set of free variables of a term including metas. Let "x
-∈! σ" denote that "x" occurs exactly once in the sequence "σ".
+Let us abbreviate a sequence/spine of terms with "σ" or "δ", and a term applied
+to a spine as "t σ". Let "FreeVars(t)" denote the set of free variables
+(including metas) of a term. Let "t ∈! σ" denote that "t" occurs exactly once in
+the sequence "σ".
 
-Pattern condition for (α σ =? u):
-  1. Spine check              : σ is of the form [x₁, x₂, ... xₙ] where xᵢ are all bound variables.
-  2. Scope + linearity check  : ∀ x ∈ FreeVars(u). x ∈! σ
+Defining the pattern condition for (α σ =? u):
+
+  1. Spine check              : σ is of the form x₁, x₂, ... xₙ where xᵢ are all bound variables.
+  2. Scope + linearity check  : ∀ (x ∈ FreeVars(u)). x ∈! σ
   3. Occurs check             : α ∉ FreeVars(u)
 
-If 1-3 holds, then (α := λ σ. u) is the unique solution for (α σ =? u).
+If 1-3 holds, then (α := λ σ. u) is the unique solution for (α σ =? u), where "λ σ" means
+binding all variables in σ with lambdas.
 
 Some exaplanations. If the *spine check* fails, then it is easy see that unique solutions
 can't be expected to exist. For example:
@@ -96,6 +129,14 @@ is solvable with both of the following:
 A heuristic called "dependency erasure" always picks the second solution in this case;
 dependency erasure just throws away all parameters which are not bound variables. This
 makes more program typecheck, at the cost of possibly more erratic behavior.
+
+The *occurs check* may be familiar from Hindley-Milner inference. If we fail
+this check, then the solution would be circular, or "infinite", as in GHC's
+infamous infinite type error messages. For example:
+
+    α := (α -> α)
+
+is circular, hence unsolvable.
 
 If the *scope check* fails, then the equation may or may not be solvable. In our simple
 implementation, we always fail on scope check failure, but more powerful implementations
@@ -115,8 +156,9 @@ where α, β are metas and x,y,z are bound variables. This is solvable if the
 solution of β is constant in the second parameter, because then (β x z) reduces
 to an expression which does not contain the illegal "z" variable. Agda and Coq
 can handle this situation by immediately refining β to be a function which is
-constant in the appropriate parameter. This is called "pruning". We do not
-implement pruning here.
+constant in the appropriate parameter. This is called "pruning", and it is
+analogously applicable when the illegal occurring variable is "α" itself (occurs
+check). We do not implement pruning here.
 
 The scope check also has a *linearity condition*: recall the "x ∈! σ" part.
 This means that σ is linear in the variables which actually occur in the
@@ -194,6 +236,7 @@ define x v a (Cxt vs tys) = Cxt ((x, Just v):vs) ((x, Def a):tys)
 
 
 -- | Well-typed core terms without holes.
+--   We use non-shadowing names everywhere instead of indices or levels.
 data Tm
   = Var Name
   | Lam Name Tm
@@ -206,8 +249,9 @@ data Tm
 
 data Head = HMeta Meta | HVar Name deriving Eq
 
--- | We use a spine form for neutral values, because we need to access heads
---   during unification.
+-- | We use a spine form for neutral values, i.e. we have the head variable and
+--   all arguments in a list. We need convenient access to both head and spine
+--   when unifying and when solving metas.
 data Val
   = VNe Head [Val]    -- [Val] here is in reverse order, i. e. the first Val in
                       -- the list is applied last to the head.
@@ -552,7 +596,7 @@ infixr 4 ==>
 
 pi = RPi
 all x b = RPi x RU b
-make = RLet
+have = RLet
 lam = RLam
 u = RU
 h = RHole
@@ -568,65 +612,65 @@ infixl 6 ∙
 
 -- We can do: elab0 test / nf0 test / infer0 test
 test =
-  make "id" (all "a" $ "a" ==> "a")
+  have "id" (all "a" $ "a" ==> "a")
     ("a" ↦ "x" ↦ "x") $
 
-  make "idTest" h ("id" ∙ h ∙ "id") $
+  have "idTest" h ("id" ∙ h ∙ "id") $
 
-  make "const" (all "a" $ all "b" $ "a" ==> "b" ==> "a")
+  have "const" (all "a" $ all "b" $ "a" ==> "b" ==> "a")
     ("a" ↦ "b" ↦ "x" ↦ "y" ↦ "x") $
 
-  make "constTest" h
+  have "constTest" h
     ("const" ∙ h ∙ h ∙ "id" ∙ u) $
 
-  make "nat" u
+  have "nat" u
     (all "n" $ ("n" ==> "n") ==> "n" ==> "n") $
 
-  make "zero" "nat"
+  have "zero" "nat"
     ("n" ↦ "s" ↦ "z" ↦ "z") $
 
-  make "suc" ("nat" ==> "nat")
+  have "suc" ("nat" ==> "nat")
     ("a" ↦ "n" ↦ "s" ↦ "z" ↦ "s" ∙ ("a" ∙ h ∙ "s" ∙ "z")) $
 
-  make "mul" ("nat" ==> "nat" ==> "nat")
+  have "mul" ("nat" ==> "nat" ==> "nat")
     ("a" ↦ "b" ↦ "N" ↦ "s" ↦ "a" ∙ h ∙ ("b" ∙ h ∙ "s")) $
 
-  make "n5" h
+  have "n5" h
     ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ "zero"))))) $
 
-  make "n10" h
+  have "n10" h
     ("mul" ∙ ("suc" ∙ ("suc" ∙ "zero")) ∙ "n5") $
 
-  make "n100" h
+  have "n100" h
     ("mul" ∙ "n10" ∙ "n10") $
 
-  make "Eq" (all "A" $ "A" ==> "A" ==> u)
+  have "Eq" (all "A" $ "A" ==> "A" ==> u)
     ("A" ↦ "x" ↦ "y" ↦ pi "P" ("A" ==> u) $ "P" ∙ "x" ==> "P" ∙ "y") $
 
-  make "refl" (all "A" $ pi "x" h $ "Eq" ∙ "A" ∙ "x" ∙ "x")
+  have "refl" (all "A" $ pi "x" h $ "Eq" ∙ "A" ∙ "x" ∙ "x")
     ("A" ↦ "x" ↦ "P" ↦ "px" ↦ "px") $
 
-  make "trans" (all "A" $ pi "x" h $ pi "y" h $ pi "z" h $
+  have "trans" (all "A" $ pi "x" h $ pi "y" h $ pi "z" h $
                  "Eq" ∙ "A" ∙ "x" ∙ "y" ==> "Eq" ∙ h ∙ "y" ∙ "z"
                  ==> "Eq" ∙ h ∙ "x" ∙ "z")
     ("A" ↦ "x" ↦ "y" ↦ "z" ↦ "p" ↦ "q" ↦ "q" ∙ h ∙ "p") $
 
-  make "test" ("Eq" ∙ h ∙ "zero" ∙ "zero")
+  have "test" ("Eq" ∙ h ∙ "zero" ∙ "zero")
     ("refl" ∙ h ∙ h) $
 
-  make "List" (u ==> u)
+  have "List" (u ==> u)
     ("A" ↦ all "List" $ "List" ==> ("A" ==> "List" ==> "List") ==> "List") $
 
-  make "nil" (all "A" $ "List" ∙ "A")
+  have "nil" (all "A" $ "List" ∙ "A")
     ("A" ↦ "L" ↦ "n" ↦ "c" ↦ "n") $
 
-  make "cons" (all "A" $ "A" ==> "List" ∙ "A" ==> "List" ∙ "A")
+  have "cons" (all "A" $ "A" ==> "List" ∙ "A" ==> "List" ∙ "A")
     ("A" ↦ "a" ↦ "as" ↦ "L" ↦ "n" ↦ "c" ↦ "c" ∙ "a" ∙ ("as" ∙ h ∙ "n" ∙ "c")) $
 
-  make "listTest" h
+  have "listTest" h
     ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("nil" ∙ h)))) $
 
-  make "etaTest" ("Eq" ∙ ("nat" ==> "nat") ∙ ("x" ↦ "suc" ∙ "x") ∙ "suc")
+  have "etaTest" ("Eq" ∙ ("nat" ==> "nat") ∙ ("x" ↦ "suc" ∙ "x") ∙ "suc")
     ("refl" ∙ h ∙ h)$
 
   "n100"

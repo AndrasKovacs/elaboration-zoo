@@ -49,10 +49,10 @@ inventName env x = case lookup x env of
 
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var x   -> maybe (VVar x) id (fromJust $ lookup x env)
-  App t u -> case (eval env t, eval env u) of
-    (VLam _ t, u) -> t u
-    (t       , u) -> VApp t u
+  Var x       -> maybe (VVar x) id (fromJust $ lookup x env)
+  App t u     -> case (eval env t, eval env u) of
+                   (VLam _ t, u) -> t u
+                   (t       , u) -> VApp t u
   Lam x t     -> VLam x (\u -> eval ((x, Just u):env) t)
   Pi x a b    -> VPi x (eval env a) (\u -> eval ((x, Just u):env) b)
   Let x _ t u -> eval ((x, Just (eval env t)):env) u
@@ -60,7 +60,7 @@ eval env = \case
 
 quote :: Env -> Val -> Tm
 quote env = \case
-  VVar x -> Var x
+  VVar x   -> Var x
   VApp t u -> App (quote env t) (quote env u)
   VLam (inventName env -> x) t -> Lam x (quote ((x, Nothing):env) (t (VVar x)))
   VPi (inventName env -> x) a b ->
@@ -76,8 +76,11 @@ nf0 = nf []
 -- | Beta-eta conversion checking
 conv :: Env -> Val -> Val -> Bool
 conv env t u = case (t, u) of
-  (VVar x  , VVar x') -> x == x'
-  (VApp t u, VApp t' u') -> conv env t t' && conv env u u'
+  (VU, VU) -> True
+
+  (VPi (inventName env -> gx) a b, VPi x' a' b') ->
+    conv env a a' && conv ((gx, Nothing):env) (b (VVar gx)) (b' (VVar gx))
+
   (VLam (inventName env -> gx) t, VLam x' t') ->
     conv ((gx, Nothing):env) (t (VVar gx)) (t' (VVar gx))
 
@@ -87,9 +90,9 @@ conv env t u = case (t, u) of
   (u, VLam (inventName env -> gx) t) ->
     conv ((gx, Nothing):env) (VApp u (VVar gx)) (t (VVar gx))
 
-  (VPi (inventName env -> gx) a b, VPi x' a' b') ->
-    conv env a a' && conv ((gx, Nothing):env) (b (VVar gx)) (b' (VVar gx))
-  (VU, VU) -> True
+  (VVar x  , VVar x'   ) -> x == x'
+  (VApp t u, VApp t' u') -> conv env t t' && conv env u u'
+
   _ -> False
 
 type VTy = Val
@@ -118,8 +121,8 @@ check env cxt t a = case (t, a) of
 infer :: Env -> Cxt -> Raw -> M VTy
 infer env cxt = \case
   Var "_" -> Left "_ is not a valid name"
-  Var x -> maybe (Left ("var not in scope: " ++ x)) Right (lookup x cxt)
-  U -> pure VU
+  Var x   -> maybe (Left ("var not in scope: " ++ x)) Right (lookup x cxt)
+  U       -> pure VU
 
   App t u -> do
     tty <- infer env cxt t

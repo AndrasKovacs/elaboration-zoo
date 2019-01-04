@@ -1,8 +1,10 @@
--- This file has been generated from package.yaml by hpack version 0.20.0.
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 1ac5e5824b883854f42b7398e30b7718b4ec9438f23ed6d5c05c9c8389be9290
+-- hash: 1878e40da9a32dfb7752e392208f1807b1801cec71402f0c9c5e0f34c19945c7
 
 name:           tcbe
 version:        0.1.0.0
@@ -16,7 +18,6 @@ copyright:      2018 András Kovács
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
-cabal-version:  >= 1.10
 
 source-repository head
   type: git
@@ -30,8 +31,8 @@ library
     , containers
     , mtl
   exposed-modules:
-      DepTCHoles
       MinimalTC
+      MinimalTCHoles
   other-modules:
       Paths_tcbe
   default-language: Haskell2010

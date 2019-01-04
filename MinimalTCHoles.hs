@@ -60,8 +60,8 @@ type theory, most metas are *by default* solved with functions, because
 metas abstract over local variables.
 
 (Note: putting all metas in a topmost-level mutual block is *not* a good idea
- for production implementations, it's much better to have more precise scoping.
- The current solution is just the simplest one.)
+ for real implementations, it's better to have more precise scoping. The current
+ solution is just the simplest one.)
 
 Hence, the notable change to unification is that we need to give functions
 as solutions. Solvable equations look like this generally:
@@ -69,17 +69,17 @@ as solutions. Solvable equations look like this generally:
     α [t₁, t₂, t₃ ... tₙ] =? u
 
 where the left side is a meta "α" applied to n number of terms. We may call this
-a "meta-headed" equation. Meta-headed equations have most general solutions up
-to βη-conversion if the so-called "pattern" condition holds.
+a "meta-headed" equation. Meta-headed equations have unique solutions up
+to βη-conversion if the so-called "pattern condition" holds.
 
 Let us abbreviate a sequence of terms, (like t₁...tₙ) with σ, δ, and so on. Let
 "FreeVars(t)" denote the set of free variables of a term including metas. Let "x
 ∈! σ" denote that "x" occurs exactly once in the sequence "σ".
 
 Pattern condition for (α σ =? u):
-  1. Spine check  : σ is of the form [x₁, x₂, ... xₙ] where xᵢ are all bound variables.
-  2. Scope check  : ∀ x ∈ FreeVars(u). x ∈! σ
-  3. Occurs check : α ∉ FreeVars(u)
+  1. Spine check              : σ is of the form [x₁, x₂, ... xₙ] where xᵢ are all bound variables.
+  2. Scope + linearity check  : ∀ x ∈ FreeVars(u). x ∈! σ
+  3. Occurs check             : α ∉ FreeVars(u)
 
 If 1-3 holds, then (α := λ σ. u) is the unique solution for (α σ =? u).
 
@@ -131,7 +131,8 @@ rightmost variable occurrence in solutions. This makes solutions non-unique, but
 my expreience is that this is practically justifiable, and the rightmost occurence
 is usually the correct pick.
 
-
+In short, the current implementation has spine check, occurs check and scope check
+but no linearity check.
 
 -}
 
@@ -146,8 +147,6 @@ import Data.Foldable hiding (all)
 import Data.Maybe
 import Data.String
 import qualified Data.IntMap.Strict as M
-
--- import Debug.Trace
 
 type Name = String
 
@@ -234,9 +233,9 @@ inventName vs x = case lookup x vs of
   Just _  -> inventName vs (x ++ "'")
   Nothing -> x
 
--- | Evaluation is always up to a metacontext, so whenever we inspect a value
---   during elaboration, we always have to force it first, i.e. insert solved metas
---   and compute until we hit a rigid head.
+-- | Evaluation is up to a metacontext, so whenever we inspect a value during
+--   elaboration, we always have to force it first, i.e. unfold solved metas and
+--   compute until we hit a rigid head.
 force :: MCxt -> Val -> Val
 force ms = \case
   VNe (HMeta m) sp | Just t <- M.lookup m ms ->
@@ -265,6 +264,7 @@ eval ms = go where
 evalM :: Cxt -> Tm -> ElabM Val
 evalM cxt t = gets (\(_, ms) -> eval ms (_vals cxt) t)
 
+-- |  Quote into full forced normal forms.
 quote :: MCxt -> Vals -> Val -> Tm
 quote ms = go where
   go vs v = case force ms v of
@@ -296,12 +296,12 @@ checkSp vs = forM vs $ \v -> forceM v >>= \case
   VVar x -> pure x
   _      -> throwError "non-variable value in meta spine"
 
--- | Check that a solution candidate (in normal form) for a meta is well-scoped.
---   This rules out
---      a) occurs check issues, when the to-be-solved meta occurs in the RHS
---      b) scoping issues, when the RHS contains bound variables that the to-be
---         solved meta cannot depend on. In Haskell, this class of errors is
---         most commonly encountered with runST ("escaping rigid Skolem variable")
+-- | Scope check + occurs check a solution candidate. Inputs are a meta, a spine
+--   of variable names (which comes from checkSp) and a RHS term in normal
+--   form. In real implementations it would be a bad idea to solve metas with
+--   normal forms (because of size explosion), but here it's the simplest thing
+--   we can do. We don't have to worry about shadowing here, because normal
+--   forms have no shadowing by our previos quote implementation.
 checkSolution :: Meta -> [Name] -> Tm -> ElabM ()
 checkSolution m sp rhs = lift $ go sp rhs where
   go :: [Name] -> Tm -> Either String ()
@@ -317,13 +317,19 @@ checkSolution m sp rhs = lift $ go sp rhs where
     Let{}    -> error "impossible"
 
 solve :: Vals -> Meta -> [Val] -> Val -> ElabM ()
-solve vs m sp t = do
+solve vs m sp rhs = do
+  -- check that spine consists of bound vars
   sp <- checkSp sp
-  t <- quoteM vs t
-  checkSolution m sp t
-  rhs <- evalM nil (foldl' (flip Lam) t sp)
+  -- normalize rhs
+  rhs <- quoteM vs rhs
+  -- scope + ocurs check rhs
+  checkSolution m sp rhs
+  -- wrap rhs into lambdas
+  rhs <- evalM nil (foldl' (flip Lam) rhs sp)
+  -- add solution to metacontext
   modify (\(i, mcxt) -> (i, M.insert m rhs mcxt))
 
+-- | Create fresh meta, return the meta applied to all current bound vars.
 newMeta :: Cxt -> ElabM Tm
 newMeta Cxt{..} = do
   let sp = [Var x | (x, Bound{}) <- _types]
@@ -373,6 +379,7 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     Lam x <$> check (Cxt ((x, Just (VVar x')):_vals)
                          ((x, Bound a):_types))
                   t (b (VVar x'))
+
   (RLet x a t u, topA) -> do
     checkShadowing cxt x
     a  <- check cxt a VU
@@ -381,8 +388,10 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     vt <- evalM cxt t
     u  <- check (define x vt va cxt) u topA
     pure $ Let x a t u
+
   (RHole, topA) ->
     newMeta cxt
+
   _ -> do
     (t, va) <- infer cxt topT
     unify _vals va topA
@@ -434,7 +443,36 @@ infer cxt@Cxt{..} = \case
     (u, vb) <- infer (define x vt va cxt) u
     pure (Let x a t u, vb)
 
+-- Testing & printing
 --------------------------------------------------------------------------------
+
+-- | Inline all meta solutions. Used for displaying elaboration output.
+zonk :: MCxt -> Vals -> Tm -> Tm
+zonk ms = go where
+
+  goSp :: Vals -> Tm -> Either Val Tm
+  goSp vs = \case
+    Meta m | Just v <- M.lookup m ms -> Left v
+    App t u -> either (\t -> Left (vApp t (eval ms vs u)))
+                      (\t -> Right (App t (go vs u)))
+                      (goSp vs t)
+    t -> Right (go vs t)
+
+  go :: Vals -> Tm -> Tm
+  go vs = \case
+    Var x        -> Var x
+    Meta m       -> maybe (Meta m) (quote ms vs) (M.lookup m ms)
+    U            -> U
+    Pi x a b     -> Pi x (go vs a) (go ((x, Nothing):vs) b)
+    App t u      -> either (\t -> quote ms vs (vApp t (eval ms vs u)))
+                           (\t -> App t (go vs u))
+                           (goSp vs t)
+    Lam x t      -> Lam x (go ((x, Nothing):vs) t)
+    Let x a t u  -> Let x (go vs a) (go vs t)
+                          (go ((x, Nothing):vs) u)
+
+
+-- infer/elaborate/normalize closed raw terms
 
 infer0 :: Raw -> IO ()
 infer0 t = do
@@ -456,33 +494,6 @@ elab0 t =
     Left e                  -> putStrLn e
     Right ((t, _), (_, ms)) -> print (zonk ms [] t)
 
--- | Inline all meta solutions. Used for displaying elaboration output.
-zonk :: MCxt -> Vals -> Tm -> Tm
-zonk ms = go where
-  q = quote ms
-
-  goSp :: Vals -> Tm -> Either Val Tm
-  goSp vs = \case
-    Meta m | Just v <- M.lookup m ms -> Left v
-    App t u -> either (\t -> Left (vApp t (eval ms vs u)))
-                      (\t -> Right (App t (go vs u)))
-                      (goSp vs t)
-    t -> Right (go vs t)
-
-  go :: Vals -> Tm -> Tm
-  go vs = \case
-    Var x        -> Var x
-    Meta m       -> maybe (Meta m) (q vs) (M.lookup m ms)
-    U            -> U
-    Pi x a b     -> Pi x (go vs a) (go ((x, Nothing):vs) b)
-    App t u      -> either (\t -> q vs (vApp t (eval ms vs u)))
-                           (\t -> App t (go vs u))
-                           (goSp vs t)
-    Lam x t      -> Lam x (go ((x, Nothing):vs) t)
-    Let x a t u  -> Let x (go vs a) (go vs t)
-                          (go ((x, Nothing):vs) u)
-
---------------------------------------------------------------------------------
 
 prettyTm :: Int -> Tm -> ShowS
 prettyTm prec = go (prec /= 0) where
@@ -555,7 +566,7 @@ infixr 0 ↦
 (∙) = RApp
 infixl 6 ∙
 
--- elab0 test / nf0 test / infer0 test
+-- We can do: elab0 test / nf0 test / infer0 test
 test =
   make "id" (all "a" $ "a" ==> "a")
     ("a" ↦ "x" ↦ "x") $

@@ -102,8 +102,8 @@ type M = Either String
 
 check :: Env -> Cxt -> Raw -> VTy -> M ()
 check env cxt t a = case (t, a) of
-  (Lam x t, VPi (inventName env -> gx) a b) ->
-    check ((x, Just (VVar gx)):env) ((x, a):cxt) t (b (VVar gx))
+  (Lam x t, VPi (inventName env -> x') a b) ->
+    check ((x, Just (VVar x')):env) ((x, a):cxt) t (b (VVar x'))
 
   (Let x a' t' u, _) -> do
     check env cxt a' VU

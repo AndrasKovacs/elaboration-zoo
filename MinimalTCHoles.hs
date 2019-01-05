@@ -25,7 +25,17 @@ Further reading, roughly in preferred order:
       read, although I disagree with a fair number of design decisions there.
 
 
-### Brief explanation
+### Basic setup
+
+We use string names instead of indices or levels. This makes most operations
+easier to understand and implement. There are subtleties that can go wrong with
+names, but our general approach cuts out a large amount of name generation and
+shuffling which would appear in more naive elaborators. In particular, we don't
+ever use capture-avoiding substitution nor global fresh name generation.
+
+
+### About holes and pattern unification
+
 
 Take a program with a hole, like:
 
@@ -45,10 +55,10 @@ fairly subjective, but we always expect that elaboration output is well-typed.
 Agda additionally adheres to the following principle: only fill a hole if there
 is a unique solution. This is generally a good principle, because non-unique
 solutions require arbitrary choices, which in turn makes for a fragile and more
-annoying programming experience. While Coq generally adheres to this principle,
+annoying programming experience. While Coq generally follows this principle too,
 it is a lot more lax than Agda and occasionaly makes unforced choices, for
 pragmatic reasons. Our current implementation is between Agda and Coq in this
-matter, but since it is very bare-bones, there are comparatively few design choice
+matter, but since it is very bare-bones, there are comparatively few design choices
 to be made.
 
 For every hole in the program, we create a metavariable, or meta in short.
@@ -90,11 +100,12 @@ In classic Hindley-Milner inference, the situation is similar except that
 In H-M we solve metas by simple first-order structural unification, and
 the occurs check is the only noteworthy complication.
 
-In dependent type theory, metas are usually solved with functions,
-because they abstract over local variables.
+In the simpler elaborators for dependent type theory such as ours, metas are
+usually solved with functions, because they abstract over local variables.
 
-Hence, the notable change to unification is that we need to produce functions
-as solutions. Immediately solvable equations look like this generally:
+Hence, the notable change to unification is that we need to produce functions as
+solutions. Equations which may immediately produce a solution look like this
+generally:
 
     α t₁ t₂ t₃ ... tₙ =? u
 
@@ -116,7 +127,7 @@ Defining the pattern condition for (α σ =? u):
 If 1-3 holds, then (α := λ σ. u) is the unique solution for (α σ =? u), where "λ σ" means
 binding all variables in σ with lambdas.
 
-Some exaplanations. If the *spine check* fails, then it is easy see that unique solutions
+Some explanations. If the *spine check* fails, then it is easy see that unique solutions
 can't be expected to exist. For example:
 
     α true =? true
@@ -153,7 +164,7 @@ scope. Another example, which is possibly solvable:
     α x y := (x -> β x z)
 
 where α, β are metas and x,y,z are bound variables. This is solvable if the
-solution of β is constant in the second parameter, because then (β x z) reduces
+solution of β is constant in the second parameter, because then "β x z" reduces
 to an expression which does not contain the illegal "z" variable. Agda and Coq
 can handle this situation by immediately refining β to be a function which is
 constant in the appropriate parameter. This is called "pruning", and it is
@@ -170,7 +181,7 @@ is solvable as (α := λ x _. x) and also as (α := λ _ x. x).
 
 The current implementation ignores the linearity condition, and always picks the
 rightmost variable occurrence in solutions. This makes solutions non-unique, but
-my expreience is that this is practically justifiable, and the rightmost occurence
+my experience is that this is practically justifiable, and the rightmost occurence
 is usually the correct pick.
 
 In short, the current implementation has spine check, occurs check and scope check
@@ -271,6 +282,9 @@ pattern VMeta m = VNe (HMeta m) []
 -- | Generate a name such that it does not shadow anything in the current
 --   environment. De Bruijn indices would make this unnecessary in a more
 --   sophisticated implementation.
+--
+--   We only need to invent non-shadowing names when we want to go under
+--   a (Val -> Val) closure. See 'quote' and 'unify' for examples of doing so.
 inventName :: Vals -> Name -> Name
 inventName vs "_" = "_"
 inventName vs x = case lookup x vs of
@@ -308,7 +322,7 @@ eval ms = go where
 evalM :: Cxt -> Tm -> ElabM Val
 evalM cxt t = gets (\(_, ms) -> eval ms (_vals cxt) t)
 
--- |  Quote into full forced normal forms.
+-- |  Quote into fully forced normal forms.
 quote :: MCxt -> Vals -> Val -> Tm
 quote ms = go where
   go vs v = case force ms v of
@@ -368,37 +382,47 @@ solve vs m sp rhs = do
   rhs <- quoteM vs rhs
   -- scope + ocurs check rhs
   checkSolution m sp rhs
-  -- wrap rhs into lambdas
+
+  -- Wrap rhs into lambdas. NOTE: this operation ignores nonlinearity, because
+  -- the innermost nonlinear variable occurrence simply shadows the other occurrences.
   rhs <- evalM nil (foldl' (flip Lam) rhs sp)
+
   -- add solution to metacontext
   modify (\(i, mcxt) -> (i, M.insert m rhs mcxt))
 
 -- | Create fresh meta, return the meta applied to all current bound vars.
 newMeta :: Cxt -> ElabM Tm
 newMeta Cxt{..} = do
+
+  -- There might be shadowed names in the context, but we don't care
+  -- about that, since 'solve' ignores nonlinearity anyway.
   let sp = [Var x | (x, Bound{}) <- _types]
   (i, ms) <- get
   put (i + 1, ms)
   pure (foldr (flip App) (Meta i) sp)
 
+-- | Unify two values. After unification succeeds, the LHS and RHS becomes
+--   definitionally equal in the newly updated metacontext. We only need here
+--   the value environment for generating non-shadowing names; with de Bruijn
+--   levels we would only need an Int denoting the size of the environment.
 unify :: Vals -> Val -> Val -> ElabM ()
 unify = go where
-  go :: Vals -> Val -> Val -> ElabM ()
   go vs t u = do
     ms <- gets snd
     case (force ms t, force ms u) of
-      (VLam (inventName vs -> gx) t, VLam x' t') ->
-        go ((gx, Nothing):vs) (t (VVar gx)) (t' (VVar gx))
+      (VLam (inventName vs -> x) t, VLam _ t') ->
+        go ((x, Nothing):vs) (t (VVar x)) (t' (VVar x))
 
       -- these two lines implement eta conversion for functions
-      (VLam (inventName vs -> gx) t, u) ->
-        go ((gx, Nothing):vs) (t (VVar gx)) (vApp u (VVar gx))
-      (u, VLam (inventName vs -> gx) t) ->
-        go ((gx, Nothing):vs) (vApp u (VVar gx)) (t (VVar gx))
+      (VLam (inventName vs -> x) t, u) ->
+        go ((x, Nothing):vs) (t (VVar x)) (vApp u (VVar x))
+      (u, VLam (inventName vs -> x) t) ->
+        go ((x, Nothing):vs) (vApp u (VVar x)) (t (VVar x))
 
-      (VPi (inventName vs -> gx) a b, VPi x' a' b') -> do
+      (VPi (inventName vs -> x) a b, VPi _ a' b') -> do
         go vs a a'
-        go ((gx, Nothing):vs) (b (VVar gx)) (b' (VVar gx))
+        go ((x, Nothing):vs) (b (VVar x)) (b' (VVar x))
+
       (VU, VU) -> pure ()
       (VNe h sp, VNe h' sp') | h == h' -> zipWithM_ (go vs) sp sp'
       (VNe (HMeta m) sp, t) -> solve vs m sp t
@@ -409,23 +433,24 @@ unify = go where
 -- Elaboration
 --------------------------------------------------------------------------------
 
-checkShadowing :: Cxt -> Name -> ElabM ()
-checkShadowing _ "_" = pure ()
-checkShadowing Cxt{..} x = do
-  maybe (pure ())
-        (\_ -> throwError $ "name shadowing not allowed: " ++ show x)
-        (lookup x _types)
 
 check :: Cxt -> Raw -> VTy -> ElabM Tm
 check cxt@Cxt{..} topT topA = case (topT, topA) of
+
+  -- This is a bit tricky. We can only go under the VPi closure with a
+  -- non-shadowing name, but we also need to ensure that the RLam binder is the
+  -- same as the VPi binder. So we go under the binder with a common fresh
+  -- non-shadowing name. In classic "locally nameless" style, the new name
+  -- would be immediatly substituted into "t", but that's not only very slow,
+  -- but also supposes that "t" is already well-scoped. So instead we just
+  -- define "x" to be the new var when going under the binder. This acts as
+  -- an efficient delayed substitution when we do unification under the binder.
+  -- This subtlety does not come up with de Bruijn indices or levels.
   (RLam x t, VPi (inventName _vals -> x') a b) -> do
-    checkShadowing cxt x
-    Lam x <$> check (Cxt ((x, Just (VVar x')):_vals)
-                         ((x, Bound a):_types))
-                  t (b (VVar x'))
+    let v = VVar x'
+    Lam x <$> check (Cxt ((x, Just v):_vals) ((x, Bound a):_types)) t (b v)
 
   (RLet x a t u, topA) -> do
-    checkShadowing cxt x
     a  <- check cxt a VU
     va <- evalM cxt a
     t  <- check cxt t va
@@ -436,6 +461,7 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
   (RHole, topA) ->
     newMeta cxt
 
+  -- we unify the expected and inferred types
   _ -> do
     (t, va) <- infer cxt topT
     unify _vals va topA
@@ -449,6 +475,9 @@ infer cxt@Cxt{..} = \case
                     (lookup x _types)
   RU -> pure (U, VU)
 
+  -- a refinement of this would be to also proceed if the inferred type for "t"
+  -- is meta-headed, in which case we would need to create two fresh metas and
+  -- refine "t"-s type to a function type.
   RApp t u -> do
     (t, va) <- infer cxt t
     forceM va >>= \case
@@ -458,8 +487,14 @@ infer cxt@Cxt{..} = \case
         pure (App t u, b vu)
       _ -> throwError "expected a function type"
 
+  -- inferring a type for a lambda is a bit awkward and slow here.  We get a new
+  -- meta for the binder type, then infer a type for the body. However, to get a
+  -- VPi with that right body, we basically need to normalize and re-evaluate
+  -- the Val body. A potentially faster solution would be to implement a
+  -- substitution operation directly on Vals. I don't implement that, partly for
+  -- brevity, partly because in a real implementation we would do something much
+  -- better than that anyway.
   RLam x t -> do
-    checkShadowing cxt x
     va <- evalM cxt =<< newMeta cxt
     (t, vb) <- infer (bind x va cxt) t
     b <- quoteM ((x, Nothing):_vals) vb
@@ -467,19 +502,19 @@ infer cxt@Cxt{..} = \case
     pure (Lam x t, VPi x va $ \u -> eval ms ((x, Just u):_vals) b)
 
   RPi x a b -> do
-    checkShadowing cxt x
     a  <- check cxt a VU
     va <- evalM cxt a
     b <- check (bind x va cxt) b VU
     pure (Pi x a b, VU)
 
+  -- inferring a type for the hole: we create two metas, one for the hole
+  -- and one for its type.
   RHole -> do
     a  <- newMeta cxt
     vb <- evalM cxt =<< newMeta cxt
     pure (a, vb)
 
   RLet x a t u -> do
-    checkShadowing cxt x
     a       <- check cxt a VU
     va      <- evalM cxt a
     t       <- check cxt t va
@@ -610,7 +645,7 @@ infixr 0 ↦
 (∙) = RApp
 infixl 6 ∙
 
--- We can do: elab0 test / nf0 test / infer0 test
+--  elab0 test / nf0 test / infer0 test
 test =
   have "id" (all "a" $ "a" ==> "a")
     ("a" ↦ "x" ↦ "x") $
@@ -627,13 +662,13 @@ test =
     (all "n" $ ("n" ==> "n") ==> "n" ==> "n") $
 
   have "zero" "nat"
-    ("n" ↦ "s" ↦ "z" ↦ "z") $
+    ("nat" ↦ "s" ↦ "z" ↦ "z") $
 
   have "suc" ("nat" ==> "nat")
-    ("a" ↦ "n" ↦ "s" ↦ "z" ↦ "s" ∙ ("a" ∙ h ∙ "s" ∙ "z")) $
+    ("a" ↦ "nat" ↦ "s" ↦ "z" ↦ "s" ∙ ("a" ∙ h ∙ "s" ∙ "z")) $
 
   have "mul" ("nat" ==> "nat" ==> "nat")
-    ("a" ↦ "b" ↦ "N" ↦ "s" ↦ "a" ∙ h ∙ ("b" ∙ h ∙ "s")) $
+    ("a" ↦ "b" ↦ "nat" ↦ "suc" ↦ "a" ∙ h ∙ ("b" ∙ h ∙ "suc")) $
 
   have "n5" h
     ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ "zero"))))) $
@@ -662,10 +697,11 @@ test =
     ("A" ↦ all "List" $ "List" ==> ("A" ==> "List" ==> "List") ==> "List") $
 
   have "nil" (all "A" $ "List" ∙ "A")
-    ("A" ↦ "L" ↦ "n" ↦ "c" ↦ "n") $
+    ("A" ↦ "List" ↦ "nil" ↦ "cons" ↦ "nil") $
 
   have "cons" (all "A" $ "A" ==> "List" ∙ "A" ==> "List" ∙ "A")
-    ("A" ↦ "a" ↦ "as" ↦ "L" ↦ "n" ↦ "c" ↦ "c" ∙ "a" ∙ ("as" ∙ h ∙ "n" ∙ "c")) $
+    ("A" ↦ "a" ↦ "as" ↦ "List" ↦ "nil" ↦ "cons" ↦
+       "cons" ∙ "a" ∙ ("as" ∙ h ∙ "nil" ∙ "cons")) $
 
   have "listTest" h
     ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("nil" ∙ h)))) $

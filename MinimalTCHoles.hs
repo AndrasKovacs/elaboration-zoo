@@ -84,10 +84,11 @@ bound variables in the scope of the hole.
 
     id2
 
-Hence, on encountering the hole, the elaborator creates a fresh meta "α" and
-plugs the hole with α applied to the local bound variables. Note that metas
-don't have to abstract over local *definitions*, because those can be always
-unfolded in meta solutions.
+On encountering the hole, the elaborator creates a fresh meta "α" and
+plugs the hole with α applied to the local bound variables. The created meta
+may or may not be solved later, during unification. In the above example, 
+the solution will be "α = λ A x. A". Note that metas don't have to abstract 
+over *definitions*, because those can be always unfolded in meta solutions.
 
 (Putting all metas in a topmost-level mutual block is *not* a good idea
 for real implementations. It's better to have more precise scoping. The current
@@ -166,7 +167,7 @@ scope. Another example, which is possibly solvable:
 where α, β are metas and x,y,z are bound variables. This is solvable if the
 solution of β is constant in the second parameter, because then "β x z" reduces
 to an expression which does not contain the illegal "z" variable. Agda and Coq
-can handle this situation by immediately refining β to be a function which is
+can handle this situation by attempting to refine β to a function which is
 constant in the appropriate parameter. This is called "pruning", and it is
 analogously applicable when the illegal occurring variable is "α" itself (occurs
 check). We do not implement pruning here.

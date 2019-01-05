@@ -146,7 +146,7 @@ The *occurs check* may be familiar from Hindley-Milner inference. If we fail
 this check, then the solution would be circular, or "infinite", as in GHC's
 infamous infinite type error messages. For example:
 
-    α := (α -> α)
+    α =? (α -> α)
 
 is circular, hence unsolvable.
 

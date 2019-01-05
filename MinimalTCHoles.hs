@@ -248,7 +248,7 @@ define x v a (Cxt vs tys) = Cxt ((x, Just v):vs) ((x, Def a):tys)
 
 
 -- | Well-typed core terms without holes.
---   We use non-shadowing names everywhere instead of indices or levels.
+--   We use names everywhere instead of indices or levels.
 data Tm
   = Var Name
   | Lam Name Tm
@@ -287,7 +287,7 @@ pattern VMeta m = VNe (HMeta m) []
 --   We only need to invent non-shadowing names when we want to go under
 --   a (Val -> Val) closure. See 'quote' and 'unify' for examples of doing so.
 inventName :: Vals -> Name -> Name
-inventName vs "_" = "_"
+inventName vs "_" = "_" -- underscore marks unused binder
 inventName vs x = case lookup x vs of
   Just _  -> inventName vs (x ++ "'")
   Nothing -> x
@@ -478,7 +478,7 @@ infer cxt@Cxt{..} = \case
 
   -- an upgrade to this would be to also proceed if the inferred type for "t"
   -- is meta-headed, in which case we would need to create two fresh metas and
-  -- refine "t"-s type to a function type.
+  -- refine "t"'s type to a function type.
   RApp t u -> do
     (t, va) <- infer cxt t
     forceM va >>= \case
@@ -490,8 +490,8 @@ infer cxt@Cxt{..} = \case
 
   -- inferring a type for a lambda is a bit awkward and slow here.  We get a new
   -- meta for the binder type, then infer a type for the body. However, to get a
-  -- VPi with that right body, we basically need to normalize and re-evaluate
-  -- the Val body. A potentially faster solution would be to implement a
+  -- VPi with that codomain type, we basically need to normalize and re-evaluate
+  -- the Val type. A potentially faster solution would be to implement a
   -- substitution operation directly on Vals. I don't implement that, partly for
   -- brevity, partly because in a real implementation we would do something much
   -- better than that anyway.

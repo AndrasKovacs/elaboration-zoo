@@ -360,7 +360,7 @@ checkSp vs = forM vs $ \v -> forceM v >>= \case
 --   form. In real implementations it would be a bad idea to solve metas with
 --   normal forms (because of size explosion), but here it's the simplest thing
 --   we can do. We don't have to worry about shadowing here, because normal
---   forms have no shadowing by our previos quote implementation.
+--   forms have no shadowing by our previous quote implementation.
 checkSolution :: Meta -> [Name] -> Tm -> ElabM ()
 checkSolution m sp rhs = lift $ go sp rhs where
   go :: [Name] -> Tm -> Either String ()
@@ -402,7 +402,7 @@ newMeta Cxt{..} = do
   put (i + 1, ms)
   pure (foldr (flip App) (Meta i) sp)
 
--- | Unify two values. After unification succeeds, the LHS and RHS becomes
+-- | Unify two values. After unification succeeds, the LHS and RHS become
 --   definitionally equal in the newly updated metacontext. We only need here
 --   the value environment for generating non-shadowing names; with de Bruijn
 --   levels we would only need an Int denoting the size of the environment.
@@ -476,7 +476,7 @@ infer cxt@Cxt{..} = \case
                     (lookup x _types)
   RU -> pure (U, VU)
 
-  -- a refinement of this would be to also proceed if the inferred type for "t"
+  -- an upgrade to this would be to also proceed if the inferred type for "t"
   -- is meta-headed, in which case we would need to create two fresh metas and
   -- refine "t"-s type to a function type.
   RApp t u -> do

@@ -86,8 +86,8 @@ bound variables in the scope of the hole.
 
 On encountering the hole, the elaborator creates a fresh meta "α" and
 plugs the hole with α applied to the local bound variables. The created meta
-may or may not be solved later, during unification. In the above example, 
-the solution will be "α = λ A x. A". Note that metas don't have to abstract 
+may or may not be solved later, during unification. In the above example,
+the solution will be "α = λ A x. A". Note that metas don't have to abstract
 over *definitions*, because those can be always unfolded in meta solutions.
 
 (Putting all metas in a topmost-level mutual block is *not* a good idea
@@ -459,7 +459,7 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     u  <- check (define x vt va cxt) u topA
     pure $ Let x a t u
 
-  (RHole, topA) ->
+  (RHole, _) ->
     newMeta cxt
 
   -- we unify the expected and inferred types
@@ -470,11 +470,13 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
 
 infer :: Cxt -> Raw -> ElabM (Tm, VTy)
 infer cxt@Cxt{..} = \case
+
   RVar "_" -> throwError "_ is not a valid name"
   RVar x   -> maybe (throwError ("var not in scope: " ++ x))
                     (\a -> pure (Var x, case a of Bound a -> a; Def a -> a))
                     (lookup x _types)
-  RU -> pure (U, VU)
+
+  RU -> pure (U, VU) -- type-in-type
 
   -- an upgrade to this would be to also proceed if the inferred type for "t"
   -- is meta-headed, in which case we would need to create two fresh metas and
@@ -488,19 +490,15 @@ infer cxt@Cxt{..} = \case
         pure (App t u, b vu)
       _ -> throwError "expected a function type"
 
-  -- inferring a type for a lambda is a bit awkward and slow here.  We get a new
-  -- meta for the binder type, then infer a type for the body. However, to get a
-  -- VPi with that codomain type, we basically need to normalize and re-evaluate
-  -- the Val type. A potentially faster solution would be to implement a
-  -- substitution operation directly on Vals. I don't implement that, partly for
-  -- brevity, partly because in a real implementation we would do something much
-  -- better than that anyway.
+  -- we infer type for lambdas by checking them with a
+  -- a function type made of fresh metas.
   RLam x t -> do
-    va <- evalM cxt =<< newMeta cxt
-    (t, vb) <- infer (bind x va cxt) t
-    b <- quoteM ((x, Nothing):_vals) vb
-    ms <- gets snd
-    pure (Lam x t, VPi x va $ \u -> eval ms ((x, Just u):_vals) b)
+    a  <- newMeta cxt
+    va <- evalM cxt a
+    b  <- newMeta (bind x va cxt)
+    ty <- evalM cxt (Pi x a b)
+    t  <- check cxt (RLam x t) ty
+    pure (t, ty)
 
   RPi x a b -> do
     a  <- check cxt a VU
@@ -508,12 +506,12 @@ infer cxt@Cxt{..} = \case
     b <- check (bind x va cxt) b VU
     pure (Pi x a b, VU)
 
-  -- inferring a type for the hole: we create two metas, one for the hole
+  -- inferring a type for a hole: we create two metas, one for the hole
   -- and one for its type.
   RHole -> do
-    a  <- newMeta cxt
-    vb <- evalM cxt =<< newMeta cxt
-    pure (a, vb)
+    t  <- newMeta cxt
+    va <- evalM cxt =<< newMeta cxt
+    pure (t, va)
 
   RLet x a t u -> do
     a       <- check cxt a VU
@@ -522,6 +520,7 @@ infer cxt@Cxt{..} = \case
     vt      <- evalM cxt t
     (u, vb) <- infer (define x vt va cxt) u
     pure (Let x a t u, vb)
+
 
 -- Testing & printing
 --------------------------------------------------------------------------------
@@ -648,6 +647,7 @@ infixl 6 ∙
 
 --  elab0 test / nf0 test / infer0 test
 test =
+  -- testing basic stuff
   have "id" (all "a" $ "a" ==> "a")
     ("a" ↦ "x" ↦ "x") $
 
@@ -659,6 +659,7 @@ test =
   have "constTest" h
     ("const" ∙ h ∙ h ∙ "id" ∙ u) $
 
+  -- as always, Church-coded naturals are good for testing evaluation
   have "nat" u
     (all "n" $ ("n" ==> "n") ==> "n" ==> "n") $
 
@@ -666,10 +667,10 @@ test =
     ("nat" ↦ "s" ↦ "z" ↦ "z") $
 
   have "suc" ("nat" ==> "nat")
-    ("a" ↦ "nat" ↦ "s" ↦ "z" ↦ "s" ∙ ("a" ∙ h ∙ "s" ∙ "z")) $
+    ("a" ↦ "n" ↦ "s" ↦ "z" ↦ "s" ∙ ("a" ∙ h ∙ "s" ∙ "z")) $
 
   have "mul" ("nat" ==> "nat" ==> "nat")
-    ("a" ↦ "b" ↦ "nat" ↦ "suc" ↦ "a" ∙ h ∙ ("b" ∙ h ∙ "suc")) $
+    ("a" ↦ "b" ↦ "n" ↦ "s" ↦ "a" ∙ h ∙ ("b" ∙ h ∙ "s")) $
 
   have "n5" h
     ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ ("suc" ∙ "zero"))))) $
@@ -680,6 +681,8 @@ test =
   have "n100" h
     ("mul" ∙ "n10" ∙ "n10") $
 
+
+  -- Leibniz propositional equality
   have "Eq" (all "A" $ "A" ==> "A" ==> u)
     ("A" ↦ "x" ↦ "y" ↦ pi "P" ("A" ==> u) $ "P" ∙ "x" ==> "P" ∙ "y") $
 
@@ -691,9 +694,17 @@ test =
                  ==> "Eq" ∙ h ∙ "x" ∙ "z")
     ("A" ↦ "x" ↦ "y" ↦ "z" ↦ "p" ↦ "q" ↦ "q" ∙ h ∙ "p") $
 
-  have "test" ("Eq" ∙ h ∙ "zero" ∙ "zero")
+  have "eqtest" ("Eq" ∙ h ∙ "zero" ∙ "zero")
     ("refl" ∙ h ∙ h) $
 
+  have "lamInferTest" h
+    ("x" ↦ "suc" ∙ ("suc" ∙ "x")) $
+
+  -- we can infer dependent function types for lambdas as well
+  have "lamInferTest2" h
+    ("x" ↦ "refl" ∙ h ∙ ("suc" ∙ "x")) $
+
+  -- lists
   have "List" (u ==> u)
     ("A" ↦ all "List" $ "List" ==> ("A" ==> "List" ==> "List") ==> "List") $
 
@@ -707,6 +718,7 @@ test =
   have "listTest" h
     ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("cons" ∙ h ∙ "zero" ∙ ("nil" ∙ h)))) $
 
+  -- testing function eta
   have "etaTest" ("Eq" ∙ ("nat" ==> "nat") ∙ ("x" ↦ "suc" ∙ "x") ∙ "suc")
     ("refl" ∙ h ∙ h)$
 

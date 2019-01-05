@@ -154,7 +154,7 @@ If the *scope check* fails, then the equation may or may not be solvable. In our
 implementation, we always fail on scope check failure, but more powerful implementations
 can sometimes find solutions. Example for unsolvable equation:
 
-    α x y := (z -> z)
+    α x y =? (z -> z)
 
 where (z -> z) is a function type and "z" is a bound variable. Since "α" is
 defined on the top level, it cannot depend on any local variable, and all
@@ -162,7 +162,7 @@ dependency must be expressed through λ parameters. So, it's totally not possibl
 to put "z -> z" in the solution, because that's not meaningful in the top-level
 scope. Another example, which is possibly solvable:
 
-    α x y := (x -> β x z)
+    α x y =? (x -> β x z)
 
 where α, β are metas and x,y,z are bound variables. This is solvable if the
 solution of β is constant in the second parameter, because then "β x z" reduces

@@ -22,7 +22,7 @@ Further reading, roughly in preferred order:
       helpful with respect to actual implementation.
     - https://www.irif.fr/~sozeau/research/publications/drafts/unification-jfp.pdf
       This Coq unifier guide goes into lots of delicious dirty details. Very good
-      read, although I disagree with a fair number of design decisions there.
+      read, although I disagree with a number of design decisions there.
 
 
 ### Basic setup

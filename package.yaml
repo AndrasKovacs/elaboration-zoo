@@ -1,5 +1,5 @@
 
-name:                minimal-tt-examples
+name:                elaboration-zoo
 version:             0.1.0.0
 github:              "AndrasKovacs/minimal-tt-examples"
 license:             BSD3
@@ -8,12 +8,37 @@ maintainer:          "puttamalac@gmail.com"
 copyright:           "2018 András Kovács"
 category:            Language
 
-description:         "Minimal implementations for features in dependent type checking and elaboration"
+description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
+
+default-extensions:
+- LambdaCase
+- NoMonomorphismRestriction
+- OverloadedStrings
+- PatternSynonyms
+- RecordWildCards
+- StandaloneDeriving
+- TupleSections
+- ViewPatterns
+
+ghc-options:
+- -Wall
+- -Wno-name-shadowing
+- -Wno-missing-signatures
+- -Wno-unused-do-bind
+- -Wno-unused-matches
 
 dependencies:
 - base >= 4.7 && < 5
 - containers
 - mtl
+- megaparsec
 
-library:
-  source-dirs: .
+source-dirs: .
+
+executables:
+  eval:
+    main: Eval.Main
+  typecheck:
+    main: Typecheck.Main
+  holes:
+    main: Holes.Main

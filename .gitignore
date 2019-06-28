@@ -5,4 +5,5 @@
 *#
 TAGS
 /.stack-work
-
+*/.stack-work
+*.cabal

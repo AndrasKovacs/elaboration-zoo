@@ -1,5 +1,5 @@
 
-module Holes.Main (main, main') where
+module Main (main, main') where
 
 import Prelude hiding (all, pi)
 
@@ -81,10 +81,10 @@ data Head = HMeta Meta | HVar Name deriving Eq
 
 -- | We use a spine form for neutral values, i.e. we have the head variable and
 --   all arguments in a list. We need convenient access to both head and spine
---   when unifying and when solving metas.
+--   when unifying and solving metas.
 data Val
-  = VNe Head [Val]    -- [Val] here is in reverse order, i. e. the first Val in
-                      -- the list is applied last to the head.
+  = VNe Head [Val]    -- ^ [Val] here is in reverse order, i. e. the first Val in
+                      --   the list is applied last to the head.
   | VLam Name (Val -> Val)
   | VPi Name Val (Val -> Val)
   | VU
@@ -191,7 +191,7 @@ checkSolution m sp rhs = lift $ go sp rhs where
     U        -> pure ()
     Meta m'  -> when (m == m') $
                   throwError ("occurs check: " ++ show (m, rhs))
-    Let{}    -> error "impossible"
+    Let{}    -> error "checkSolution: impossible non-normal term"
 
 solve :: Vals -> Meta -> [Val] -> Val -> ElabM ()
 solve vs m sp rhs = do
@@ -232,7 +232,7 @@ unify = go where
       (VLam (fresh vs -> x) t, VLam _ t') ->
         go ((x, Nothing):vs) (t (VVar x)) (t' (VVar x))
 
-      -- these two lines implement eta conversion for functions
+      -- these two cases implement eta conversion checking for functions
       (VLam (fresh vs -> x) t, u) ->
         go ((x, Nothing):vs) (t (VVar x)) (vApp u (VVar x))
       (u, VLam (fresh vs -> x) t) ->
@@ -269,6 +269,7 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     let v = VVar x'
     Lam x <$> check (Cxt ((x, Just v):_vals) ((x, Bound a):_types)) t (b v)
 
+  -- checking just falls through Let.
   (RLet x a t u, topA) -> do
     a  <- check cxt a VU
     va <- evalM cxt a
@@ -438,6 +439,9 @@ pIdent = try $ do
   guard (not (keyword x))
   x <$ ws
 
+pBinder :: Parser Name
+pBinder = pIdent <|> symbol "_"
+
 pAtom  = (RVar <$> pIdent)
      <|> parens pTm
      <|> (RU <$ symbol "U")
@@ -447,13 +451,13 @@ pSpine = foldl1 RApp <$> some pAtom
 
 pLam = do
   char 'λ' <|> char '\\'
-  xs <- some pIdent
+  xs <- some pBinder
   char '.'
   t <- pTm
   pure (foldr RLam t xs)
 
 pPi = do
-  dom <- some (parens ((,) <$> some pIdent <*> (char ':' *> pTm)))
+  dom <- some (parens ((,) <$> some pBinder <*> (char ':' *> pTm)))
   pArrow
   cod <- pTm
   pure $ foldr (\(xs, a) t -> foldr (\x -> RPi x a) t xs) cod dom

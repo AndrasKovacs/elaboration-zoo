@@ -5,7 +5,7 @@ Minimal bidirectional dependent type checker with type-in-type. Based on Coquand
 algorithm.
 -}
 
-module Typecheck.Main (main, main') where
+module Main (main, main') where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad

@@ -1,5 +1,5 @@
 
-name:                elaboration-zoo
+name:                elabzoo-holes
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3
@@ -35,10 +35,5 @@ dependencies:
 
 source-dirs: .
 
-executables:
-  eval:
-    main: 01_Eval/Main.hs
-  # typecheck:
-  #   main: 02_Typecheck/Main.hs
-  # holes:
-  #   main: 03_Holes/Main.hs
+executable:
+  main: Main.hs

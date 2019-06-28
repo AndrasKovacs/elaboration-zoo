@@ -1,2 +1,8 @@
 
 resolver: lts-13.19
+
+packages:
+  - 01-eval/
+  - 02-typecheck/
+  - 03-holes/
+  # - 04-implicit-args/

@@ -1,4 +1,4 @@
-#### elabzoo-holes
+## elabzoo-holes
 
 Minimal implementation of an elaborator with holes and pattern unification.
 

@@ -1,5 +1,5 @@
 
-module Main (main, main') where
+module Main where
 
 import Prelude hiding (all, pi)
 
@@ -19,6 +19,32 @@ import Text.Megaparsec
 import qualified Data.IntMap.Strict         as M
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
+
+-- examples
+--------------------------------------------------------------------------------
+
+-- main' "elab" prints the input, but with holes filled by inferred values or
+-- unsolved metas
+ex1 = main' "elab" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "      = \\A x. x in",
+  "let id2 : (A : _) -> A -> A",
+  "      = \\A x. id _ x in",
+  "id2 _ id2"
+  ]
+
+-- example output which contains unsolved meta, as "?2 A x" in
+-- id2. This means that "?2" is the second hole in the expression,
+-- and is in a scope with "A" and "x" as bound variables.
+ex2 = main' "elab" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "      = \\A x. x in",
+  "let id2 : (A : _) -> A -> A",
+  "      = \\A x. id _ _ in",
+  "id2"
+  ]
+
+--------------------------------------------------------------------------------
 
 type Name = String
 

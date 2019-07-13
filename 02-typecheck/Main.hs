@@ -1,11 +1,6 @@
 {-# options_ghc -fwarn-incomplete-patterns #-}
 
-{-|
-Minimal bidirectional dependent type checker with type-in-type. Based on Coquand's
-algorithm.
--}
-
-module Main (main, main') where
+module Main where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad
@@ -18,6 +13,30 @@ import Text.Megaparsec
 
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
+
+-- examples
+--------------------------------------------------------------------------------
+
+-- basic polymorphic functions
+ex1 = main' "nf" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "      = \\A x. x in",
+  "let const : (A B : U) -> A -> B -> A",
+  "      = \\A B x y. x in",
+  "id ((A B : U) -> A -> B -> A) const"
+  ]
+
+-- Church-coded natural numbers
+ex2 = main' "nf" $ unlines [
+  "let Nat  : U = (N : U) -> (N -> N) -> N -> N in",
+  "let five : Nat = \\N s z. s (s (s (s (s z)))) in",
+  "let add  : Nat -> Nat -> Nat = \\a b N s z. a N s (b N s z) in",
+  "let mul  : Nat -> Nat -> Nat = \\a b N s z. a N (b N s) z in",
+  "let ten      : Nat = add five five in",
+  "let hundred  : Nat = mul ten ten in",
+  "let thousand : Nat = mul ten hundred in",
+  "thousand"
+  ]
 
 -- syntax
 --------------------------------------------------------------------------------

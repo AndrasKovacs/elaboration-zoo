@@ -1,5 +1,5 @@
 
-module Main (main, main') where
+module Main where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad
@@ -12,6 +12,25 @@ import Text.Megaparsec
 
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
+
+
+-- examples
+--------------------------------------------------------------------------------
+
+ex1, ex2, ex3 :: IO ()
+ex1 = main' "nf" "\\x.x"
+ex2 = main' "nf" "(\\x.x) (\\x.x)"
+
+-- Church-coded natural numbers, printing normal form of 1000
+ex3 = main' "nf" $ unlines [
+  "let five = \\s z. s (s (s (s (s z)))) in",
+  "let add = \\a b s z. a s (b s z) in",
+  "let mul = \\a b s z. a (b s) z in",
+  "let ten = add five five in",
+  "let hundred = mul ten ten in",
+  "let thousand = mul ten hundred in",
+  "thousand"
+  ]
 
 
 -- syntax

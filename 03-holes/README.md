@@ -54,7 +54,7 @@ solutions require arbitrary choices, which in turn makes for a fragile and more
 annoying programming experience. While Coq generally follows this principle too,
 it is a lot more lax than Agda and occasionaly makes unforced choices, for
 pragmatic reasons. Our current implementation is between Agda and Coq in this
-matter, but since it is very bare-bones, there are comparatively few design choices
+regard, but since it is very bare-bones, there are comparatively few design choices
 to be made.
 
 For every hole in the program, we create a metavariable, or meta in short.

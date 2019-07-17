@@ -24,8 +24,8 @@ Further reading, roughly in preferred order:
 We use string names instead of indices or levels. This makes most operations
 easier to understand and implement. There are subtleties that can go wrong with
 names, but our general approach cuts out a large amount of name generation and
-shuffling which would appear in more naive elaborators. In particular, we don't
-never use capture-avoiding substitution nor global fresh name generation.
+shuffling which would appear in more naive elaborators. In particular, we don't 
+use capture-avoiding substitution or global fresh name generation.
 
 
 ### About holes and pattern unification

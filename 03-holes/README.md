@@ -34,11 +34,11 @@ use capture-avoiding substitution or global fresh name generation.
 Take a program with a hole, like:
 
 ~~~
-    let id : (A : *) → A → A
+    let id : (A : U) → A → A
       = λ A x. x
     in
 
-    let id2 : (A : *) → A → A
+    let id2 : (A : U) → A → A
       = λ A x. id _ x
     in
 
@@ -71,11 +71,11 @@ bound variables in the scope of the hole.
       α = λ A x. ?
     in
 
-    let id : (A : *) → A → A
+    let id : (A : U) → A → A
       = λ A x. x
     in
 
-    let id2 : (A : *) → A → A
+    let id2 : (A : U) → A → A
       = λ A x. id (α A x) x
     in
 

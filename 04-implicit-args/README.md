@@ -1,6 +1,6 @@
 ## elabzoo-implicit-args
 
-This file implements named implicit arguments following Agda convention and
+This package implements named implicit arguments following Agda convention and
 behavior, with first-class implicit dependent function types.
 
 Additionally, we have a way to stop meta insertion at any point using `!` in an

@@ -58,7 +58,7 @@ data Tm
 
 data Val
   = VVar Name
-  | VApp Val Val
+  | VApp Val ~Val
   | VLam Name (Val -> Val)
   | VPi Name Val (Val -> Val)
   | VU

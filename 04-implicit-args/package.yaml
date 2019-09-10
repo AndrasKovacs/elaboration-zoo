@@ -1,5 +1,5 @@
 
-name:                elaboration-zoo
+name:                elabzoo-implicit-args
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3
@@ -11,14 +11,18 @@ category:            Language
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
 default-extensions:
+- EmptyCase
 - LambdaCase
 - NoMonomorphismRestriction
 - OverloadedStrings
 - PatternSynonyms
 - RecordWildCards
 - StandaloneDeriving
+- Strict
 - TupleSections
 - ViewPatterns
+- BangPatterns
+- ScopedTypeVariables
 
 ghc-options:
 - -Wall
@@ -35,10 +39,5 @@ dependencies:
 
 source-dirs: .
 
-executables:
-  eval:
-    main: 01_Eval/Main.hs
-  # typecheck:
-  #   main: 02_Typecheck/Main.hs
-  # holes:
-  #   main: 03_Holes/Main.hs
+executable:
+  main: Main.hs

@@ -1,16 +1,13 @@
 
 module Main where
 
-import Prelude hiding (all, pi)
-
 import Control.Applicative hiding (many, some)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Char
-import Data.Foldable hiding (all)
+import Data.Foldable
 import Data.Maybe
-import Data.String ()
 import Data.Void
 import System.Environment
 import System.Exit
@@ -42,6 +39,27 @@ ex2 = main' "elab" $ unlines [
   "let id2 : (A : _) -> A -> A",
   "      = \\A x. id _ _ in",
   "id2"
+  ]
+
+-- ex3 = parseString $ unlines [
+ex3 = main' "elab" $ unlines [
+  "let id : (A : _) -> A -> A",
+  "    = \\A x. x in",
+  "let List : U -> U",
+  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L in",
+  "let nil : (A : _) -> List A",
+  "    = \\A L cons nil. nil in",
+  "let cons : (A : _) -> A -> List A -> List A",
+  "    = \\A x xs L cons nil. cons x (xs _ cons nil) in",
+  "let Bool : U",
+  "    = (B : _) -> B -> B -> B in",
+  "let true : Bool",
+  "    = \\B t f. t in",
+  "let false : Bool",
+  "    = \\B t f. f in",
+  "let list1 : List Bool",
+  "    = cons _ (id _ true) (nil _) in",
+  "id"
   ]
 
 --------------------------------------------------------------------------------

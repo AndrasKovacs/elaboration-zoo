@@ -50,10 +50,10 @@ data Tm
 
 data Val
   = VVar Name
-  | VApp Val Val
+  | VApp Val ~Val
   | VLam Name (Val -> Val)
 
-type Env    = [(Name, Maybe Val)]
+type Env = [(Name, Maybe Val)]
 
 fresh :: Env -> Name -> Name
 fresh env "_" = "_"

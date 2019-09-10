@@ -17,6 +17,7 @@ default-extensions:
 - PatternSynonyms
 - RecordWildCards
 - StandaloneDeriving
+- Strict
 - TupleSections
 - ViewPatterns
 

@@ -1,15 +1,13 @@
-{-# LANGUAGE EmptyCase #-}
 
-import Prelude hiding (all, pi)
+module Main where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Char
-import Data.Foldable hiding (all)
+import Data.Foldable
 import Data.Maybe
-import Data.String ()
 import Data.Void
 import System.Environment
 import System.Exit
@@ -18,6 +16,84 @@ import Text.Megaparsec
 import qualified Data.IntMap.Strict         as M
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
+
+
+ex1 = main' "elab" $ unlines [
+
+  "let id : {A} -> A -> A = \\x. x in",
+
+  -- by default metas are inserted for implicit arguments, but
+  -- (!) can be used to stop insertion at any point. The (id!) expression
+  --  has a polymorphic type, {A} → A → A
+  "let id2 : {A} → A → A = id (id!) in",
+
+  "let const : {A B} -> A -> B -> A",
+  "    = \\x y. x in",
+
+  -- definition types can be omitted
+  "let constTy = {A B} → A → B → A in",
+
+  -- explicit id function, used for annotation as in Idris
+  "let the : (A : _) -> A -> A = \\_ x. x in",
+
+  -- implicit application follows Agda convention.
+  "let namedArgTest = const {B = U} U in",
+  "let namedArgTest2 = the constTy (λ x y. x) {B = U} U in",
+
+  -- bool
+  "let Bool : U",
+  "    = (B : _) -> B -> B -> B in",
+  "let true : Bool",
+  "    = \\B t f. t in",
+  "let false : Bool",
+  "    = \\B t f. f in",
+  "let not : Bool -> Bool",
+  "    = \\b B t f. b B f t in",
+
+  -- lists
+  "let List : U -> U",
+  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L in",
+  "let nil : {A} -> List A",
+  "    = \\L cons nil. nil in",
+  "let cons : {A} -> A -> List A -> List A",
+  "    = \\x xs L cons nil. cons x (xs L cons nil) in",
+  "let map : {A B} -> (A -> B) -> List A -> List B",
+  "    = \\{A}{B} f xs L c n. xs L (\\a. c (f a)) n in",
+  "let list1 : List Bool",
+  "    = cons true (cons false (cons true nil)) in",
+
+  -- using ! when mapping over lists
+  -- idlist has type "List ({A} -> A -> A)"
+  "let idlist = map (const (id!)) list1 in",
+
+  -- dependent function composition
+  "let comp : {A}{B : A -> U}{C : {a} -> B a -> U}",
+  "           (f : {a}(b : B a) -> C b)",
+  "           (g : (a : A) -> B a)",
+  "           (a : A)",
+  "           -> C (g a)",
+  "    = \\f g a. f (g a) in",
+
+  -- nat
+  "let Nat : U",
+  "    = (N : U) -> (N -> N) -> N -> N in",
+  "let mul : Nat -> Nat -> Nat",
+  "    = \\a b N s z. a _ (b _ s) z in",
+  "let ten : Nat",
+  "    = \\N s z. s (s (s (s (s (s (s (s (s (s z))))))))) in",
+  "let hundred = mul ten ten in",
+
+  -- Leibniz equality
+  "let Eq : {A} -> A -> A -> U",
+  "    = \\{A} x y. (P : A -> U) -> P x -> P y in",
+  "let refl : {A}{x : A} -> Eq x x",
+  "    = \\_ px. px in",
+
+  "the (Eq (mul ten ten) hundred) refl"
+  ]
+
+
+--------------------------------------------------------------------------------
 
 type Name = String
 
@@ -70,7 +146,6 @@ bind x a (Cxt vs tys) = Cxt ((x, Nothing):vs) ((x, Bound a):tys)
 define :: Name -> Val -> VTy -> Cxt -> Cxt
 define x v a (Cxt vs tys) = Cxt ((x, Just v):vs) ((x, Def a):tys)
 
-
 -- | Well-typed core terms without holes.
 --   We use names everywhere instead of indices or levels.
 data Tm
@@ -89,10 +164,12 @@ data Head = HMeta Meta | HVar Name deriving Eq
 --   when unifying and when solving metas.
 data Val
   = VNe Head [(Val, Icit)]
-           -- [Val] here is in reverse order, i. e. the first Val in
-           -- the list is applied last to the head.
+           -- [(Val, Icit)] here is in reverse order, i. e. the first Val in
+           -- the list is applied last to the head. Note that spine entries are
+           -- lazy because we use lazy lists and tuples (we have Strict pragma
+           -- otherwise!)
   | VLam Name Icit (Val -> Val)
-  | VPi Name Icit Val (Val -> Val)
+  | VPi Name Icit ~Val (Val -> Val)
   | VU
 
 type Bind a = (Name, a)
@@ -104,13 +181,12 @@ pattern VVar x = VNe (HVar x) []
 pattern VMeta :: Meta -> Val
 pattern VMeta m = VNe (HMeta m) []
 
-
 -- | Option for behavior of meta insertion for implicit arguments.
 data MetaInsertion
-  = MIYes             -- ^ Try to insert metas.
-  | MINo              -- ^ Don't try to insert metas.
-  | MIUntilName !Name -- ^ Try to insert metas, but only until
-                      --   a specific named implicit argument.
+  = MIYes            -- ^ Try to insert metas.
+  | MINo             -- ^ Don't try to insert metas.
+  | MIUntilName Name -- ^ Try to insert metas, but only until
+                     --   a specific named implicit argument.
 
 -- | Generate a name such that it does not shadow anything in the current
 --   environment. De Bruijn indices would make this unnecessary in a more
@@ -197,8 +273,8 @@ checkSolution :: Meta -> [Name] -> Tm -> ElabM ()
 checkSolution m sp rhs = lift $ go sp rhs where
   go :: [Name] -> Tm -> Either String ()
   go ns = \case
-    Var x    -> unless (elem x ns) $
-                  throwError ("solution scope error: " ++ show (m, sp, rhs))
+    Var x      -> unless (elem x ns) $
+                    throwError ("solution scope error: " ++ show (m, sp, rhs))
     App t u _  -> go ns t >> go ns u
     Lam x i t  -> go (x:ns) t
     Pi x i a b -> go ns a >> go (x:ns) b
@@ -260,7 +336,7 @@ unify = go where
       (VNe h sp, VNe h' sp') | h == h' -> zipWithM_ (go vs) (fst <$> sp) (fst <$> sp')
       (VNe (HMeta m) sp, t) -> solve vs m (fst <$> sp) t
       (t, VNe (HMeta m) sp) -> solve vs m (fst <$> sp) t
-      (t, t') -> throwError ("can't unify " ++ show (quote ms vs t) ++ " with " ++
+      (t, t') -> throwError ("Can't unify " ++ show (quote ms vs t) ++ " with " ++
                              show (quote ms vs t'))
 
 -- Elaboration
@@ -269,149 +345,166 @@ unify = go where
 -- | Modify an elaboration action by (possibly) trying to insert
 --   fresh metas for implicit arguments after performing the action.
 insertMetas :: MetaInsertion -> Cxt -> ElabM (Tm, VTy) -> ElabM (Tm, VTy)
-insertMetas ins cxt inp = case ins of
-  MINo  -> inp
+insertMetas ins cxt action = case ins of
+  -- do nothing extra
+  MINo  -> action
+  -- insert a fresh meta for every implicit Pi argument
   MIYes -> do
-    (t, va) <- inp
+    (t, va) <- action
     let go t va = forceM va >>= \case
           VPi x Impl a b -> do
-            m <- newMeta cxt
+            m  <- newMeta cxt
             mv <- evalM cxt m
             go (App t m Impl) (b mv)
           va -> pure (t, va)
     go t va
+  -- insert a fresh meta for every implicit Pi argument, until we hit
+  -- an implicit arg with the given name
   MIUntilName x -> do
-    (t, va) <- inp
+    (t, va) <- action
     let go t va = forceM va >>= \case
-          VPi x Impl a b -> do
-            m <- newMeta cxt
-            mv <- evalM cxt m
-            go (App t m Impl) (b mv)
+          va@(VPi x' Impl a b) -> do
+            if x == x' then
+              pure (t, va)
+            else do
+              m  <- newMeta cxt
+              mv <- evalM cxt m
+              go (App t m Impl) (b mv)
           _ -> throwError ("No named implicit argument with name " ++ x)
     go t va
 
 check :: Cxt -> Raw -> VTy -> ElabM Tm
 check cxt@Cxt{..} topT topA = case (topT, topA) of
+  -- if the icitness of the lambda matches the Pi type,
+  -- check the lambda body as usual
   (RLam x ni t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') ni -> do
-    let v = VVar
-    Lam x i' <$> check _ _ _
+    let v    = VVar (fresh _vals x)
+        cxt' = Cxt ((x, Just v):_vals) ((x, Bound a):_types)
+    Lam x i' <$> check cxt' t (b v)
 
-  --   (P.Lam x ni t, GPi (Named x' i') a b) | (case ni of NOName y -> y == x'
-  --                                                     NOImpl   -> i' == Impl
-  --                                                     NOExpl   -> i' == Expl) ->
-  --   Lam (Named x i') <$> check (localBindSrc (Posed pos x) a cxt) t (gvInst b (gvLocal (_size cxt)))
+  -- otherwise if the Pi is implicit, insert a new implicit lambda
+  (t, VPi x Impl a b) -> do
+    let x' = fresh _vals x
+    Lam x' Impl <$> check (bind x' a cxt) t (b (VVar x'))
 
-  -- (P.Lam x NOExpl t, GFun a b) ->
-  --   Lam (Named x Expl) <$> check (localBindSrc (Posed pos x) a cxt) t b
+  (RLet x a t u, topA) -> do
+    a   <- check cxt a VU
+    ~va <- evalM cxt a
+    t   <- check cxt t va
+    ~vt <- evalM cxt t
+    u   <- check (define x vt va cxt) u topA
+    pure $ Let x a t u
 
-  -- (t, GPi (Named x Impl) a b) ->
-  --   Lam (Named x Impl) <$> check (localBindIns (Posed pos x) a cxt)
-  --                                (Posed pos t) (gvInst b (gvLocal (_size cxt)))
+  (RHole, _) ->
+    newMeta cxt
 
-  -- (RLam x i t, VPi (fresh _vals -> x') i' a b) | i == i' -> do
-  --   let v = VVar x'
-  --   Lam x i <$> check (Cxt ((x, Just v):_vals) ((x, Bound a):_types)) t (b v)
-
-  -- (RLet x a t u, topA) -> do
-  --   a  <- check cxt a VU
-  --   va <- evalM cxt a
-  --   t  <- check cxt t va
-  --   vt <- evalM cxt t
-  --   u  <- check (define x vt va cxt) u topA
-  --   pure $ Let x a t u
-
-  -- (RHole, _) ->
-  --   newMeta cxt
-
-  -- we unify the expected and inferred types
   _ -> do
-    (t, va) <- infer cxt topT
+    (t, va) <- infer MIYes cxt topT
     unify _vals va topA
     pure t
 
+-- | Create a fresh domain and codomain type.
+freshPi :: Cxt -> Name -> Icit -> ElabM (VTy, Val -> VTy)
+freshPi cxt@Cxt{..} x i = do
+  a    <- newMeta cxt
+  ~va  <- evalM cxt a
+  b    <- newMeta (bind x va cxt)
+  mcxt <- gets snd
+  pure (va, \u -> eval mcxt ((x, Just u):_vals) b)
 
-infer :: Cxt -> Raw -> ElabM (Tm, VTy)
-infer cxt@Cxt{..} = \case
+infer :: MetaInsertion -> Cxt -> Raw -> ElabM (Tm, VTy)
+infer ins cxt@Cxt{..} = \case
 
---   RVar "_" -> throwError "_ is not a valid name"
---   RVar x   -> maybe (throwError ("var not in scope: " ++ x))
---                     (\a -> pure (Var x, case a of Bound a -> a; Def a -> a))
---                     (lookup x _types)
+  RVar x -> insertMetas ins cxt $ do
+    maybe (throwError ("var not in scope: " ++ x))
+          (\a -> pure (Var x, case a of Bound a -> a; Def a -> a))
+          (lookup x _types)
 
---   RU -> pure (U, VU) -- type-in-type
+  RU -> pure (U, VU)
 
---   -- an upgrade to this would be to also proceed if the inferred type for "t"
---   -- is meta-headed, in which case we would need to create two fresh metas and
---   -- refine "t"'s type to a function type.
---   RApp t u i -> do
---     (t, va) <- infer cxt t
---     forceM va >>= \case
---       VPi _ a b -> do
---         u  <- check cxt u a
---         vu <- evalM cxt u
---         pure (App t u, b vu)
---       _ -> throwError "expected a function type"
+  RApp t u ni -> insertMetas ins cxt $ do
+    let (insertion, i) = case ni of
+          Left x  -> (MIUntilName x, Impl)
+          Right i -> (icit i MINo MIYes, i)
+    (t, va) <- infer insertion cxt t
+    (a, b) <- forceM va >>= \case
+      VPi x i' a b -> do
+        unless (i == i') $
+          throwError "Function argument implictness mismatch"
+        pure (a, b)
+      va@(VNe (HMeta x) sp) -> do
+        (a, b) <- freshPi cxt "x" i
+        unify _vals va (VPi "x" i a b)
+        pure (a, b)
+      _ ->
+        throwError "expected a function in application"
+    u <- check cxt u a
+    ~vu <- evalM cxt u
+    pure (App t u i, b vu)
 
---   -- we infer type for lambdas by checking them with a
---   -- a function type made of fresh metas.
---   RLam x t -> do
---     a  <- newMeta cxt
---     va <- evalM cxt a
---     b  <- newMeta (bind x va cxt)
---     ty <- evalM cxt (Pi x a b)
---     t  <- check cxt (RLam x t) ty
---     pure (t, ty)
+  -- we infer type for lambdas by checking them with a
+  -- a function type made of fresh metas.
+  RLam _ Left{} _ ->
+    throwError ("Cannot infer type for lambda with implicit named "
+             ++ "argument")
+  RLam x (Right i) t -> insertMetas ins cxt $ do
+    (a, b) <- freshPi cxt x i
+    let pi = VPi x i a b
+    t <- check cxt (RLam x (Right i) t) pi
+    pure (t, pi)
 
---   RPi x a b -> do
---     a  <- check cxt a VU
---     va <- evalM cxt a
---     b <- check (bind x va cxt) b VU
---     pure (Pi x a b, VU)
+  RPi x i a b -> do
+    a   <- check cxt a VU
+    ~va <- evalM cxt a
+    b   <- check (bind x va cxt) b VU
+    pure (Pi x i a b, VU)
 
---   -- inferring a type for a hole: we create two metas, one for the hole
---   -- and one for its type.
---   RHole -> do
---     t  <- newMeta cxt
---     va <- evalM cxt =<< newMeta cxt
---     pure (t, va)
+  -- inferring a type for a hole: we create two metas, one for the hole
+  -- and one for its type.
+  RHole -> do
+    t   <- newMeta cxt
+    ~va <- evalM cxt =<< newMeta cxt
+    pure (t, va)
 
---   RLet x a t u -> do
---     a       <- check cxt a VU
---     va      <- evalM cxt a
---     t       <- check cxt t va
---     vt      <- evalM cxt t
---     (u, vb) <- infer (define x vt va cxt) u
---     pure (Let x a t u, vb)
+  RLet x a t u -> do
+    a        <- check cxt a VU
+    ~va      <- evalM cxt a
+    t        <- check cxt t va
+    ~vt      <- evalM cxt t
+    (!u, vb) <- infer ins (define x vt va cxt) u
+    pure (Let x a t u, vb)
+
+  RStopInsertion t ->
+    infer MINo cxt t
 
 
--- -- | Inline all meta solutions. Used for displaying elaboration output.
--- zonk :: MCxt -> Vals -> Tm -> Tm
--- zonk ms = go where
+-- | Inline all meta solutions. Used for displaying elaboration output.
+zonk :: MCxt -> Vals -> Tm -> Tm
+zonk ms = go where
 
---   goSp :: Vals -> Tm -> Either Val Tm
---   goSp vs = \case
---     Meta m | Just v <- M.lookup m ms -> Left v
---     App t u -> either (\t -> Left (vApp t (eval ms vs u)))
---                       (\t -> Right (App t (go vs u)))
---                       (goSp vs t)
---     t -> Right (go vs t)
+  goSp :: Vals -> Tm -> Either Val Tm
+  goSp vs = \case
+    Meta m | Just v <- M.lookup m ms -> Left v
+    App t u ni -> either (\t -> Left (vApp t (eval ms vs u) ni))
+                         (\t -> Right (App t (go vs u) ni))
+                         (goSp vs t)
+    t -> Right (go vs t)
 
---   go :: Vals -> Tm -> Tm
---   go vs = \case
---     Var x        -> Var x
---     Meta m       -> maybe (Meta m) (quote ms vs) (M.lookup m ms)
---     U            -> U
---     Pi x a b     -> Pi x (go vs a) (go ((x, Nothing):vs) b)
---     App t u      -> either (\t -> quote ms vs (vApp t (eval ms vs u)))
---                            (\t -> App t (go vs u))
---                            (goSp vs t)
---     Lam x t      -> Lam x (go ((x, Nothing):vs) t)
---     Let x a t u  -> Let x (go vs a) (go vs t)
---                           (go ((x, Nothing):vs) u)
+  go :: Vals -> Tm -> Tm
+  go vs = \case
+    Var x        -> Var x
+    Meta m       -> maybe (Meta m) (quote ms vs) (M.lookup m ms)
+    U            -> U
+    Pi x i a b   -> Pi x i (go vs a) (go ((x, Nothing):vs) b)
+    App t u ni   -> either (\t -> quote ms vs (vApp t (eval ms vs u) ni))
+                           (\t -> App t (go vs u) ni)
+                           (goSp vs t)
+    Lam x i t    -> Lam x i (go ((x, Nothing):vs) t)
+    Let x a t u  -> Let x (go vs a) (go vs t)
+                          (go ((x, Nothing):vs) u)
 
--- zonkM :: Vals -> Tm -> ElabM Tm
--- zonkM vs t = gets (\(_, ms) -> zonk ms vs t)
-
+zonkM :: Vals -> Tm -> ElabM Tm
+zonkM vs t = gets (\(_, ms) -> zonk ms vs t)
 
 
 --------------------------------------------------------------------------------
@@ -449,8 +542,13 @@ prettyTm prec = go (prec /= 0) where
     icit i bracket (showParen True) ((x++) . (" : "++) . go False a)
 
   goPi :: Bool -> Tm -> ShowS
-  goPi p (Pi x i a b) = goPiBind x i a . goPi True b
-  goPi p t = (if p then (" → "++) else id) . go False t
+  goPi p (Pi x i a b)
+    | x /= "_" = goPiBind x i a . goPi True b
+    | otherwise =
+       (if p then (" → "++) else id) .
+       go (case a of App{} -> False; _ -> True) a .
+       (" → "++) . go False b
+  goPi p t = (if p then (" -> "++) else id) . go False t
 
   goLamBind :: Name -> Icit -> ShowS
   goLamBind x i = icit i bracket id ((if null x then "_" else x) ++)
@@ -461,133 +559,157 @@ prettyTm prec = go (prec /= 0) where
 
 instance Show Tm where showsPrec = prettyTm
 
+
 -- parsing
 --------------------------------------------------------------------------------
 
--- type Parser = Parsec Void String
 
--- ws :: Parser ()
--- ws = L.space C.space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
+type Parser = Parsec Void String
 
--- lexeme     = L.lexeme ws
--- symbol s   = lexeme (C.string s)
--- char c     = lexeme (C.char c)
--- parens p   = char '(' *> p <* char ')'
--- pArrow     = symbol "→" <|> symbol "->"
+ws :: Parser ()
+ws = L.space C.space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
 
--- keyword :: String -> Bool
--- keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
+lexeme     = L.lexeme ws
+symbol s   = lexeme (C.string s)
+char c     = lexeme (C.char c)
+parens p   = char '(' *> p <* char ')'
+braces p   = char '{' *> p <* char '}'
+pArrow     = symbol "→" <|> symbol "->"
+pBind      = pIdent <|> symbol "_"
 
--- pIdent :: Parser Name
--- pIdent = try $ do
---   x <- takeWhile1P Nothing isAlphaNum
---   guard (not (keyword x))
---   x <$ ws
+keyword :: String -> Bool
+keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
 
--- pAtom :: Parser Raw
--- pAtom  = (RVar <$> pIdent)
---      <|> parens pTm
---      <|> (RU <$ char 'U')
---      <|> (RHole <$ char '_')
+pIdent :: Parser Name
+pIdent = try $ do
+  x <- takeWhile1P Nothing isAlphaNum
+  guard (not (keyword x))
+  x <$ ws
 
--- pArg :: Parser (Maybe (Icit, Raw))
--- pArg = (Nothing <$ char '!')
---    <|> (Just <$>
---           (   ((Impl,) <$> (char '{' *> pTm <* char '}'))
---           <|> ((Expl,) <$> pAtom)))
+pAtom :: Parser Raw
+pAtom  = (RVar <$> pIdent)
+     <|> parens pTm
+     <|> (RU <$ char 'U')
+     <|> (RHole <$ char '_')
 
--- pSpine = do
---   h <- pAtom
---   args <- some pArg
---   pure $ foldl
---     (\t -> \case Just (i, u) -> RApp t u i;
---                  Nothing     -> RStopInsertion t)
---     h args
+pArg :: Parser (Maybe (Either Name Icit, Raw))
+pArg = (Nothing <$ char '!')
+  <|>  (Just <$> (
+           (try $ braces $ do {x <- pIdent; char '='; t <- pTm; pure (Left x, t)})
+       <|> ((Right Impl,) <$> (char '{' *> pTm <* char '}'))
+       <|> ((Right Expl,) <$> pAtom)))
 
--- pLam = do
---   char 'λ' <|> char '\\'
---   xs <- some pIdent
---   char '.'
---   t <- pTm
---   pure (foldr RLam t xs)
+pSpine :: Parser Raw
+pSpine = do
+  h <- pAtom
+  args <- many pArg
+  pure $ foldl
+    (\t -> \case Nothing     -> RStopInsertion t
+                 Just (i, u) -> RApp t u i)
+    h args
 
--- pPi = do
---   dom <- some (parens ((,) <$> some pIdent <*> (char ':' *> pTm)))
---   pArrow
---   cod <- pTm
---   pure $ foldr (\(xs, a) t -> foldr (\x -> RPi x a) t xs) cod dom
+pLamBinder :: Parser (Name, Either Name Icit)
+pLamBinder =
+      ((,Right Expl) <$> pBind)
+  <|> try ((,Right Impl) <$> braces pBind)
+  <|> braces (do {x <- pIdent; char '='; y <- pBind; pure (y, Left x)})
 
--- funOrSpine = do
---   sp <- pSpine
---   optional pArrow >>= \case
---     Nothing -> pure sp
---     Just _  -> RPi "_" sp <$> pTm
+pLam :: Parser Raw
+pLam = do
+  char 'λ' <|> char '\\'
+  xs <- some pLamBinder
+  char '.'
+  t <- pTm
+  pure $ foldr (uncurry RLam) t xs
 
--- pLet = do
---   symbol "let"
---   x <- pIdent
---   symbol ":"
---   a <- pTm
---   symbol "="
---   t <- pTm
---   symbol "in"
---   u <- pTm
---   pure $ RLet x a t u
+pPiBinder :: Parser ([Name], Raw, Icit)
+pPiBinder =
+      braces ((,,Impl) <$> some pBind
+                       <*> ((char ':' *> pTm) <|> pure RHole))
+  <|> parens ((,,Expl) <$> some pBind
+                       <*> (char ':' *> pTm))
+pPi :: Parser Raw
+pPi = do
+  dom <- some pPiBinder
+  pArrow
+  cod <- pTm
+  pure $ foldr (\(xs, a, i) t -> foldr (\x -> RPi x i a) t xs) cod dom
 
--- pTm  = pLam <|> pLet <|> try pPi <|> funOrSpine
--- pSrc = ws *> pTm <* eof
+pFunOrSpine :: Parser Raw
+pFunOrSpine = do
+  sp <- pSpine
+  optional pArrow >>= \case
+    Nothing -> pure sp
+    Just _  -> RPi "_" Expl sp <$> pTm
 
--- parseString :: String -> IO Raw
--- parseString src =
---   case parse pSrc "(stdin)" src of
---     Left e -> do
---       putStrLn $ errorBundlePretty e
---       exitFailure
---     Right t ->
---       pure t
+pLet :: Parser Raw
+pLet = do
+  symbol "let"
+  x <- pIdent
+  ann <- optional (char ':' *> pTm)
+  char '='
+  t <- pTm
+  symbol "in"
+  u <- pTm
+  pure $ RLet x (maybe RHole id ann) t u
 
--- parseStdin :: IO Raw
--- parseStdin = parseString =<< getContents
+pTm :: Parser Raw
+pTm = pLam <|> pLet <|> try pPi <|> pFunOrSpine
 
--- -- main
--- --------------------------------------------------------------------------------
+pSrc :: Parser Raw
+pSrc = ws *> pTm <* eof
 
--- helpMsg = unlines [
---   "usage: holes [--help|nf|type]",
---   "  --help : display this message",
---   "  elab   : read & elaborate expression from stdin",
---   "  nf     : read & elaborate expression from stdin, print its normal form",
---   "  type   : read & elaborate expression from stdin, print its type"]
+parseString :: String -> IO Raw
+parseString src =
+  case parse pSrc "(stdin)" src of
+    Left e -> do
+      putStrLn $ errorBundlePretty e
+      exitFailure
+    Right t ->
+      pure t
 
--- mainWith :: IO [String] -> IO Raw -> IO ()
--- mainWith getOpt getTm = do
---   let elab = do
---         t <- getTm
---         case (flip evalStateT (0, mempty) $ do
---                (t, a) <- infer nil t
---                t  <- zonkM [] t
---                nt <- nfM [] t
---                na <- quoteM [] a
---                pure (t, nt, na)) of
---           Left err -> putStrLn err >> exitSuccess
---           Right x  -> pure x
+parseStdin :: IO Raw
+parseStdin = parseString =<< getContents
 
---   getOpt >>= \case
---     ["--help"] -> putStrLn helpMsg
---     ["nf"] -> do
---       (t, nt, na) <- elab
---       print nt
---     ["type"] -> do
---       (t, nt, na) <- elab
---       print na
---     ["elab"] -> do
---       (t, nt, na) <- elab
---       print t
---     _          -> putStrLn helpMsg
+-- main
+--------------------------------------------------------------------------------
 
--- main :: IO ()
--- main = mainWith getArgs parseStdin
+helpMsg = unlines [
+  "usage: holes [--help|nf|type]",
+  "  --help : display this message",
+  "  elab   : read & elaborate expression from stdin",
+  "  nf     : read & elaborate expression from stdin, print its normal form",
+  "  type   : read & elaborate expression from stdin, print its type"]
 
--- -- | Run main with inputs as function arguments.
--- main' :: String -> String -> IO ()
--- main' mode src = mainWith (pure [mode]) (parseString src)
+mainWith :: IO [String] -> IO Raw -> IO ()
+mainWith getOpt getTm = do
+  let elab = do
+        t <- getTm
+        case (flip evalStateT (0, mempty) $ do
+               (t, a) <- infer MIYes nil t
+               t  <- zonkM [] t
+               nt <- nfM [] t
+               na <- quoteM [] a
+               pure (t, nt, na)) of
+          Left err -> putStrLn err >> exitSuccess
+          Right x  -> pure x
+
+  getOpt >>= \case
+    ["--help"] -> putStrLn helpMsg
+    ["nf"] -> do
+      (t, nt, na) <- elab
+      print nt
+    ["type"] -> do
+      (t, nt, na) <- elab
+      print na
+    ["elab"] -> do
+      (t, nt, na) <- elab
+      print t
+    _          -> putStrLn helpMsg
+
+main :: IO ()
+main = mainWith getArgs parseStdin
+
+-- | Run main with inputs as function arguments.
+main' :: String -> String -> IO ()
+main' mode src = mainWith (pure [mode]) (parseString src)

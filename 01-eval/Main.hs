@@ -108,19 +108,20 @@ pIdent = try $ do
   guard (not (keyword x))
   x <$ ws
 
+pBind  = pIdent <|> symbol "_"
 pAtom  = (Var <$> pIdent) <|> parens pTm
 pSpine = foldl1 App <$> some pAtom
 
 pLam = do
   char 'λ' <|> char '\\'
-  xs <- some pIdent
+  xs <- some pBind
   char '.'
   t <- pTm
   pure (foldr Lam t xs)
 
 pLet = do
   symbol "let"
-  x <- pIdent
+  x <- pBind
   symbol "="
   t <- pTm
   symbol "in"
@@ -171,7 +172,7 @@ instance Show Tm where showsPrec = prettyTm
 --------------------------------------------------------------------------------
 
 helpMsg = unlines [
-  "usage: eval [--help|nf]",
+  "usage: elabzoo-eval [--help|nf]",
   "  --help : display this message",
   "  nf     : read expression from stdin, print its normal form"]
 

@@ -404,8 +404,8 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     pure t
 
 -- | Create a fresh domain and codomain type.
-freshPi :: Cxt -> Name -> Icit -> ElabM (VTy, Val -> VTy)
-freshPi cxt@Cxt{..} x i = do
+freshPi :: Cxt -> Name -> ElabM (VTy, Val -> VTy)
+freshPi cxt@Cxt{..} x = do
   a    <- newMeta cxt
   ~va  <- evalM cxt a
   b    <- newMeta (bind x va cxt)
@@ -433,7 +433,7 @@ infer ins cxt@Cxt{..} = \case
           throwError "Function argument implictness mismatch"
         pure (a, b)
       va@(VNe (HMeta x) sp) -> do
-        (a, b) <- freshPi cxt "x" i
+        (a, b) <- freshPi cxt "x"
         unify _vals va (VPi "x" i a b)
         pure (a, b)
       _ ->
@@ -448,7 +448,7 @@ infer ins cxt@Cxt{..} = \case
     throwError ("Cannot infer type for lambda with implicit named "
              ++ "argument")
   RLam x (Right i) t -> insertMetas ins cxt $ do
-    (a, b) <- freshPi cxt x i
+    (a, b) <- freshPi cxt x
     let pi = VPi x i a b
     t <- check cxt (RLam x (Right i) t) pi
     pure (t, pi)

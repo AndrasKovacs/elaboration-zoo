@@ -10,12 +10,21 @@ import Data.Void
 import System.Environment
 import System.Exit
 import Text.Megaparsec
+import Text.Printf
 
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
 
 -- examples
 --------------------------------------------------------------------------------
+
+ex0 = main' "nf" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "     = \\A x. x in",
+  "let foo : U = U in",
+  "let bar : U = id id in",
+  "id"
+  ]
 
 -- basic polymorphic functions
 ex1 = main' "nf" $ unlines [
@@ -46,12 +55,13 @@ type Ty   = Tm
 type Raw  = Tm
 
 data Tm
-  = Var Name           -- x
-  | Lam Name Tm        -- \x. t
-  | App Tm Tm          -- t u
-  | U                  -- U
-  | Pi Name Ty Ty      -- (x : A) -> B
-  | Let Name Ty Tm Tm  -- let x : A = t in u
+  = Var Name             -- x
+  | Lam Name Tm          -- \x. t
+  | App Tm Tm            -- t u
+  | U                    -- U
+  | Pi Name Ty Ty        -- (x : A) -> B
+  | Let Name Ty Tm Tm    -- let x : A = t in u
+  | SrcPos SourcePos Tm  -- source position for error reporting
 
 -- type checking
 --------------------------------------------------------------------------------
@@ -81,6 +91,7 @@ eval env = \case
   Pi x a b    -> VPi x (eval env a) (\u -> eval ((x, Just u):env) b)
   Let x _ t u -> eval ((x, Just (eval env t)):env) u
   U           -> VU
+  SrcPos _ t  -> eval env t
 
 quote :: Env -> Val -> Tm
 quote env = \case
@@ -121,30 +132,52 @@ conv env t u = case (t, u) of
 
 type VTy = Val
 type Cxt = [(Name, VTy)]
-type M   = Either String
+
+-- | Typechecking monad. After we throw an error, we annotate it at the innermost
+--   point in the syntax where source position information is available from
+--   a 'SrcPos' 'Tm' constructor.
+type M = Either (String, Maybe SourcePos)
+
+reportErr :: String -> M a
+reportErr str = Left (str, Nothing)
+
+quoteShow :: Env -> Val -> String
+quoteShow env = show . quote env
+
+addPos :: SourcePos -> M a -> M a
+addPos pos ma = case ma of
+  Left (msg, Nothing) -> Left (msg, Just pos)
+  x -> x
 
 check :: Env -> Cxt -> Raw -> VTy -> M ()
 check env cxt t a = case (t, a) of
+  (SrcPos pos t, _) -> addPos pos (check env cxt t a)
+
   (Lam x t, VPi (fresh env -> x') a b) ->
     check ((x, Just (VVar x')):env) ((x, a):cxt) t (b (VVar x'))
 
   (Let x a' t' u, _) -> do
     check env cxt a' VU
-    let a'' = eval env a'
+    let ~a'' = eval env a'
     check env cxt t' a''
     check ((x, Just (eval env t')):env) ((x, a''):cxt) u a
 
   _ -> do
     tty <- infer env cxt t
     unless (conv env tty a) $
-      Left ("type mismatch:\nexpected:\n" ++ show (quote env a) ++
-            "\ninferred:\n" ++ show (quote env tty))
+      reportErr (printf
+        "type mismatch\n\nexpected type:\n\n  %s\n\ninferred type:\n\n  %s\n"
+        (quoteShow env a) (quoteShow env tty))
 
 infer :: Env -> Cxt -> Raw -> M VTy
 infer env cxt = \case
-  Var "_" -> Left "_ is not a valid name"
-  Var x   -> maybe (Left ("name not in scope: " ++ x)) Right (lookup x cxt)
-  U       -> pure VU
+  SrcPos pos t -> addPos pos (infer env cxt t)
+
+  Var x -> case lookup x cxt of
+             Nothing -> reportErr $ "Name not in scope: " ++ x
+             Just a  -> pure a
+
+  U -> pure VU
 
   App t u -> do
     tty <- infer env cxt t
@@ -152,9 +185,11 @@ infer env cxt = \case
       VPi _ a b -> do
         check env cxt u a
         pure (b (eval env u))
-      _ -> Left "expected a function type"
+      tty -> reportErr $
+        "Expected a function type, instead inferred:\n\n  "
+        ++ quoteShow env tty
 
-  Lam{} -> Left "can't infer type for lambda"
+  Lam{} -> reportErr "Can't infer type for lambda expresion"
 
   Pi x a b -> do
     check env cxt a VU
@@ -163,10 +198,9 @@ infer env cxt = \case
 
   Let x a t u -> do
     check env cxt a VU
-    let a' = eval env a
+    let ~a' = eval env a
     check env cxt t a'
     infer ((x, Just (eval env t)):env) ((x, a'):cxt) u
-
 
 
 --------------------------------------------------------------------------------
@@ -208,6 +242,7 @@ prettyTm prec = go (prec /= 0) where
       ("let "++) . (x++) . (" : "++) . go False a . ("\n    = "++)
       . go False t  . ("\nin\n"++) . go False  u
     U -> ('U':)
+    SrcPos _ t -> go p t
 
 instance Show Tm where showsPrec = prettyTm
 
@@ -220,11 +255,14 @@ type Parser = Parsec Void String
 ws :: Parser ()
 ws = L.space C.space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
 
-lexeme     = L.lexeme ws
-symbol s   = lexeme (C.string s)
-char c     = lexeme (C.char c)
-parens p   = char '(' *> p <* char ')'
-pArrow     = symbol "→" <|> symbol "->"
+withPos :: Parser Tm -> Parser Tm
+withPos p = SrcPos <$> getSourcePos <*> p
+
+lexeme   = L.lexeme ws
+symbol s = lexeme (C.string s)
+char c   = lexeme (C.char c)
+parens p = char '(' *> p <* char ')'
+pArrow   = symbol "→" <|> symbol "->"
 
 keyword :: String -> Bool
 keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
@@ -235,18 +273,19 @@ pIdent = try $ do
   guard (not (keyword x))
   x <$ ws
 
-pAtom  = (Var <$> pIdent) <|> parens pTm <|> (U <$ symbol "U")
-pSpine = foldl1 App <$> some pAtom
+pBinder = pIdent <|> symbol "_"
+pAtom   = (Var <$> pIdent) <|> parens pTm <|> (U <$ symbol "U")
+pSpine  = foldl1 App <$> some pAtom
 
 pLam = do
   char 'λ' <|> char '\\'
-  xs <- some pIdent
+  xs <- some pBinder
   char '.'
   t <- pTm
   pure (foldr Lam t xs)
 
 pPi = do
-  dom <- some (parens ((,) <$> some pIdent <*> (char ':' *> pTm)))
+  dom <- some (parens ((,) <$> some pBinder <*> (char ':' *> pTm)))
   pArrow
   cod <- pTm
   pure $ foldr (\(xs, a) t -> foldr (\x -> Pi x a) t xs) cod dom
@@ -259,7 +298,7 @@ funOrSpine = do
 
 pLet = do
   symbol "let"
-  x <- pIdent
+  x <- pBinder
   symbol ":"
   a <- pTm
   symbol "="
@@ -268,7 +307,7 @@ pLet = do
   u <- pTm
   pure $ Let x a t u
 
-pTm  = pLam <|> pLet <|> try pPi <|> funOrSpine
+pTm  = withPos (pLam <|> pLet <|> try pPi <|> funOrSpine)
 pSrc = ws *> pTm <* eof
 
 parseString :: String -> IO Tm
@@ -276,38 +315,51 @@ parseString src =
   case parse pSrc "(stdin)" src of
     Left e -> do
       putStrLn $ errorBundlePretty e
-      exitFailure
+      exitSuccess
     Right t ->
       pure t
 
-parseStdin :: IO Tm
-parseStdin = parseString =<< getContents
-
+parseStdin :: IO (Tm, String)
+parseStdin = do
+  file <- getContents
+  tm   <- parseString file
+  pure (tm, file)
 
 -- main
 --------------------------------------------------------------------------------
 
+displayError :: String -> (String, Maybe SourcePos) -> IO ()
+displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))) = do
+  let lnum = show linum
+      lpad = map (const ' ') lnum
+  printf "%s:%d:%d:\n" path linum colnum
+  printf "%s |\n"    lpad
+  printf "%s | %s\n" lnum (lines file !! (linum - 1))
+  printf "%s | %s\n" lpad (replicate (colnum - 1) ' ' ++ "^")
+  printf "%s\n" msg
+displayError _ _ = error "displayError: impossible: no available source position"
+
 helpMsg = unlines [
-  "usage: typecheck [--help|nf|type]",
+  "usage: elabzoo-typecheck [--help|nf|type]",
   "  --help : display this message",
-  "  nf     : read & typecheck expression from stdin, print its normal form",
+  "  nf     : read & typecheck expression from stdin, print its normal form and type",
   "  type   : read & typecheck expression from stdin, print its type"]
 
-mainWith :: IO [String] -> IO Tm -> IO ()
+mainWith :: IO [String] -> IO (Tm, String) -> IO ()
 mainWith getOpt getTm = do
   getOpt >>= \case
     ["--help"] -> putStrLn helpMsg
     ["nf"]   -> do
-      t <- getTm
+      (t, file) <- getTm
       case infer [] [] t of
-        Left err -> putStrLn err
+        Left err -> displayError file err
         Right a  -> do
           print $ nf0 t
           putStrLn "  :"
           print $ quote [] a
     ["type"] -> do
-      t <- getTm
-      either putStrLn (print . quote []) $ infer [] [] t
+      (t, file) <- getTm
+      either (displayError file) (print . quote []) $ infer [] [] t
     _          -> putStrLn helpMsg
 
 main :: IO ()
@@ -315,4 +367,4 @@ main = mainWith getArgs parseStdin
 
 -- | Run main with inputs as function arguments.
 main' :: String -> String -> IO ()
-main' mode src = mainWith (pure [mode]) (parseString src)
+main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)

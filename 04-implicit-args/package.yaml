@@ -36,6 +36,7 @@ dependencies:
 - containers
 - mtl
 - megaparsec
+- mmorph
 
 source-dirs: .
 

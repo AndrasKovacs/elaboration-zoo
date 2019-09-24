@@ -138,8 +138,8 @@ type Cxt = [(Name, VTy)]
 --   a 'SrcPos' 'Tm' constructor.
 type M = Either (String, Maybe SourcePos)
 
-reportErr :: String -> M a
-reportErr str = Left (str, Nothing)
+report :: String -> M a
+report str = Left (str, Nothing)
 
 quoteShow :: Env -> Val -> String
 quoteShow env = show . quote env
@@ -165,7 +165,7 @@ check env cxt t a = case (t, a) of
   _ -> do
     tty <- infer env cxt t
     unless (conv env tty a) $
-      reportErr (printf
+      report (printf
         "type mismatch\n\nexpected type:\n\n  %s\n\ninferred type:\n\n  %s\n"
         (quoteShow env a) (quoteShow env tty))
 
@@ -174,7 +174,7 @@ infer env cxt = \case
   SrcPos pos t -> addPos pos (infer env cxt t)
 
   Var x -> case lookup x cxt of
-             Nothing -> reportErr $ "Name not in scope: " ++ x
+             Nothing -> report $ "Name not in scope: " ++ x
              Just a  -> pure a
 
   U -> pure VU
@@ -185,11 +185,11 @@ infer env cxt = \case
       VPi _ a b -> do
         check env cxt u a
         pure (b (eval env u))
-      tty -> reportErr $
+      tty -> report $
         "Expected a function type, instead inferred:\n\n  "
         ++ quoteShow env tty
 
-  Lam{} -> reportErr "Can't infer type for lambda expresion"
+  Lam{} -> report "Can't infer type for lambda expresion"
 
   Pi x a b -> do
     check env cxt a VU
@@ -273,8 +273,11 @@ pIdent = try $ do
   guard (not (keyword x))
   x <$ ws
 
+pAtom =
+      withPos ((Var <$> pIdent) <|> (U <$ symbol "U"))
+  <|> parens pTm
+
 pBinder = pIdent <|> symbol "_"
-pAtom   = (Var <$> pIdent) <|> parens pTm <|> (U <$ symbol "U")
 pSpine  = foldl1 App <$> some pAtom
 
 pLam = do

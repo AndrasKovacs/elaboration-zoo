@@ -163,6 +163,23 @@ instance Show ElabError where
       "to a function type.")
       (show e) (show ty)
 
+report :: MonadError (e, Maybe SourcePos) m => e -> m a
+report e = throwError (e, Nothing)
+
+addPos :: SourcePos -> ElabM a -> ElabM a
+addPos pos ma =
+  catchError ma $ \(msg, mpos) -> throwError (msg, mpos <|> Just pos)
+
+displayError :: String -> (ElabError, Maybe SourcePos) -> IO ()
+displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))) = do
+  let lnum = show linum
+      lpad = map (const ' ') lnum
+  printf "%s:%d:%d:\n" path linum colnum
+  printf "%s |\n"    lpad
+  printf "%s | %s\n" lnum (lines file !! (linum - 1))
+  printf "%s | %s\n" lpad (replicate (colnum - 1) ' ' ++ "^")
+  printf "%s\n\n" (show msg)
+displayError _ _ = error "displayError: impossible: no available source position"
 
 --------------------------------------------------------------------------------
 
@@ -174,6 +191,9 @@ instance Show ElabError where
 type M e    = StateT (Int, MCxt) (Either (e, Maybe SourcePos))
 type ElabM  = M ElabError
 type UnifyM = M UnifyError
+
+mapError :: (e -> e') -> M e a -> M e' a
+mapError f = hoist (first (first f))
 
 -- | Empty context.
 nil :: Cxt
@@ -219,15 +239,6 @@ pattern VVar x = VNe (HVar x) []
 pattern VMeta :: Meta -> Val
 pattern VMeta m = VNe (HMeta m) []
 
-report :: MonadError (e, Maybe SourcePos) m => e -> m a
-report e = throwError (e, Nothing)
-
-quoteShowM :: Vals -> Val -> M e String
-quoteShowM env a = show <$> quoteM env a
-
-addPos :: SourcePos -> ElabM a -> ElabM a
-addPos pos ma =
-  catchError ma $ \(msg, mpos) -> throwError (msg, mpos <|> Just pos)
 
 -- | Generate a name such that it does not shadow anything in the current
 --   environment. De Bruijn indices would make this unnecessary in a more
@@ -322,7 +333,6 @@ checkSolution m sp rhs = lift $ go sp rhs where
     U        -> pure ()
     Meta m'  -> when (m == m') $
                   report $ OccursCheck m rhs
-
     Let{}    -> error "checkSolution: impossible: non-normal term"
 
 solve :: Vals -> Meta -> [Val] -> Val -> UnifyM ()
@@ -421,8 +431,7 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
     (t, va) <- infer cxt topT
     ~nTopA <- quoteM _vals topA
     ~nA    <- quoteM _vals va
-    hoist (first (first (CheckError nTopA nA)))
-          (unify _vals va topA)
+    mapError (CheckError nTopA nA) (unify _vals va topA)
     pure t
 
 -- | Create a fresh domain and codomain type.
@@ -461,8 +470,9 @@ infer cxt@Cxt{..} = \case
       va@(VNe (HMeta x) sp) -> do
         (a, b) <- freshPi cxt "x"
         ~na    <- quoteM _vals va
-        hoist (first (first $ ExpectedFunctionFromMeta na))
-              (unify _vals va (VPi "x" a b))
+        mapError
+          (ExpectedFunctionFromMeta na)
+          (unify _vals va (VPi "x" a b))
         pure (a, b)
 
       tty -> do
@@ -606,10 +616,11 @@ pIdent = try $ do
 pBinder :: Parser Name
 pBinder = pIdent <|> symbol "_"
 
-pAtom  = (RVar <$> pIdent)
-     <|> parens pTm
-     <|> (RU <$ symbol "U")
-     <|> (RHole <$ symbol "_")
+pAtom =
+      withPos ((    RVar <$> pIdent)
+                <|> (RU <$ symbol "U")
+                <|> (RHole <$ symbol "_"))
+  <|> parens pTm
 
 pSpine = foldl1 RApp <$> some pAtom
 
@@ -670,17 +681,6 @@ helpMsg = unlines [
   "  elab   : read & elaborate expression from stdin",
   "  nf     : read & elaborate expression from stdin, print its normal form",
   "  type   : read & elaborate expression from stdin, print its type"]
-
-displayError :: String -> (ElabError, Maybe SourcePos) -> IO ()
-displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))) = do
-  let lnum = show linum
-      lpad = map (const ' ') lnum
-  printf "%s:%d:%d:\n" path linum colnum
-  printf "%s |\n"    lpad
-  printf "%s | %s\n" lnum (lines file !! (linum - 1))
-  printf "%s | %s\n" lpad (replicate (colnum - 1) ' ' ++ "^")
-  printf "%s\n\n" (show msg)
-displayError _ _ = error "displayError: impossible: no available source position"
 
 mainWith :: IO [String] -> IO (Raw, String) -> IO ()
 mainWith getOpt getTm = do

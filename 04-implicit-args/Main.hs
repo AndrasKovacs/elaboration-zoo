@@ -3,6 +3,8 @@ module Main where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad
+import Control.Monad.Morph
+import Data.Bifunctor
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.Char
@@ -12,6 +14,7 @@ import Data.Void
 import System.Environment
 import System.Exit
 import Text.Megaparsec
+import Text.Printf
 
 import qualified Data.IntMap.Strict         as M
 import qualified Text.Megaparsec.Char       as C
@@ -74,6 +77,8 @@ ex1 = main' "elab" $ unlines [
   "           -> C (g a)",
   "    = \\f g a. f (g a) in",
 
+  "let compExample = comp (cons true) (cons false) nil in",
+
   -- nat
   "let Nat : U",
   "    = (N : U) -> (N -> N) -> N -> N in",
@@ -113,6 +118,7 @@ data Raw
   | RLet Name Raw Raw Raw
   | RHole
   | RStopInsertion Raw
+  | RSrcPos SourcePos Raw
   deriving Show
 
 type Meta = Int
@@ -132,7 +138,15 @@ data TyEntry = Bound VTy | Def VTy
 data Cxt = Cxt {_vals :: Vals, _types :: Sub TyEntry}
 
 -- | Monad for elaboration. The 'Int' counts the number of allocated metas.
-type ElabM = StateT (Int, MCxt) (Either String)
+--   After we throw an error, we annotate it at the innermost point in the
+--   syntax where source position information is available from a 'RSrcPos'
+--   constructor.
+type M e    = StateT (Int, MCxt) (Either (e, Maybe SourcePos))
+type ElabM  = M ElabError
+type UnifyM = M UnifyError
+
+mapError :: (e -> e') -> M e a -> M e' a
+mapError f = hoist (first (first f))
 
 -- | Empty context.
 nil :: Cxt
@@ -200,6 +214,81 @@ fresh vs x = case lookup x vs of
   Just _  -> fresh vs (x ++ "'")
   Nothing -> x
 
+
+-- Errors
+--------------------------------------------------------------------------------
+
+data UnifyError
+  = SpineError
+  -- | Meta, spine, rhs, offending variable
+  | ScopeError Meta [Name] Tm Name
+  | OccursCheck Meta Tm
+  | UnifyError Tm Tm
+
+data ElabError
+  = NameNotInScope Name
+  -- | Inferred type.
+  | ExpectedFunction Tm
+  -- | Expected type, inferred type, unification error.
+  | CheckError Tm Tm UnifyError
+  | ExpectedFunctionFromMeta Tm UnifyError
+  | NoNamedImplicitArg Name
+  | CannotInferNamedLam
+  | IcitMismatch Icit Icit
+
+instance Show UnifyError where
+  show = \case
+    SpineError -> "Non-variable value in meta spine."
+    ScopeError m sp rhs x -> printf
+      ("Solution scope error.\n" ++
+       "Meta %s can only depend on %s variables,\n" ++
+       "but the solution candidate\n\n" ++
+       "  %s\n\n" ++
+       "contains variable %s.")
+      (show m) (show sp) (show rhs) x
+    OccursCheck m rhs -> printf (
+      "Meta %s occurs cyclically in its solution candidate:\n\n" ++
+      "  %s")
+      (show m) (show rhs)
+    UnifyError lhs rhs -> printf
+      ("Cannot unify\n\n" ++
+       "  %s\n\n" ++
+       "with\n\n" ++
+       "  %s")
+      (show lhs) (show rhs)
+
+instance Show ElabError where
+  show = \case
+    NameNotInScope x ->
+      "Name not in scope: " ++ x
+    ExpectedFunction ty ->
+      "Expected a function type, instead inferred:\n\n  " ++ show ty
+    CheckError want have e -> printf (
+      "%s\n\n" ++
+      "Error occurred while unifying inferred type\n\n" ++
+      "  %s\n\n" ++
+      "with expected type\n\n" ++
+      "  %s")
+      (show e) (show have) (show want)
+    ExpectedFunctionFromMeta ty e -> printf (
+      "%s\n\n" ++
+      "Error occurred while trying to refine inferred type\n\n" ++
+      "  %s\n\n" ++
+      "to a function type.")
+      (show e) (show ty)
+    NoNamedImplicitArg x -> printf
+      "No named implicit argument with name %s." x
+    CannotInferNamedLam ->
+      "No type can be inferred for lambda with named implicit argument."
+    IcitMismatch i i' -> printf (
+      "Function icitness mismatch: expected %s, got %s.")
+      (show i) (show i')
+
+report :: MonadError (e, Maybe SourcePos) m => e -> m a
+report e = throwError (e, Nothing)
+
+--------------------------------------------------------------------------------
+
 -- | Evaluation is up to a metacontext, so whenever we inspect a value during
 --   elaboration, we always have to force it first, i.e. unfold solved metas and
 --   compute until we hit a rigid head.
@@ -209,7 +298,7 @@ force ms = \case
     force ms (foldr (\(u, i) v -> vApp v u i) t sp)
   v -> v
 
-forceM :: Val -> ElabM Val
+forceM :: Val -> M e Val
 forceM v = gets (\(_, ms) -> force ms v)
 
 vApp :: Val -> Val -> Icit -> Val
@@ -228,7 +317,7 @@ eval ms = go where
     Let x _ t u -> go ((x, Just (go vs t)):vs) u
     U           -> VU
 
-evalM :: Cxt -> Tm -> ElabM Val
+evalM :: Cxt -> Tm -> M e Val
 evalM cxt t = gets (\(_, ms) -> eval ms (_vals cxt) t)
 
 -- |  Quote into fully forced normal forms.
@@ -244,7 +333,7 @@ quote ms = go where
       Pi x i (go vs a) (go ((x, Nothing):vs) (b (VVar x)))
     VU -> U
 
-quoteM :: Vals -> Val -> ElabM Tm
+quoteM :: Vals -> Val -> M e Tm
 quoteM vs v = gets $ \(_, ms) -> quote ms vs v
 
 nf :: MCxt -> Vals -> Tm -> Tm
@@ -258,10 +347,10 @@ nfM vs t = gets $ \(_, ms) -> nf ms vs t
 --------------------------------------------------------------------------------
 
 -- | Check that all entries in a spine are bound variables.
-checkSp :: [Val] -> ElabM [Name]
+checkSp :: [Val] -> UnifyM [Name]
 checkSp vs = forM vs $ \v -> forceM v >>= \case
   VVar x -> pure x
-  _      -> throwError "non-variable value in meta spine"
+  _      -> report SpineError
 
 -- | Scope check + occurs check a solution candidate. Inputs are a meta, a spine
 --   of variable names (which comes from checkSp) and a RHS term in normal
@@ -269,21 +358,21 @@ checkSp vs = forM vs $ \v -> forceM v >>= \case
 --   normal forms (because of size explosion), but here it's the simplest thing
 --   we can do. We don't have to worry about shadowing here, because normal
 --   forms have no shadowing by our previous quote implementation.
-checkSolution :: Meta -> [Name] -> Tm -> ElabM ()
+checkSolution :: Meta -> [Name] -> Tm -> UnifyM ()
 checkSolution m sp rhs = lift $ go sp rhs where
-  go :: [Name] -> Tm -> Either String ()
+  go :: [Name] -> Tm -> Either (UnifyError, Maybe SourcePos) ()
   go ns = \case
     Var x      -> unless (elem x ns) $
-                    throwError ("solution scope error: " ++ show (m, sp, rhs))
+                    report $ ScopeError m sp rhs x
     App t u _  -> go ns t >> go ns u
     Lam x i t  -> go (x:ns) t
     Pi x i a b -> go ns a >> go (x:ns) b
     U          -> pure ()
     Meta m'    -> when (m == m') $
-                    throwError ("occurs check: " ++ show (m, rhs))
+                    report $ OccursCheck m rhs
     Let{}      -> error "impossible"
 
-solve :: Vals -> Meta -> [Val] -> Val -> ElabM ()
+solve :: Vals -> Meta -> [Val] -> Val -> UnifyM ()
 solve vs m sp rhs = do
   -- check that spine consists of bound vars
   sp <- checkSp sp
@@ -314,8 +403,9 @@ newMeta Cxt{..} = do
 --   definitionally equal in the newly updated metacontext. We only need here
 --   the value environment for generating non-shadowing names; with de Bruijn
 --   levels we would only need an Int denoting the size of the environment.
-unify :: Vals -> Val -> Val -> ElabM ()
+unify :: Vals -> Val -> Val -> UnifyM ()
 unify = go where
+  go :: Vals -> Val -> Val -> UnifyM ()
   go vs t u = do
     ms <- gets snd
     case (force ms t, force ms u) of
@@ -336,8 +426,10 @@ unify = go where
       (VNe h sp, VNe h' sp') | h == h' -> zipWithM_ (go vs) (fst <$> sp) (fst <$> sp')
       (VNe (HMeta m) sp, t) -> solve vs m (fst <$> sp) t
       (t, VNe (HMeta m) sp) -> solve vs m (fst <$> sp) t
-      (t, t') -> throwError ("Can't unify " ++ show (quote ms vs t) ++ " with " ++
-                             show (quote ms vs t'))
+      (t, t') -> do
+        t  <- quoteM vs t
+        t' <- quoteM vs t'
+        report (UnifyError t t')
 
 -- Elaboration
 --------------------------------------------------------------------------------
@@ -370,11 +462,17 @@ insertMetas ins cxt action = case ins of
               m  <- newMeta cxt
               mv <- evalM cxt m
               go (App t m Impl) (b mv)
-          _ -> throwError ("No named implicit argument with name " ++ x)
+          _ -> report (NoNamedImplicitArg x)
     go t va
+
+addPos :: SourcePos -> ElabM a -> ElabM a
+addPos pos ma =
+  catchError ma $ \(msg, mpos) -> throwError (msg, mpos <|> Just pos)
 
 check :: Cxt -> Raw -> VTy -> ElabM Tm
 check cxt@Cxt{..} topT topA = case (topT, topA) of
+  (RSrcPos pos t, _) -> addPos pos (check cxt t topA)
+
   -- if the icitness of the lambda matches the Pi type,
   -- check the lambda body as usual
   (RLam x ni t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') ni -> do
@@ -400,7 +498,9 @@ check cxt@Cxt{..} topT topA = case (topT, topA) of
 
   _ -> do
     (t, va) <- infer MIYes cxt topT
-    unify _vals va topA
+    ~nTopA <- quoteM _vals topA
+    ~nA    <- quoteM _vals va
+    mapError (CheckError nTopA nA) (unify _vals va topA)
     pure t
 
 -- | Create a fresh domain and codomain type.
@@ -414,11 +514,11 @@ freshPi cxt@Cxt{..} x = do
 
 infer :: MetaInsertion -> Cxt -> Raw -> ElabM (Tm, VTy)
 infer ins cxt@Cxt{..} = \case
+  RSrcPos pos t -> addPos pos (infer ins cxt t)
 
-  RVar x -> insertMetas ins cxt $ do
-    maybe (throwError ("var not in scope: " ++ x))
-          (\a -> pure (Var x, case a of Bound a -> a; Def a -> a))
-          (lookup x _types)
+  RVar x -> insertMetas ins cxt $ case lookup x _types of
+    Nothing -> report $ NameNotInScope x
+    Just a  -> pure (Var x, case a of Bound a -> a; Def a -> a)
 
   RU -> pure (U, VU)
 
@@ -430,14 +530,18 @@ infer ins cxt@Cxt{..} = \case
     (a, b) <- forceM va >>= \case
       VPi x i' a b -> do
         unless (i == i') $
-          throwError "Function argument implictness mismatch"
+          report $ IcitMismatch i i'
         pure (a, b)
       va@(VNe (HMeta x) sp) -> do
         (a, b) <- freshPi cxt "x"
-        unify _vals va (VPi "x" i a b)
+        ~na <- quoteM _vals va
+        mapError
+          (ExpectedFunctionFromMeta na)
+          (unify _vals va (VPi "x" i a b))
         pure (a, b)
-      _ ->
-        throwError "expected a function in application"
+      tty -> do
+        tty <- quoteM _vals tty
+        report $ ExpectedFunction tty
     u <- check cxt u a
     ~vu <- evalM cxt u
     pure (App t u i, b vu)
@@ -445,8 +549,8 @@ infer ins cxt@Cxt{..} = \case
   -- we infer type for lambdas by checking them with a
   -- a function type made of fresh metas.
   RLam _ Left{} _ ->
-    throwError ("Cannot infer type for lambda with implicit named "
-             ++ "argument")
+    report $ CannotInferNamedLam
+
   RLam x (Right i) t -> insertMetas ins cxt $ do
     (a, b) <- freshPi cxt x
     let pi = VPi x i a b
@@ -569,6 +673,9 @@ type Parser = Parsec Void String
 ws :: Parser ()
 ws = L.space C.space1 (L.skipLineComment "--") (L.skipBlockComment "{-" "-}")
 
+withPos :: Parser Raw -> Parser Raw
+withPos p = RSrcPos <$> getSourcePos <*> p
+
 lexeme     = L.lexeme ws
 symbol s   = lexeme (C.string s)
 char c     = lexeme (C.char c)
@@ -587,10 +694,11 @@ pIdent = try $ do
   x <$ ws
 
 pAtom :: Parser Raw
-pAtom  = (RVar <$> pIdent)
-     <|> parens pTm
-     <|> (RU <$ char 'U')
-     <|> (RHole <$ char '_')
+pAtom  =
+      withPos (    (RVar <$> pIdent)
+               <|> (RU <$ char 'U')
+               <|> (RHole <$ char '_'))
+  <|> parens pTm
 
 pArg :: Parser (Maybe (Either Name Icit, Raw))
 pArg = (Nothing <$ char '!')
@@ -654,7 +762,7 @@ pLet = do
   pure $ RLet x (maybe RHole id ann) t u
 
 pTm :: Parser Raw
-pTm = pLam <|> pLet <|> try pPi <|> pFunOrSpine
+pTm = withPos (pLam <|> pLet <|> try pPi <|> pFunOrSpine)
 
 pSrc :: Parser Raw
 pSrc = ws *> pTm <* eof
@@ -668,8 +776,11 @@ parseString src =
     Right t ->
       pure t
 
-parseStdin :: IO Raw
-parseStdin = parseString =<< getContents
+parseStdin :: IO (Raw, String)
+parseStdin = do
+  src <- getContents
+  t <- parseString src
+  pure (t, src)
 
 -- main
 --------------------------------------------------------------------------------
@@ -681,17 +792,28 @@ helpMsg = unlines [
   "  nf     : read & elaborate expression from stdin, print its normal form",
   "  type   : read & elaborate expression from stdin, print its type"]
 
-mainWith :: IO [String] -> IO Raw -> IO ()
+displayError :: String -> (ElabError, Maybe SourcePos) -> IO ()
+displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))) = do
+  let lnum = show linum
+      lpad = map (const ' ') lnum
+  printf "%s:%d:%d:\n" path linum colnum
+  printf "%s |\n"    lpad
+  printf "%s | %s\n" lnum (lines file !! (linum - 1))
+  printf "%s | %s\n" lpad (replicate (colnum - 1) ' ' ++ "^")
+  printf "%s\n\n" (show msg)
+displayError _ _ = error "displayError: impossible: no available source position"
+
+mainWith :: IO [String] -> IO (Raw, String) -> IO ()
 mainWith getOpt getTm = do
   let elab = do
-        t <- getTm
+        (t, src) <- getTm
         case (flip evalStateT (0, mempty) $ do
                (t, a) <- infer MIYes nil t
                t  <- zonkM [] t
                nt <- nfM [] t
                na <- quoteM [] a
                pure (t, nt, na)) of
-          Left err -> putStrLn err >> exitSuccess
+          Left err -> displayError src err >> exitSuccess
           Right x  -> pure x
 
   getOpt >>= \case
@@ -712,4 +834,4 @@ main = mainWith getArgs parseStdin
 
 -- | Run main with inputs as function arguments.
 main' :: String -> String -> IO ()
-main' mode src = mainWith (pure [mode]) (parseString src)
+main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)

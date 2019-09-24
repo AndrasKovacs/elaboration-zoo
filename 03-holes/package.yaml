@@ -11,8 +11,8 @@ category:            Language
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
 default-extensions:
-- LambdaCase
 - FlexibleContexts
+- LambdaCase
 - NoMonomorphismRestriction
 - OverloadedStrings
 - PatternSynonyms
@@ -32,9 +32,9 @@ ghc-options:
 dependencies:
 - base >= 4.7 && < 5
 - containers
-- mtl
 - megaparsec
 - mmorph
+- mtl
 
 source-dirs: .
 

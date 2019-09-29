@@ -6,3 +6,4 @@ packages:
   - 02-typecheck/
   - 03-holes/
   - 04-implicit-args/
+  - experimental/poly-instantiation/

@@ -1,104 +1,82 @@
 
-module Main where
 
-import Control.Applicative hiding (many, some)
-import Control.Monad
-import Control.Monad.Morph
-import Data.Bifunctor
-import Control.Monad.Except
-import Control.Monad.State.Strict
-import Data.Char
-import Data.Foldable
-import Data.Maybe
-import Data.Void
-import System.Environment
-import System.Exit
-import Text.Megaparsec
-import Text.Printf
-
-import qualified Data.Set                   as S
-import qualified Data.IntMap.Strict         as M
-import qualified Text.Megaparsec.Char       as C
-import qualified Text.Megaparsec.Char.Lexer as L
-
+{-
 
 ex1 = main' "elab" $ unlines [
-  "let kek = \\x.x in",
 
-  "let id : {A} -> A -> A = \\x. x in",
+  "let Bool  : U = (B : _) → B → B → B in",
+  "let true  : Bool = λB t f. t in",
+  "let false : Bool = λ B t f. f in",
+  "let not   : Bool → Bool = λ b B t f. b B f t in",
 
-  -- by default metas are inserted for implicit arguments, but
-  -- (!) can be used to stop insertion at any point. The (id!) expression
-  --  has a polymorphic type, {A} → A → A
-  "let id2 : {A} → A → A = id (id!) in",
+  "let Pair  : U → U → U = λ A B. (P : U) → (A → B → P) → P in",
+  "let pair  : {A B} → A → B → Pair A B = λ a b P p. p a b in",
+  "let fst   : {A B} → Pair A B → A = λ f. f _ (λ x y. x) in",
+  "let snd   : {A B} → Pair A B → B = λ f. f _ (λ x y. y) in",
 
-  "let const : {A B} -> A -> B -> A",
-  "    = \\x y. x in",
+  "let List   : U → U = λ A. (L : U) → (A → L → L) → L → L in",
+  "let nil    : {A} → List A = λ L c n. n in",
+  "let cons   : {A} → A → List A → List A = λ A As L c n. c A (As L c n) in",
+  "let single : {A} → A → List A = λ A. cons A nil in",
+  "let cat    : {A} → List A → List A → List A",
+  "             = λ xs ys L c n. xs L c (ys L c n) in",
 
-  -- definition types can be omitted
-  "let constTy = {A B} → A → B → A in",
+  "let the    : (A : _) → A → A = λ A x. x in",
+  "let id     : {A : U} → A → A = λx. x in",
+  "let Nat    : U = (N : U) → (N → N) → N → N in",
+  "let zero   : Nat = λ N s z. z in",
+  "let inc    : Nat → Nat = λ n N s z. s (n N s z) in",
+  "let choose : {A} → A → A → A = λ x y. x in",
+  "let auto   : ({A} → A → A) → ({A} → A → A) = λ f. f in",
+  "let auto2  : {A} → ({A} → A → A) → A → A = λ f. f in",
+  "let tail   : {A} → List A → List A = λ as. as in",
+  "let poly   : ({A} → A → A) → Pair Nat Bool = λ f. pair (f zero) (f true) in",
+  "let length : {A} → List A → Nat = λ as N s z. as N (λ _. s) z in",
+  "let head   : {A} → List A → A = _ in",
 
-  -- explicit id function, used for annotation as in Idris
-  "let the : (A : _) -> A -> A = \\_ x. x in",
+  "let ids : List ({A} → A → A) = nil in",
+  "let map : {A B} → (A → B) → List A → List B",
+  "          = λ f as L c n. as L (λ a. c (f a)) n in",
+  "let app : {A B} → (A → B) → A → B = λ f. f in",
+  "let revapp : {A B} → A → (A → B) → B = λ a f. f a in",
+  "let flip : {A B C} → (A → B → C) → B → A → C = λ f b a. f a b in",
 
-  -- implicit application follows Agda convention.
-  "let namedArgTest = const {B = U} U in",
-  "let namedArgTest2 = the constTy (λ x y. x) {B = U} U in",
+  "let ST = Pair in",
+  "let runST : {A} → ({S} → ST S A) → A = λ f. snd (f {U}) in",
+  "let argST : {S} → ST S Nat = _ in",
 
-  -- bool
-  "let Bool : U",
-  "    = (B : _) -> B -> B -> B in",
-  "let true : Bool",
-  "    = \\B t f. t in",
-  "let false : Bool",
-  "    = \\B t f. f in",
-  "let not : Bool -> Bool",
-  "    = \\b B t f. b B f t in",
+  "let const : {A B} → A → B → A = λ x y. x in",
 
-  -- lists
-  "let List : U -> U",
-  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L in",
-  "let nil : {A} -> List A",
-  "    = \\L cons nil. nil in",
-  "let cons : {A} -> A -> List A -> List A",
-  "    = \\x xs L cons nil. cons x (xs L cons nil) in",
-  "let map : {A B} -> (A -> B) -> List A -> List B",
-  "    = \\{A}{B} f xs L c n. xs L (\\a. c (f a)) n in",
-  "let list1 : List Bool",
-  "    = cons true (cons false (cons true nil)) in",
+  ------------------------------------------------------------
 
-  -- using ! when mapping over lists
-  -- idlist has type "List ({A} -> A -> A)"
-  "let idlist = map (const (id!)) list1 in",
+  "let test = inc (id zero) in",
+
+  "let test : List ({A} → A → A) = map (const id) (cons true nil) in",
 
   -- dependent function composition
-  "let comp : {A}{B : A -> U}{C : {a} -> B a -> U}",
-  "           (f : {a}(b : B a) -> C b)",
-  "           (g : (a : A) -> B a)",
+  "let comp : {A}{B : A → U}{C : {a} → B a → U}",
+  "           (f : {a}(b : B a) → C b)",
+  "           (g : (a : A) → B a)",
   "           (a : A)",
-  "           -> C (g a)",
-  "    = \\f g a. f (g a) in",
+  "           → C (g a)",
+  "    = λ f g a. f (g a) in",
 
-  "let compExample = comp (cons true) (cons false) nil in",
+  "let comp2 : {A B C} → (B → C) → (A → B) → A → C",
+  "    = λ f g x. f (g x) in",
 
-  -- nat
-  "let Nat : U",
-  "    = (N : U) -> (N -> N) -> N -> N in",
-  "let mul : Nat -> Nat -> Nat",
-  "    = \\a b N s z. a _ (b _ s) z in",
-  "let ten : Nat",
-  "    = \\N s z. s (s (s (s (s (s (s (s (s (s z))))))))) in",
-  "let hundred = mul ten ten in",
+
+  -- needs pruning with comp!
+  "let compExample : List Bool → List Bool = comp2 (cons true) (cons false) in",
 
   -- Leibniz equality
   "let Eq : {A} -> A -> A -> U",
-  "    = \\{A} x y. (P : A -> U) -> P x -> P y in",
+  "    = λ{A} x y. (P : A -> U) -> P x -> P y in",
   "let refl : {A}{x : A} -> Eq x x",
-  "    = \\_ px. px in",
+  "    = λ _ px. px in",
 
-  "the (Eq (mul ten ten) hundred) refl"
+  -- "the (Eq (mul ten ten) hundred) refl"
+  "U"
   ]
-
 
 --------------------------------------------------------------------------------
 
@@ -123,11 +101,26 @@ data Raw
   | RSrcPos SourcePos Raw
   deriving Show
 
-type Meta = Int
+-- | Elaboration problem identifier.
+type MId = Int
 
--- | Metacontext. An unsolved meta is just a meta which isn't contained in
---   the metacontext.
-type MCxt = M.IntMap Val
+-- | List of blocked problems.
+type Blocking = [MId]
+
+data MetaEntry =
+
+  -- | Unsolved meta
+    Unsolved Blocking
+  | Solved Val
+
+
+  -- | Deferred checking, blocking on a 'Meta', blocking others.
+  | Check SourcePos Cxt Raw ~VTy MId Blocking
+  -- | Solved guarded constant
+  | Unguarded Tm ~Val
+
+-- | Metacontext, containing solved and unsolved elaboration problems.
+type MCxt = M.IntMap MetaEntry
 
 type Ty  = Tm
 type VTy = Val
@@ -143,12 +136,7 @@ data Cxt = Cxt {_vals :: Vals, _types :: Sub TyEntry}
 --   After we throw an error, we annotate it at the innermost point in the
 --   syntax where source position information is available from a 'RSrcPos'
 --   constructor.
-type M e    = StateT (Int, MCxt) (Either (e, Maybe SourcePos))
-type ElabM  = M ElabError
-type UnifyM = M UnifyError
-
-mapError :: (e -> e') -> M e a -> M e' a
-mapError f = hoist (first (first f))
+type ElabM = ReaderT SourcePos (StateT (Int, MCxt) (Either (ElabError, SourcePos)))
 
 -- | Empty context.
 nil :: Cxt
@@ -162,6 +150,26 @@ bind x a (Cxt vs tys) = Cxt ((x, Nothing):vs) ((x, Bound a):tys)
 define :: Name -> Val -> VTy -> Cxt -> Cxt
 define x v a (Cxt vs tys) = Cxt ((x, Just v):vs) ((x, Def a):tys)
 
+getMetaEntry :: MId -> ElabM MetaEntry
+getMetaEntry m = gets $ \(_, ms) -> ms M.! m
+
+putMetaEntry :: MId -> MetaEntry -> ElabM ()
+putMetaEntry m p = modify' (fmap (M.insert m p))
+
+newMetaEntry :: MetaEntry -> ElabM MId
+newMetaEntry p = do
+  (i, ms) <- get
+  put (i + 1, M.insert i p ms)
+  pure i
+
+subscribe :: MId -> MId -> ElabM ()
+subscribe x y = do
+  getMetaEntry y >>= \case
+    Unsolved blocked       -> putMetaEntry y (Unsolved (x:blocked))
+    Check pos cxt t a m bs -> putMetaEntry y (Check pos cxt t a m (x:bs))
+    _                      -> error "impossible"
+
+
 -- | Well-typed core terms without holes.
 --   We use names everywhere instead of indices or levels.
 data Tm
@@ -171,9 +179,10 @@ data Tm
   | U
   | Pi Name Icit Ty Ty
   | Let Name Ty Tm Tm
-  | Meta Meta
+  | Meta MId
+  | Guarded MId
 
-data Head = HMeta Meta | HVar Name deriving Eq
+data Head = HMeta MId | HVar Name | HGuarded MId deriving Eq
 
 -- | We use a spine form for neutral values, i.e. we have the head variable and
 --   all arguments in a list. We need convenient access to both head and spine
@@ -194,8 +203,11 @@ type Sub  a = [Bind a]
 pattern VVar :: Name -> Val
 pattern VVar x = VNe (HVar x) []
 
-pattern VMeta :: Meta -> Val
-pattern VMeta m = VNe (HMeta m) []
+pattern VMeta :: MId -> Val
+pattern VMeta i = VNe (HMeta i) []
+
+pattern VGuarded :: MId -> Val
+pattern VGuarded i = VNe (HGuarded i) []
 
 -- | Option for behavior of meta insertion for implicit arguments.
 data MetaInsertion
@@ -220,27 +232,22 @@ fresh vs x = case lookup x vs of
 -- Errors
 --------------------------------------------------------------------------------
 
-data UnifyError
-  = SpineError
-  -- | Meta, spine, rhs, offending variable
-  | ScopeError Meta [Name] Tm Name
-  | OccursCheck Meta Tm
-  | UnifyError Tm Tm
-
 data ElabError
-  = NameNotInScope Name
+  = SpineError Tm
+  -- | Meta, spine, rhs, offending variable
+  | ScopeError MId [Name] Tm Name
+  | OccursCheck MId Tm
+  | UnifyError Tm Tm
+  | NameNotInScope Name
   -- | Inferred type.
   | ExpectedFunction Tm
-  -- | Expected type, inferred type, unification error.
-  | CheckError Tm Tm UnifyError
-  | ExpectedFunctionFromMeta Tm UnifyError
   | NoNamedImplicitArg Name
   | CannotInferNamedLam
   | IcitMismatch Icit Icit
 
-instance Show UnifyError where
+instance Show ElabError where
   show = \case
-    SpineError -> "Non-variable value in meta spine."
+    SpineError t -> printf "Non-variable value in meta spine:\n\n  %s"  (show t)
     ScopeError m sp rhs x -> printf
       ("Solution scope error.\n" ++
        "Meta %s can only depend on %s variables,\n" ++
@@ -258,26 +265,10 @@ instance Show UnifyError where
        "with\n\n" ++
        "  %s")
       (show lhs) (show rhs)
-
-instance Show ElabError where
-  show = \case
     NameNotInScope x ->
       "Name not in scope: " ++ x
     ExpectedFunction ty ->
       "Expected a function type, instead inferred:\n\n  " ++ show ty
-    CheckError want have e -> printf (
-      "%s\n\n" ++
-      "Error occurred while unifying inferred type\n\n" ++
-      "  %s\n\n" ++
-      "with expected type\n\n" ++
-      "  %s")
-      (show e) (show have) (show want)
-    ExpectedFunctionFromMeta ty e -> printf (
-      "%s\n\n" ++
-      "Error occurred while trying to refine inferred type\n\n" ++
-      "  %s\n\n" ++
-      "to a function type.")
-      (show e) (show ty)
     NoNamedImplicitArg x -> printf
       "No named implicit argument with name %s." x
     CannotInferNamedLam ->
@@ -286,56 +277,70 @@ instance Show ElabError where
       "Function icitness mismatch: expected %s, got %s.")
       (show i) (show i')
 
-report :: MonadError (e, Maybe SourcePos) m => e -> m a
-report e = throwError (e, Nothing)
+-- report :: MonadError (e, Maybe SourcePos) m => e -> m a
+-- report e = throwError (e, Nothing)
+report :: ElabError -> ElabM a
+report err = do
+  pos <- ask
+  throwError (err, pos)
 
 --------------------------------------------------------------------------------
+
+forceHead :: MCxt -> Head -> Maybe Val
+forceHead m = \case
+  HMeta    x | Solved v      <- m M.! x -> Just v
+  HGuarded x | Unguarded _ v <- m M.! x -> Just v
+  _ -> Nothing
 
 -- | Evaluation is up to a metacontext, so whenever we inspect a value during
 --   elaboration, we always have to force it first, i.e. unfold solved metas and
 --   compute until we hit a rigid head.
 force :: MCxt -> Val -> Val
-force ms = \case
-  VNe (HMeta m) sp | Just t <- M.lookup m ms ->
-    force ms (foldr (\(u, i) v -> vApp v u i) t sp)
+force m = \case
+  VNe h sp | Just t <- forceHead m h ->
+    force m (foldr (\(u, i) v -> vApp v u i) t sp)
   v -> v
 
-forceM :: Val -> M e Val
+forceM :: Val -> ElabM Val
 forceM v = gets (\(_, ms) -> force ms v)
 
 vApp :: Val -> Val -> Icit -> Val
-vApp (VLam _ _ t) ~u i = t u
-vApp (VNe h sp)   ~u i = VNe h ((u, i):sp)
-vApp _             _ i = error "vApp: impossible"
+vApp (VLam _ _ t) u i = t u
+vApp (VNe h sp)   u i = VNe h ((u, i):sp)
+vApp _            _ i = error "vApp: impossible"
 
 eval :: MCxt -> Vals -> Tm -> Val
-eval ms = go where
+eval m = go where
   go vs = \case
     Var x       -> maybe (VVar x) id (fromJust $ lookup x vs)
-    Meta m      -> maybe (VMeta m) id (M.lookup m ms)
+    Meta x      -> maybe (VMeta x) id (forceHead m (HMeta x))
+    Guarded x   -> maybe (VGuarded x) id (forceHead m (HGuarded x))
     App t u i   -> vApp (go vs t) (go vs u) i
     Lam x i t   -> VLam x i (\u -> go ((x, Just u):vs) t)
     Pi x i a b  -> VPi x i (go vs a) (\u -> go ((x, Just u):vs) b)
     Let x _ t u -> go ((x, Just (go vs t)):vs) u
     U           -> VU
 
-evalM :: Cxt -> Tm -> M e Val
+evalM :: Cxt -> Tm -> ElabM Val
 evalM cxt t = gets (\(_, ms) -> eval ms (_vals cxt) t)
 
 -- |  Quote into fully forced normal forms.
 quote :: MCxt -> Vals -> Val -> Tm
 quote ms = go where
   go vs v = case force ms v of
-    VNe h sp -> foldr (\(v, i) acc -> App acc (go vs v) i)
-                      (case h of HMeta m -> Meta m; HVar x -> Var x)
-                      sp
+    VNe h sp ->
+      let h' = case h of
+            HMeta x    -> Meta x
+            HGuarded x -> Guarded x
+            HVar x     -> Var x
+      in foldr (\(v, i) acc -> App acc (go vs v) i) h' sp
     VLam (fresh vs -> x) i t ->
       Lam x i (go ((x, Nothing):vs) (t (VVar x)))
     VPi (fresh vs -> x) i a b ->
       Pi x i (go vs a) (go ((x, Nothing):vs) (b (VVar x)))
     VU -> U
 
-quoteM :: Vals -> Val -> M e Tm
+quoteM :: Vals -> Val -> ElabM Tm
 quoteM vs v = gets $ \(_, ms) -> quote ms vs v
 
 nf :: MCxt -> Vals -> Tm -> Tm
@@ -348,11 +353,12 @@ nfM vs t = gets $ \(_, ms) -> nf ms vs t
 -- Unification
 --------------------------------------------------------------------------------
 
+
 -- | Check that all entries in a spine are bound variables.
-checkSp :: [Val] -> UnifyM [Name]
+checkSp :: [Val] -> ElabM [Name]
 checkSp vs = forM vs $ \v -> forceM v >>= \case
   VVar x -> pure x
-  _      -> report SpineError
+  v      -> do {t <- quoteM [] v; report $ SpineError t}
 
 -- | Scope check + occurs check a solution candidate. Inputs are a meta, a spine
 --   of variable names (which comes from checkSp) and a RHS term in normal
@@ -360,22 +366,23 @@ checkSp vs = forM vs $ \v -> forceM v >>= \case
 --   normal forms (because of size explosion), but here it's the simplest thing
 --   we can do. We don't have to worry about shadowing here, because normal
 --   forms have no shadowing by our previous quote implementation.
-checkSolution :: Meta -> [Name] -> Tm -> UnifyM ()
-checkSolution m sp rhs = lift $ go sp rhs where
-  go :: [Name] -> Tm -> Either (UnifyError, Maybe SourcePos) ()
+checkSolution :: MId -> [Name] -> Tm -> ElabM ()
+checkSolution m sp rhs = go sp rhs where
   go ns = \case
-    Var x      -> unless (elem x ns) $
-                    report $ ScopeError m sp rhs x
+    Var x      -> unless (elem x ns) $ report $ ScopeError m sp rhs x
     App t u _  -> go ns t >> go ns u
     Lam x i t  -> go (x:ns) t
     Pi x i a b -> go ns a >> go (x:ns) b
     U          -> pure ()
-    Meta m'    -> when (m == m') $
-                    report $ OccursCheck m rhs
+    Meta m'    -> when (m == m') $ report $ OccursCheck m rhs
+    Guarded _  -> pure ()
     Let{}      -> error "impossible"
 
-solve :: Vals -> Meta -> [Val] -> Val -> UnifyM ()
-solve vs m sp rhs = do
+
+solveMeta :: Vals -> MId -> [Val] -> Val -> ElabM ()
+solveMeta vs m sp rhs = do
+
+
   -- check that spine consists of bound vars
   sp <- checkSp sp
   -- normalize rhs
@@ -387,8 +394,27 @@ solve vs m sp rhs = do
   -- the innermost nonlinear variable occurrence simply shadows the other occurrences.
   rhs <- evalM nil (foldl' (\t x -> Lam x Expl t) rhs sp)
 
-  -- add solution to metacontext
-  modify' (\(i, mcxt) -> (i, M.insert m rhs mcxt))
+
+
+  -- get blocked problems
+  blocked <- getMetaEntry m >>= \case
+    Unsolved blocked -> pure blocked
+    _                -> error "impossible"
+
+  -- add solution to mcxt
+  putMetaEntry m (Solved rhs)
+
+  -- unblock problems
+  forM_ blocked $ \i -> getMetaEntry i >>= \case
+    Check pos cxt t a m' blocked'
+      | m == m' -> local (const pos) $ do
+          na <- quoteM (_vals cxt) a
+          t  <- check cxt t a
+          ~v <- evalM cxt t
+          putMetaEntry i (Unguarded t v)
+      | otherwise -> error "impossible"
+    p -> pure ()
+
 
 -- | Remove duplicate elements.
 ordNub :: Ord a => [a] -> [a]
@@ -401,18 +427,17 @@ ordNub = go S.empty where
 newMeta :: Cxt -> ElabM Tm
 newMeta Cxt{..} = do
   -- We drop the shadowed variables from the spine.
-  let sp = map Var $ ordNub [x | (x, Bound{}) <- _types]
-  (i, ms) <- get
-  put (i + 1, ms)
+  let sp = map Var $ ordNub [x | (x, Bound{}) <- _types, x /= "_"]
+  i <- newMetaEntry (Unsolved [])
   pure (foldr (\u t -> App t u Expl) (Meta i) sp)
 
 -- | Unify two values. After unification succeeds, the LHS and RHS become
 --   definitionally equal in the newly updated metacontext. We only need here
 --   the value environment for generating non-shadowing names; with de Bruijn
 --   levels we would only need an Int denoting the size of the environment.
-unify :: Vals -> Val -> Val -> UnifyM ()
+unify :: Vals -> Val -> Val -> ElabM ()
 unify = go where
-  go :: Vals -> Val -> Val -> UnifyM ()
+  go :: Vals -> Val -> Val -> ElabM ()
   go vs t u = do
     ms <- gets snd
     case (force ms t, force ms u) of
@@ -430,16 +455,9 @@ unify = go where
         go ((x, Nothing):vs) (b (VVar x)) (b' (VVar x))
 
       (VU, VU) -> pure ()
-      (VNe (HVar x) sp, VNe (HVar x') sp') | x == x ->
-        zipWithM_ (go vs) (fst <$> sp) (fst <$> sp')
-
-      (t@(VNe (HMeta m) sp), t'@(VNe (HMeta m') sp')) ->
-        if length sp > length sp'
-        then solve vs m (fst <$> sp) t'
-        else solve vs m' (fst <$> sp') t
-
-      (VNe (HMeta m) sp, t) -> solve vs m (fst <$> sp) t
-      (t, VNe (HMeta m) sp) -> solve vs m (fst <$> sp) t
+      (VNe h sp, VNe h' sp') | h == h' -> zipWithM_ (go vs) (fst <$> sp) (fst <$> sp')
+      (VNe (HMeta m) sp, t) -> solveMeta vs m (fst <$> sp) t
+      (t, VNe (HMeta m) sp) -> solveMeta vs m (fst <$> sp) t
       (t, t') -> do
         t  <- quoteM vs t
         t' <- quoteM vs t'
@@ -479,15 +497,11 @@ insertMetas ins cxt action = case ins of
           _ -> report (NoNamedImplicitArg x)
     go t va
 
-addPos :: SourcePos -> ElabM a -> ElabM a
-addPos pos ma =
-  catchError ma $ \(msg, mpos) -> throwError (msg, mpos <|> Just pos)
-
 check :: Cxt -> Raw -> VTy -> ElabM Tm
 check cxt@Cxt{..} topT topA = do
   topA <- forceM topA
   case (topT, topA) of
-    (RSrcPos pos t, _) -> addPos pos (check cxt t topA)
+    (RSrcPos pos t, _) -> local (const pos) (check cxt t topA)
 
     -- if the icitness of the lambda matches the Pi type,
     -- check the lambda body as usual
@@ -497,13 +511,43 @@ check cxt@Cxt{..} topT topA = do
       Lam x i' <$> check cxt' t (b v)
 
     -- otherwise if the Pi is implicit, insert a new implicit lambda
-    -- the inserted parameter is marked with * in order to make collision
-    -- with source binder names impossible.
-    -- This is a somewhat ugly consequence of using names instead of
-    -- de Bruijn indices.
     (t, VPi x Impl a b) -> do
       let x' = fresh _vals x ++ "*"
       Lam x' Impl <$> check (bind x' a cxt) t (b (VVar x'))
+
+    -- FUN HACK. When checking with meta-headed type, we try inferring
+    -- if that doesn't work, backtrack and block checking on meta.
+    (t, VNe h sp) | Just m <- (case h of HMeta m    -> Just m
+                                         HGuarded m -> Just m
+                                         _          -> Nothing) -> do
+      let tryInfer = do
+            (t, va) <- infer MIYes cxt topT
+            unify _vals va topA
+            pure t
+          postpone = do
+            pos <- ask
+            x   <- newMetaEntry (Check pos cxt t topA m [])
+            subscribe x m
+            pure $ Guarded x
+
+      state <- get
+      tryInfer `catchError` \_ -> do
+        traceM "catced"
+        put state
+        postpone
+
+
+    -- (t, VNe (HMeta m) sp) -> do
+    --   pos <- ask
+    --   x   <- newMetaEntry (Check pos cxt t topA m [])
+    --   subscribe x m
+    --   pure $ Guarded x
+
+    -- (t, VNe (HGuarded m) sp) -> do
+    --   pos <- ask
+    --   x   <- newMetaEntry (Check pos cxt t topA m [])
+    --   subscribe x m
+    --   pure $ Guarded x
 
     (RLet x a t u, topA) -> do
       a   <- check cxt a VU
@@ -518,9 +562,7 @@ check cxt@Cxt{..} topT topA = do
 
     _ -> do
       (t, va) <- infer MIYes cxt topT
-      ~nTopA  <- quoteM _vals topA
-      ~nA     <- quoteM _vals va
-      mapError (CheckError nTopA nA) (unify _vals va topA)
+      unify _vals va topA
       pure t
 
 -- | Create a fresh domain and codomain type.
@@ -534,7 +576,7 @@ freshPi cxt@Cxt{..} x = do
 
 infer :: MetaInsertion -> Cxt -> Raw -> ElabM (Tm, VTy)
 infer ins cxt@Cxt{..} = \case
-  RSrcPos pos t -> addPos pos (infer ins cxt t)
+  RSrcPos pos t -> local (const pos) (infer ins cxt t)
 
   RVar x -> insertMetas ins cxt $ case lookup x _types of
     Nothing -> report $ NameNotInScope x
@@ -554,10 +596,7 @@ infer ins cxt@Cxt{..} = \case
         pure (a, b)
       va@(VNe (HMeta x) sp) -> do
         (a, b) <- freshPi cxt "x"
-        ~na <- quoteM _vals va
-        mapError
-          (ExpectedFunctionFromMeta na)
-          (unify _vals va (VPi "x" i a b))
+        (unify _vals va (VPi "x" i a b))
         pure (a, b)
       tty -> do
         tty <- quoteM _vals tty
@@ -590,6 +629,14 @@ infer ins cxt@Cxt{..} = \case
     ~va <- evalM cxt =<< newMeta cxt
     pure (t, va)
 
+  -- special casing let inference
+  RLet x RHole t u -> do
+    (t, a)   <- infer MIYes cxt t
+    ~vt      <- evalM cxt t
+    (!u, vb) <- infer ins (define x vt a cxt) u
+    a        <- quoteM _vals a
+    pure (Let x a t u, vb)
+
   RLet x a t u -> do
     a        <- check cxt a VU
     ~va      <- evalM cxt a
@@ -608,16 +655,27 @@ zonk ms = go where
 
   goSp :: Vals -> Tm -> Either Val Tm
   goSp vs = \case
-    Meta m | Just v <- M.lookup m ms -> Left v
-    App t u ni -> either (\t -> Left (vApp t (eval ms vs u) ni))
-                         (\t -> Right (App t (go vs u) ni))
-                         (goSp vs t)
+    Meta x -> case ms M.! x of
+      Solved v -> Left v
+      _        -> Right (Meta x)
+    Guarded x -> case ms M.! x of
+      Unguarded t _ -> Right (go vs t)
+      _             -> Right (Guarded x)
+    App t u ni ->
+      either (\t -> Left (vApp t (eval ms vs u) ni))
+             (\t -> Right (App t (go vs u) ni))
+             (goSp vs t)
     t -> Right (go vs t)
 
   go :: Vals -> Tm -> Tm
   go vs = \case
     Var x        -> Var x
-    Meta m       -> maybe (Meta m) (quote ms vs) (M.lookup m ms)
+    Meta x       -> case ms M.! x of
+                     Solved v    -> quote ms vs v
+                     _           -> Meta x
+    Guarded x    -> case ms M.! x of
+                     Unguarded t _ -> (go vs t)
+                     _             -> Guarded x
     U            -> U
     Pi x i a b   -> Pi x i (go vs a) (go ((x, Nothing):vs) b)
     App t u ni   -> either (\t -> quote ms vs (vApp t (eval ms vs u) ni))
@@ -645,6 +703,7 @@ prettyTm prec = go (prec /= 0) where
   go p  = \case
     Var x -> (x++)
     Meta i -> ("?"++).(show i++)
+    Guarded x -> ("?"++).(show x++)
     Let x a t u ->
       ("let "++) . (x++) . (" : "++) . go False  a . ("\n    = "++)
       . go False t  . ("\nin\n"++) . go False u
@@ -686,7 +745,6 @@ instance Show Tm where showsPrec = prettyTm
 
 -- parsing
 --------------------------------------------------------------------------------
-
 
 type Parser = Parsec Void String
 
@@ -812,8 +870,8 @@ helpMsg = unlines [
   "  nf     : read & elaborate expression from stdin, print its normal form",
   "  type   : read & elaborate expression from stdin, print its type"]
 
-displayError :: String -> (ElabError, Maybe SourcePos) -> IO ()
-displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))) = do
+displayError :: String -> (ElabError, SourcePos) -> IO ()
+displayError file (msg, SourcePos path (unPos -> linum) (unPos -> colnum)) = do
   let lnum = show linum
       lpad = map (const ' ') lnum
   printf "%s:%d:%d:\n" path linum colnum
@@ -821,18 +879,26 @@ displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))
   printf "%s | %s\n" lnum (lines file !! (linum - 1))
   printf "%s | %s\n" lpad (replicate (colnum - 1) ' ' ++ "^")
   printf "%s\n\n" (show msg)
-displayError _ _ = error "displayError: impossible: no available source position"
+
+pos0 :: SourcePos
+pos0 = initialPos "(stdin)"
+
+runElab0 :: ElabM a -> Either (ElabError, SourcePos) a
+runElab0 ma = evalStateT (runReaderT ma pos0) (0, mempty)
 
 mainWith :: IO [String] -> IO (Raw, String) -> IO ()
 mainWith getOpt getTm = do
-  let elab = do
+
+  let elab :: IO (Tm, Tm, Tm)
+      elab = do
         (t, src) <- getTm
-        case (flip evalStateT (0, mempty) $ do
+        let res = runElab0 $ do
                (t, a) <- infer MIYes nil t
                t  <- zonkM [] t
                nt <- nfM [] t
                na <- quoteM [] a
-               pure (t, nt, na)) of
+               pure (t, nt, na)
+        case res of
           Left err -> displayError src err >> exitSuccess
           Right x  -> pure x
 
@@ -855,3 +921,6 @@ main = mainWith getArgs parseStdin
 -- | Run main with inputs as function arguments.
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
+-}
+
+main = undefined

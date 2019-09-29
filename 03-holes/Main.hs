@@ -15,6 +15,7 @@ import System.Exit
 import Text.Megaparsec
 import Text.Printf
 
+import qualified Data.Set                   as S
 import qualified Data.IntMap.Strict         as M
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -265,9 +266,9 @@ forceM :: Val -> M e Val
 forceM v = gets (\(_, ms) -> force ms v)
 
 vApp :: Val -> Val -> Val
-vApp (VLam _ t) u = t u
-vApp (VNe h sp) u = VNe h (u:sp)
-vApp _          _ = error "vApp: impossible"
+vApp (VLam _ t) ~u = t u
+vApp (VNe h sp) ~u = VNe h (u:sp)
+vApp _           _ = error "vApp: impossible"
 
 eval :: MCxt -> Vals -> Tm -> Val
 eval ms = go where
@@ -351,16 +352,23 @@ solve vs m sp rhs = do
   -- add solution to metacontext
   modify (\(i, mcxt) -> (i, M.insert m rhs mcxt))
 
--- | Create fresh meta, return the meta applied to all current bound vars.
+
+-- | Remove duplicate elements.
+ordNub :: Ord a => [a] -> [a]
+ordNub = go S.empty where
+  go s [] = []
+  go s (a:as) | S.member a s = go s as
+              | otherwise    = a : go (S.insert a s) as
+
+-- | Create fresh meta, return the meta applied to all bound variables in scope.
 newMeta :: Cxt -> ElabM Tm
 newMeta Cxt{..} = do
-
-  -- There might be shadowed names in the context, but we don't care
-  -- about that, since 'solve' ignores nonlinearity anyway.
-  let sp = [Var x | (x, Bound{}) <- _types]
+  -- We drop the shadowed variables from the spine.
+  let sp = map Var $ ordNub [x | (x, Bound{}) <- _types]
   (i, ms) <- get
   put (i + 1, ms)
   pure (foldr (flip App) (Meta i) sp)
+
 
 -- | Unify two values. After unification succeeds, the LHS and RHS become
 --   definitionally equal in the newly updated metacontext. We only need here
@@ -398,41 +406,43 @@ unify = go where
 
 
 check :: Cxt -> Raw -> VTy -> ElabM Tm
-check cxt@Cxt{..} topT topA = case (topT, topA) of
-  (RSrcPos pos t, _) -> addPos pos (check cxt t topA)
+check cxt@Cxt{..} topT topA = do
+  topA <- forceM topA
+  case (topT, topA) of
+    (RSrcPos pos t, _) -> addPos pos (check cxt t topA)
 
-  -- This is a bit tricky. We can only go under the VPi closure with a
-  -- non-shadowing name, but we also need to ensure that the RLam binder is the
-  -- same as the VPi binder. So we go under the binder with a common fresh
-  -- non-shadowing name. In classic "locally nameless" style, the new name
-  -- would be immediatly substituted into "t", but that's not only very slow,
-  -- but also supposes that "t" is already well-scoped. So instead we just
-  -- define "x" to be the new var when going under the binder. This acts as
-  -- an efficient delayed substitution when we do unification under the binder.
-  -- This subtlety does not come up with de Bruijn indices or levels.
-  (RLam x t, VPi (fresh _vals -> x') a b) -> do
-    let v = VVar x'
-    Lam x <$> check (Cxt ((x, Just v):_vals) ((x, Bound a):_types)) t (b v)
+    -- This is a bit tricky. We can only go under the VPi closure with a
+    -- non-shadowing name, but we also need to ensure that the RLam binder is the
+    -- same as the VPi binder. So we go under the binder with a common fresh
+    -- non-shadowing name. In classic "locally nameless" style, the new name
+    -- would be immediatly substituted into "t", but that's not only very slow,
+    -- but also supposes that "t" is already well-scoped. So instead we just
+    -- define "x" to be the new var when going under the binder. This acts as
+    -- an efficient delayed substitution when we do unification under the binder.
+    -- This subtlety does not come up with de Bruijn indices or levels.
+    (RLam x t, VPi (fresh _vals -> x') a b) -> do
+      let v = VVar x'
+      Lam x <$> check (Cxt ((x, Just v):_vals) ((x, Bound a):_types)) t (b v)
 
-  -- checking just falls through Let.
-  (RLet x a t u, topA) -> do
-    a   <- check cxt a VU
-    ~va <- evalM cxt a
-    t   <- check cxt t va
-    ~vt <- evalM cxt t
-    u   <- check (define x vt va cxt) u topA
-    pure $ Let x a t u
+    -- checking just falls through Let.
+    (RLet x a t u, topA) -> do
+      a   <- check cxt a VU
+      ~va <- evalM cxt a
+      t   <- check cxt t va
+      ~vt <- evalM cxt t
+      u   <- check (define x vt va cxt) u topA
+      pure $ Let x a t u
 
-  (RHole, _) ->
-    newMeta cxt
+    (RHole, _) ->
+      newMeta cxt
 
-  -- we unify the expected and inferred types
-  _ -> do
-    (t, va) <- infer cxt topT
-    ~nTopA <- quoteM _vals topA
-    ~nA    <- quoteM _vals va
-    mapError (CheckError nTopA nA) (unify _vals va topA)
-    pure t
+    -- we unify the expected and inferred types
+    _ -> do
+      (t, va) <- infer cxt topT
+      ~nTopA <- quoteM _vals topA
+      ~nA    <- quoteM _vals va
+      mapError (CheckError nTopA nA) (unify _vals va topA)
+      pure t
 
 -- | Create a fresh domain and codomain type.
 freshPi :: Cxt -> Name -> ElabM (VTy, Val -> VTy)
@@ -706,7 +716,7 @@ mainWith getOpt getTm = do
     ["elab"] -> do
       (t, nt, na) <- elab
       print t
-    _          -> putStrLn helpMsg
+    _ -> putStrLn helpMsg
 
 main :: IO ()
 main = mainWith getArgs parseStdin

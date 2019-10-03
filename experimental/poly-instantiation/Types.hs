@@ -84,11 +84,14 @@ data UnifyCxt  = UnifyCxt {
   unifyCxtInfo  :: Info,
   unifyCxtPos   :: SourcePos}
 
-data St     = St {_nextMId :: Int, _mcxt :: MCxt}
-data Err    = Err {errErr :: ElabError, errPos :: SourcePos}
-type M cxt  = ReaderT cxt (StateT St (Either Err))
-type ElabM  = M ElabCxt
-type UnifyM = M UnifyCxt
+data St      = St {stNextMId :: Int, stMcxt :: MCxt}
+data Err     = Err {errErr :: ElabError, errPos :: SourcePos}
+type M cxt   = ReaderT cxt (StateT St (Either Err))
+type ElabM   = M ElabCxt
+type UnifyM  = M UnifyCxt
+data EvalEnv = EvalEnv {evalEnvMcxt :: MCxt, evalEnvVals :: Vals}
+type EvalM   = Reader EvalEnv
+
 
 data Tm
   = Var Name
@@ -137,22 +140,24 @@ data Head
   | HMeta MId
   deriving (Eq, Show)
 
+type Closure = MCxt -> Val -> Val
+
 data Val
   = VNe Head Spine
 
-  | VPi Name Icit ~Val (Val -> Val)
-  | VLam Name Icit (Val -> Val)
+  | VPi Name Icit ~Val Closure
+  | VLam Name Icit Closure
   | VU
 
   | VTel
   | VRec ~Val
   | VTEmpty
-  | VTCons Name ~Val (Val -> Val)
+  | VTCons Name ~Val Closure
   | VTempty
   | VTcons ~Val ~Val
 
-  | VPiTel Name ~Val (Val -> Val)
-  | VLamTel Name ~Val (Val -> Val)
+  | VPiTel Name ~Val Closure
+  | VLamTel Name ~Val Closure
 
 data MetaInsertion
   = MIYes
@@ -290,9 +295,11 @@ instance Show ElabError where
       "Function icitness mismatch: expected %s, got %s.")
       (show i) (show i')
 
+-- Lenses
 --------------------------------------------------------------------------------
 
 makeFields ''ElabCxt
 makeFields ''UnifyCxt
 makeFields ''Err
-makeLenses ''St
+makeFields ''St
+makeFields ''EvalEnv

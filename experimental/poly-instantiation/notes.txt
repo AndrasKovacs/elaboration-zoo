@@ -37,3 +37,8 @@ depends on the same spine as the original meta.
 
 Question: should we do spine check on refining, or should we just
 proceed YOLO?
+
+
+Misc TODO
+------------------------------------------------------------
+- sensible pretty printing

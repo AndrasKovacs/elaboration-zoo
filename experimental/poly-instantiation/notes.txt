@@ -1,0 +1,39 @@
+
+Problems with out-of date values
+------------------------------------------------------------
+
+  1. out-of-date values can cause eval crashes, because applications
+     can become ill-typed if one side is out-of-date (mismatched telescope/plain
+     applications).
+
+  2. If we want to naively force in eval, we get crashes when trying to
+     force metas, because it is possible that we evaluate in an old
+     MCxt which does not contain some new metas.
+
+Solution:
+  1. Closures take MCxt as extra arguments. This ensures that the MCxt
+     is always newer than the MCxt used for evaluating any value.
+
+     E.g., in the old system it's possible to create a VLam closure
+     which captures the old MCxt. Then we might instantiate the VLam
+     with a newer value, and we get the situation where some values
+     in the environment are newer than the MCxt.
+
+  2. We force during evaluation:
+    - We force appTel types, so we can do type-directed eval.
+    - In implicit application, if the lhs is a telescope lambda,
+      we force it.
+    - We add forcing telescope lambdas and Pi-s to regular forcing
+      (just a bugfix)
+
+
+Problem with PiTel unification requiring pruning
+------------------------------------------------------------
+
+Solution: we restrict the PiTel refinement rule, so that only
+a meta-headed PiTel domain type is refined. In that case, we
+can create a fresh meta for the refined telescope tail which
+depends on the same spine as the original meta.
+
+Question: should we do spine check on refining, or should we just
+proceed YOLO?

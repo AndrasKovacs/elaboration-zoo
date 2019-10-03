@@ -22,6 +22,7 @@ default-extensions:
 - NoMonomorphismRestriction
 - OverloadedStrings
 - PatternSynonyms
+- PartialTypeSignatures
 - RecordWildCards
 - ScopedTypeVariables
 - StandaloneDeriving
@@ -36,6 +37,7 @@ ghc-options:
 - -Wno-missing-signatures
 - -Wno-unused-do-bind
 - -Wno-unused-matches
+- -Wno-partial-type-signatures
 
 dependencies:
 - base >= 4.7 && < 5

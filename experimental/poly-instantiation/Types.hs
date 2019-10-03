@@ -1,16 +1,55 @@
 
-module Types where
+module Types (
+  module Types,
+  module Text.Megaparsec)
+  where
 
 import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Data.String
 import Lens.Micro.Platform
-import Text.Megaparsec
 import Text.Printf
+import Text.Megaparsec (SourcePos(..), unPos, initialPos)
 
 import qualified Data.IntMap.Strict as M
 import qualified Data.IntSet        as IS
 
-import Presyntax
+--------------------------------------------------------------------------------
+
+type Name = String
+data Icit = Impl | Expl deriving (Eq, Show)
+
+icit :: Icit -> a -> a -> a
+icit Impl i e = i
+icit Expl i e = e
+
+data Raw
+  = RVar Name
+  | RLam Name (Maybe Raw) (Either Name Icit) Raw
+  | RApp Raw Raw (Either Name Icit)
+  | RU
+  | RPi Name Icit Raw Raw
+  | RLet Name Raw Raw Raw
+  | RHole
+  | RStopInsertion Raw
+  | RSrcPos SourcePos Raw
+
+-- deriving instance Show Raw
+instance Show Raw where
+  show = show . go where
+    go :: Raw -> Tm
+    go = \case
+      RVar x               -> Var x
+      RLam x _ (Left y) t  -> Lam x Impl (go t)
+      RLam x _ (Right i) t -> Lam x i (go t)
+      RApp t u (Left x)    -> App (go t) (go u) Impl
+      RApp t u (Right i)   -> App (go t) (go u) i
+      RU                   -> U
+      RPi x i a b          -> Pi x i (go a) (go b)
+      RLet x a t u         -> Let x (go a) (go t) (go u)
+      RHole                -> Var "_"
+      RStopInsertion t     -> App (go t) (Var "!") Expl
+      RSrcPos _ t          -> go t
 
 --------------------------------------------------------------------------------
 
@@ -24,22 +63,25 @@ data MetaEntry
   = Unsolved Blocking
   | Solved Val
 
+type Ty    = Tm
 type VTy   = Val
 type Sub a = [(Name, a)]
-type Ty    = Tm
-type Vals  = Sub (Either (Maybe Val) Val)  -- left: bound telescope var
-                                           -- right: defined var
+type Vals  = Sub (Maybe Val)
+type Types = Sub VTy
+type Info  = Sub VarInfo
 type MCxt  = M.IntMap MetaEntry
 
-data TyEntry = Bound VTy | Def VTy
+data VarInfo = Bound | BoundTel VTy | Defined
 
 data ElabCxt = ElabCxt {
   elabCxtVals  :: Vals,
-  elabCxtTypes :: Sub TyEntry,
+  elabCxtTypes :: Types,
+  elabCxtInfo  :: Info,
   elabCxtPos   :: SourcePos}
 
 data UnifyCxt  = UnifyCxt {
   unifyCxtVals  :: Vals,
+  unifyCxtInfo  :: Info,
   unifyCxtPos   :: SourcePos}
 
 data St     = St {_nextMId :: Int, _mcxt :: MCxt}
@@ -56,10 +98,10 @@ data Tm
   | Lam Name Icit Tm
   | App Tm Tm Icit
 
-  | Tel           -- Ty Γ
-  | TEmpty        -- Tm Γ Tel
-  | TCons Ty Ty   -- (A : Ty Γ) → Tm (Γ ▶ A) Tel → Tm Γ Tel
-  | El Tm         -- Tm Γ Tel → Ty Γ
+  | Tel               -- Ty Γ
+  | TEmpty            -- Tm Γ Tel
+  | TCons Name Ty Ty  -- (A : Ty Γ) → Tm (Γ ▶ A) Tel → Tm Γ Tel
+  | Rec Tm            -- Tm Γ Tel → Ty Γ
 
   | Tempty      -- Tm Γ (El TEmpty)
   | Tcons Tm Tm -- (t : Tm Γ A) → Tm Γ (Δ[id, t]) → Tm Γ (El (TCons A Δ))
@@ -103,9 +145,9 @@ data Val
   | VU
 
   | VTel
-  | VEl ~Val
+  | VRec ~Val
   | VTEmpty
-  | VTCons ~Val Val
+  | VTCons Name ~Val (Val -> Val)
   | VTempty
   | VTcons ~Val ~Val
 
@@ -123,8 +165,6 @@ pattern VVar x = VNe (HVar x) SNil
 pattern VMeta :: MId -> Val
 pattern VMeta m = VNe (HMeta m) SNil
 
--- Pretty
---------------------------------------------------------------------------------
 
 prettyTm :: Int -> Tm -> ShowS
 prettyTm prec = go (prec /= 0) where
@@ -140,25 +180,29 @@ prettyTm prec = go (prec /= 0) where
       showParen p (go False  t . (' ':) . goArg  u i . (' ':) . goArg  u' i')
     App (AppTel _ t u) u' i' ->
       showParen p (go False  t . (' ':) . goArg u Impl . (' ':) . goArg  u' i')
-    App t u i    -> showParen p (go True  t . (' ':) . goArg  u i)
-    Lam x i t    -> showParen p (("λ "++) . goLamBind x i . goLam t)
-    t@Pi{}       -> showParen p (goPi False t)
-    U            -> ("U"++)
-    Tel          -> ("Tel"++)
-    TEmpty       -> ("∙"++)
-    TCons a as   -> showParen p (go False a . (" ▶ "++). go False as)
-    Tempty       -> ("ε"++)
-    El a         -> showParen p (("El "++) . go True a)
-    Tcons t u    -> showParen p (go False t . (" ∷ "++). go False u)
-    Proj1 t      -> showParen p (("₁ "++). go True t)
-    Proj2 t      -> showParen p (("₂ "++). go True t)
-    t@PiTel{}    -> showParen p (goPi False t)
-    AppTel _ (App t u i) u'  ->
-      showParen p (go False  t . (' ':) . goArg  u i . (" * "++) . goArg  u' Impl)
-    AppTel _ (AppTel _ t u) u' ->
-      showParen p (go False  t . (" * "++) . goArg u Impl . (" * "++) . goArg  u' Impl)
-    AppTel _ t u -> showParen p (go True  t . (" * "++) . goArg u Impl)
-    LamTel x a t -> showParen p (("λ* "++) . goLamBind x Impl . goLam t)
+    App t u i      -> showParen p (go True  t . (' ':) . goArg  u i)
+    Lam x i t      -> showParen p (("λ "++) . goLamBind x i . goLam t)
+    t@Pi{}         -> showParen p (goPi False t)
+    U              -> ("U"++)
+    Tel            -> ("Tel"++)
+    TEmpty         -> ("∙"++)
+    TCons "_" a as -> showParen p (go False a . (" ▶ "++). go False as)
+    TCons x a as   -> showParen p ((x++) . (" : "++) . go False a . (" ▶ "++). go False as)
+    Tempty         -> ("[]"++)
+    Rec a          -> showParen p (("Rec "++) . go True a)
+    Tcons t u      -> showParen p (go True t . (" ∷ "++). go False u)
+    Proj1 t        -> showParen p (("₁ "++). go True t)
+    Proj2 t        -> showParen p (("₂ "++). go True t)
+    t@PiTel{}      -> showParen p (goPi False t)
+    AppTel a (App t u i) u'  ->
+      showParen p (go False  t . (' ':) . goArg u i . (' ':) . go True a
+                   . ("* "++) . goArg  u' Impl)
+    AppTel a' (AppTel a t u) u' ->
+      showParen p (go False t . (' ':) . go True a . ("* "++) . goArg u Impl
+                   . (' ':) . go True a' . ("* "++) . goArg  u' Impl)
+    AppTel a t u -> showParen p (go True t . (' ':) . go True a . ("* "++) . goArg u Impl)
+    LamTel x a t -> showParen p (("λ"++)
+                    . bracket ((x++) . (" : "++) . go False a) . goLam t)
 
   goArg :: Tm -> Icit -> ShowS
   goArg t i = icit i (bracket (go False t)) (go True t)
@@ -196,9 +240,10 @@ prettyTm prec = go (prec /= 0) where
   goLam t = (". "++) . go False t
 
 instance Show Tm where showsPrec = prettyTm
+instance IsString Tm where fromString = Var
 
--- Errors
 --------------------------------------------------------------------------------
+
 
 data ElabError
   = SpineNonVar Tm

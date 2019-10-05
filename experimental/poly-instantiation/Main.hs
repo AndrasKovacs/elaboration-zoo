@@ -10,7 +10,6 @@ import System.Environment
 import Types
 import Evaluation
 import Elaboration
-import Parser
 
 helpMsg = unlines [
   "usage: holes [--help|nf|type]",

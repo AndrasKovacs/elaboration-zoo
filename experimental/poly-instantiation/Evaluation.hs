@@ -1,18 +1,41 @@
-{-# options_ghc -Wno-type-defaults -Wno-unused-imports #-}
 
-module Evaluation where
+module Evaluation (
+    apply
+  , applyM
+  , close
+  , closeM
+  , eval
+  , evalM
+  , force
+  , forceM
+  , forceSp
+  , forceSpM
+  , fresh
+  , hlamM
+  , nf
+  , nfM
+  , quote
+  , quoteM
+  , runEval
+  , vApp
+  , vAppM
+  , zonk
+  , zonkM
+  ) where
 
-import Control.Monad
 import Control.Monad.Reader
 import Lens.Micro.Platform
-
 import qualified Data.IntMap.Strict as M
 
 import Types
-import Debug.Trace
+
+--------------------------------------------------------------------------------
 
 runEval :: EvalM a -> MCxt -> Vals -> a
 runEval ma ms vs = runReader ma (EvalEnv ms vs)
+
+embedEvalM :: HasVals cxt Vals => EvalM a -> M cxt a
+embedEvalM ma = runEval ma <$> use mcxt <*> view vals
 
 vProj1 :: Val -> Val
 vProj1 (VTcons t u) = t
@@ -51,36 +74,55 @@ hlam t = do
   vs <- view vals
   pure $ \ms ~v -> runEval (t v) ms vs
 
+hlamM :: HasVals cxt Vals => (Val -> EvalM Val) -> M cxt Closure
+hlamM t = embedEvalM (hlam t)
+
 close :: Name -> Tm -> EvalM Closure
 close x t = hlam (\ ~v -> defining x v $ eval t)
+
+closeM :: HasVals cxt Vals => Name -> Tm -> M cxt Closure
+closeM x t = embedEvalM (close x t)
 
 apply :: Closure -> Val -> EvalM Val
 apply cl ~u = cl <$> view mcxt <*> pure u
 
--- | Force the outermost constructor in a value, if it's a neutral value
---   then also force the *shape* of the spine as well.
+applyM :: HasVals cxt Vals => Closure -> Val -> M cxt Val
+applyM t ~u = embedEvalM (apply t u)
+
+vAppSp :: Val -> Spine -> EvalM Val
+vAppSp h = go where
+  go SNil             = pure h
+  go (SApp sp u i)    = do {sp <- go sp; vApp sp u i}
+  go (SAppTel a sp u) = do {sp <- go sp; vAppTel a sp u}
+  go (SProj1 sp)      = vProj1 <$> go sp
+  go (SProj2 sp)      = vProj2 <$> go sp
+
+-- | Force the outermost constructor in a value. Does not force the spine
+--   of a neutral value.
 force :: Val -> EvalM Val
 force = \case
-  VNe h sp -> do
-    let go :: Val -> Spine -> EvalM Val
-        go ~h SNil             = pure h
-        go ~h (SApp sp u i)    = do {sp <- go h sp; vApp sp u i}
-        go ~h (SAppTel a sp u) = do {sp <- go h sp; vAppTel a sp u}
-        go ~h (SProj1 sp)      = vProj1 <$> go h sp
-        go ~h (SProj2 sp)      = vProj2 <$> go h sp
-
-    case h of
-      HVar x -> go (VVar x) sp
-      HMeta m -> lookupMeta m >>= \case
-        Unsolved{} -> go (VMeta m) sp
-        Solved v   -> force =<< go v sp
+  v@(VNe (HMeta m) sp) -> lookupMeta m >>= \case
+    Unsolved{} -> pure v
+    Solved v   -> force =<< vAppSp v sp
 
   VPiTel x a b  -> vPiTel force x a b
   VLamTel x a t -> vLamTel force x a t
   v             -> pure v
 
+forceM :: HasVals cxt Vals => Val -> M cxt Val
+forceM v = embedEvalM (force v)
+
+-- | Force a spine, computing telescope applications where possible.
+forceSp :: Spine -> EvalM Spine
+forceSp sp = vAppSp (VVar "_") sp <&> \case
+  VNe _ sp -> sp
+  _        -> error "impossible"
+
+forceSpM :: HasVals cxt Vals => Spine -> M cxt Spine
+forceSpM sp = embedEvalM (forceSp sp)
+
 -- We parameterize vPiTel and vLamTel with a continuation, because
--- sometimes we want to force the result, but sometimes don't.
+-- sometimes we additionally want to force the result.
 vPiTel :: (Val -> EvalM Val) -> Name -> VTy -> Closure -> EvalM Val
 vPiTel k x a b = force a >>= \case
   VTEmpty        -> k =<< apply b VTempty
@@ -119,6 +161,8 @@ vApp (VNe h sp     ) ~u i    = pure $ VNe h (SApp sp u i)
 vApp (VLamTel x a t) ~u Impl = do {t <- vLamTel pure x a t; vApp t u Impl}
 vApp _                _ _    = error "impossible"
 
+vAppM :: HasVals cxt Vals => Val -> Val -> Icit -> M cxt Val
+vAppM t ~u i = embedEvalM (vApp t u i)
 
 eval :: Tm -> EvalM Val
 eval = go where
@@ -143,25 +187,14 @@ eval = go where
     AppTel a t u -> join (vAppTel <$> go a <*> go t <*> go u)
     LamTel x a t -> join (vLamTel pure x <$> go a <*> close x t)
 
-embedEvalM :: HasVals cxt Vals => EvalM a -> M cxt a
-embedEvalM ma = runEval ma <$> use mcxt <*> view vals
-
 evalM :: HasVals cxt Vals => Tm -> M cxt Val
 evalM t = embedEvalM (eval t)
 
-applyM :: HasVals cxt Vals => Closure -> Val -> M cxt Val
-applyM t ~u = embedEvalM (apply t u)
-
-fresh :: EvalM (Name -> Name)
-fresh = do
-  let go vs "_" = "_"
-      go vs x = case lookup x vs of
-        Just _  -> go vs (x ++ "'")
-        Nothing -> x
-  go <$> view vals
-
-freshM :: HasVals cxt Vals => M cxt (Name -> Name)
-freshM = embedEvalM fresh
+fresh :: Vals -> Name -> Name
+fresh vs "_" = "_"
+fresh vs x = case lookup x vs of
+  Just _  -> fresh vs (x ++ "'")
+  Nothing -> x
 
 quote :: Val -> EvalM Tm
 quote = go where
@@ -172,7 +205,7 @@ quote = go where
 
   go :: Val -> EvalM Tm
   go v = do
-    fresh <- fresh
+    fresh <- fresh <$> view vals
     force v >>= \case
       VNe h sp -> do
         let goSp :: Spine -> EvalM Tm
@@ -183,7 +216,7 @@ quote = go where
             goSp (SAppTel a sp u) = AppTel <$> go a <*> goSp sp <*> go u
             goSp (SProj1 sp)      = Proj1 <$> goSp sp
             goSp (SProj2 sp)      = Proj2 <$> goSp sp
-        goSp sp
+        goSp =<< forceSp sp
 
       VLam (fresh -> x) i t    -> Lam x i <$> goBind x t
       VPi (fresh -> x) i a b   -> Pi x i <$> go a <*> goBind x b
@@ -205,3 +238,56 @@ nf t = quote =<< eval t
 
 nfM :: HasVals cxt Vals => Tm -> M cxt Tm
 nfM t = embedEvalM (nf t)
+
+
+--------------------------------------------------------------------------------
+
+-- | Inlines meta solutions but does not compute telescopes.
+zonk :: Tm -> EvalM Tm
+zonk = go where
+
+  goSp :: Tm -> EvalM (Either Val Tm)
+  goSp = \case
+    Meta m       -> lookupMeta m >>= \case
+                      Solved v -> pure $ Left v
+                      _        -> pure $ Right (Meta m)
+    App t u ni   -> goSp t >>= \case
+                      Left t  -> do {u <- eval u; Left <$> vApp t u ni}
+                      Right t -> do {u <- go u; pure $ Right $ App t u ni}
+    AppTel a t u -> goSp t >>= \case
+                      Left t  -> do {a <- eval a; u <- eval u; Left <$> vAppTel a t u}
+                      Right t -> do {a <- go a; u <- go u; pure $ Right $ AppTel a t u}
+    t            -> Right <$> go t
+
+  goBind :: Name -> Tm -> EvalM Tm
+  goBind x t = local (vals %~ ((x, Nothing):)) (go t)
+
+  go :: Tm -> EvalM Tm
+  go = \case
+    Var x        -> pure $ Var x
+    Meta m       -> lookupMeta m >>= \case
+                      Solved v   -> quote v
+                      Unsolved{} -> pure (Meta m)
+    U            -> pure U
+    Pi x i a b   -> Pi x i <$> go a <*> goBind x b
+    App t u ni   -> goSp t >>= \case
+                      Left t  -> do {u <- eval u; quote =<< vApp t u ni}
+                      Right t -> do {u <- go u; pure $ App t u ni}
+    Lam x i t    -> Lam x i <$> goBind x t
+    Let x a t u  -> Let x <$> go a <*> go t <*> goBind x u
+    Tel          -> pure Tel
+    TEmpty       -> pure TEmpty
+    TCons x t u  -> TCons x <$> go t <*> goBind x u
+    Rec a        -> Rec <$> go a
+    Tempty       -> pure Tempty
+    Tcons t u    -> Tcons <$> go t <*> go u
+    Proj1 t      -> Proj1 <$> go t
+    Proj2 t      -> Proj2 <$> go t
+    PiTel x a b  -> PiTel x <$> go a <*> goBind x b
+    AppTel a t u -> goSp t >>= \case
+                      Left t  -> do {a <- eval a; u <- eval u; quote =<< vAppTel a t u}
+                      Right t -> do {a <- go a; u <- go u; pure $ AppTel a t u}
+    LamTel x a b -> LamTel x <$> go a <*> goBind x b
+
+zonkM :: HasVals cxt Vals => Tm -> M cxt Tm
+zonkM t = embedEvalM (zonk t)

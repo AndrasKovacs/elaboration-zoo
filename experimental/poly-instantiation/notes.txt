@@ -35,10 +35,8 @@ a meta-headed PiTel domain type is refined. In that case, we
 can create a fresh meta for the refined telescope tail which
 depends on the same spine as the original meta.
 
-Question: should we do spine check on refining, or should we just
-proceed YOLO?
-
 
 Misc TODO
 ------------------------------------------------------------
 - sensible pretty printing
+- instead of -M variants in eval, just make everything polymorphic

@@ -86,11 +86,11 @@ ex1 = main' "elab" $ unlines [
 
   "let IdTy : U = {A} -> A -> A in",
   "let id : IdTy = \\x.x in",
-  "let ids : List IdTy = cons id (cons (\\x.x) nil) in",
+  "let ids : List IdTy = cons id nil in",
 
   "let foo = U in",
 
-  "id"
+  "U"
   ]
 
 ex2 = main' "elab" $ unlines [

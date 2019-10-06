@@ -1,15 +1,16 @@
 
 module Types (
   module Types,
-  module Text.Megaparsec)
-  where
+  module Text.Megaparsec
+  ) where
 
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.String
 import Lens.Micro.Platform
-import Text.Printf
 import Text.Megaparsec (SourcePos(..), unPos, initialPos)
+import Text.Printf
 
 import qualified Data.IntMap.Strict as M
 import qualified Data.IntSet        as IS
@@ -60,10 +61,15 @@ type MId = Int
 
 -- | List of blocked problems.
 type Blocking = IS.IntSet
+type BlockedBy = IS.IntSet
 
 data MetaEntry
   = Unsolved Blocking
   | Solved Val
+
+  -- | Telescope constancy constraint. When the closure becomes constant,
+  --   we unify the telescope with the empty telescope.
+  | Constancy MId Spine Name Val BlockedBy
 
 type Ty    = Tm
 type VTy   = Val
@@ -172,6 +178,29 @@ pattern VVar x = VNe (HVar x) SNil
 pattern VMeta :: MId -> Val
 pattern VMeta m = VNe (HMeta m) SNil
 
+data ElabError
+  = SpineNonVar Tm
+  | SpineProjection
+  | ScopeError MId [Name] Tm Name -- ^ Meta, spine, rhs, offending variable
+  | OccursCheck MId Tm
+  | UnifyError Tm Tm
+  | NameNotInScope Name
+  | ExpectedFunction Tm -- ^ Inferred type.
+  | NoNamedImplicitArg Name
+  | CannotInferNamedLam
+  | IcitMismatch Icit Icit
+
+-- Lenses
+--------------------------------------------------------------------------------
+
+makeFields ''ElabCxt
+makeFields ''UnifyCxt
+makeFields ''Err
+makeFields ''St
+makeFields ''EvalEnv
+
+--------------------------------------------------------------------------------
+
 
 prettyTm :: Int -> Tm -> ShowS
 prettyTm prec = go (prec /= 0) where
@@ -250,21 +279,6 @@ prettyTm prec = go (prec /= 0) where
 instance Show Tm where showsPrec = prettyTm
 instance IsString Tm where fromString = Var
 
---------------------------------------------------------------------------------
-
-
-data ElabError
-  = SpineNonVar Tm
-  | SpineProjection
-  | ScopeError MId [Name] Tm Name -- ^ Meta, spine, rhs, offending variable
-  | OccursCheck MId Tm
-  | UnifyError Tm Tm
-  | NameNotInScope Name
-  | ExpectedFunction Tm -- ^ Inferred type.
-  | NoNamedImplicitArg Name
-  | CannotInferNamedLam
-  | IcitMismatch Icit Icit
-
 instance Show ElabError where
   show = \case
     SpineNonVar t -> printf "Non-variable value in meta spine:\n\n  %s"  (show t)
@@ -298,24 +312,21 @@ instance Show ElabError where
       "Function icitness mismatch: expected %s, got %s.")
       (show i) (show i')
 
--- Lenses
---------------------------------------------------------------------------------
-
-makeFields ''ElabCxt
-makeFields ''UnifyCxt
-makeFields ''Err
-makeFields ''St
-makeFields ''EvalEnv
+report :: HasPos cxt SourcePos => ElabError -> M cxt a
+report err = do
+  pos <- view pos
+  throwError (Err err pos)
 
 
 -- Debugging
 --------------------------------------------------------------------------------
 
+debug :: Show a => a -> b -> b
 debug = traceShow
 
 debugM :: (Show a , Applicative f) => a -> f ()
-debugM = traceShowM
--- debug x = pure ()
+-- debugM = traceShowM
+debugM x = pure ()
 
 debugmcxtM = do
   ms <- M.assocs <$> use mcxt

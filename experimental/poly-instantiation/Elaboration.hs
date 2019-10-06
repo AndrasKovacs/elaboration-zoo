@@ -1,28 +1,107 @@
+
 {-# options_ghc -Wno-type-defaults #-}
 
 module Elaboration where
 
 import Control.Monad
-import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable
 import Lens.Micro.Platform
 
 import qualified Data.IntMap.Strict as M
+import qualified Data.IntSet        as IS
 import qualified Data.Set           as S
 
 import Types
 import Evaluation
 
 
--- Unification
+-- Freshness
 --------------------------------------------------------------------------------
 
-report :: HasPos cxt SourcePos => ElabError -> M cxt a
-report err = do
-  pos <- view pos
-  throwError (Err err pos)
+data Fresh = Fresh
+  (forall a. Name -> (Name, UnifyM a -> UnifyM a))
+  (forall a. Name -> Val -> (Name, UnifyM a -> UnifyM a))
+
+bindU :: Name -> UnifyCxt -> UnifyCxt
+bindU x (UnifyCxt vs is p) =
+  UnifyCxt ((x, Nothing):vs) ((x, Bound):is) p
+
+telBindU :: Name -> VTy -> UnifyCxt -> UnifyCxt
+telBindU x ~a (UnifyCxt vs is p) =
+  UnifyCxt ((x, Nothing):vs) ((x, BoundTel a):is) p
+
+localFresh :: UnifyM Fresh
+localFresh = do
+  vs <- view vals
+  pure $ Fresh
+    (\x -> (fresh vs x, local (bindU x)))
+    (\x a -> (fresh vs x, local (telBindU x a)))
+
+-- Telscope constancy
+--------------------------------------------------------------------------------
+
+data Occurs = Rigid | Flex IS.IntSet | None deriving (Eq, Show)
+
+instance Semigroup Occurs where
+  Flex ms <> Flex ms' = Flex (ms <> ms')
+  Rigid   <> _        = Rigid
+  _       <> Rigid    = Rigid
+  None    <> r        = r
+  l       <> None     = l
+
+occurrence :: IS.IntSet -> Occurs
+occurrence ms | IS.null  ms = Rigid
+              | otherwise   = Flex ms
+
+instance Monoid Occurs where
+  mempty = None
+
+occurs :: Name -> Val -> UnifyM Occurs
+occurs topX = go mempty where
+
+  goSp :: IS.IntSet -> Spine -> UnifyM Occurs
+  goSp ms ~sp = forceSpM sp >>= \case
+    SNil -> pure mempty
+    SApp sp u i -> (<>) <$> goSp ms sp <*> go ms u
+    SAppTel a sp u ->
+      (\a b c -> a <> b <> c) <$> go ms a <*> goSp ms sp <*> go ms u
+    SProj1 sp -> goSp ms sp
+    SProj2 sp -> goSp ms sp
+
+  go :: IS.IntSet -> Val -> UnifyM Occurs
+  go ms ~v = do
+    Fresh fresh freshTel <- localFresh
+    forceM v >>= \case
+      VNe (HVar x)  sp | x == topX -> (occurrence ms <>) <$> goSp ms sp
+      VNe (HVar x)  sp -> goSp ms sp
+      VNe (HMeta m) sp -> goSp (IS.insert m ms) sp
+
+      VPi (fresh -> (VVar -> x, dive)) i a b ->
+        (<>) <$> go ms a <*> dive (go ms =<< applyM b x)
+      VLam (fresh -> (VVar -> x, dive)) i t ->
+        dive (go ms =<< applyM t x)
+
+      VU      -> pure mempty
+      VTel    -> pure mempty
+      VRec a  -> go ms a
+      VTEmpty -> pure mempty
+
+      VTCons (fresh -> (VVar -> x, dive)) a b ->
+        (<>) <$> go ms a <*> dive (go ms =<< applyM b x)
+      VTempty -> pure mempty
+      VTcons t u -> (<>) <$> go ms t <*> go ms u
+      VPiTel x a b -> do
+        (VVar -> x, dive) <- pure $ freshTel x a
+        (<>) <$> go ms a <*> dive (go ms =<< applyM b x)
+      VLamTel x a t -> do
+        (VVar -> x, dive) <- pure $ freshTel x a
+        (<>) <$> go ms a <*> dive (go ms =<< applyM t x)
+
+
+-- Unification
+--------------------------------------------------------------------------------
 
 -- | Expects a forced spine.
 checkSp :: Spine -> UnifyM (Sub (Maybe Tm))
@@ -73,13 +152,60 @@ solveMeta m sp rhs = do
       wrap t (x, Just a ) = LamTel x a t
 
   rhs <- local (vals .~ []) $ evalM $ foldl' wrap rhs sp
-  mcxt %= M.insert m (Solved rhs)
+
+  blocked <- use (mcxt . at m) >>= \case
+    Just (Unsolved ms) -> do
+      mcxt %= M.insert m (Solved rhs)
+      pure ms
+    _ -> error "impossible"
+
+  forM_ (IS.toList blocked) tryConstancy
+
 
 newMetaEntry :: MetaEntry -> M cxt MId
 newMetaEntry p = do
   St i ms <- get
   put $ St (i + 1) (M.insert i p ms)
   pure i
+
+tryConstancy :: MId -> UnifyM ()
+tryConstancy constM = use (mcxt . at constM) >>= \case
+  Just (Constancy telMeta sp x codomain blockers) -> do
+
+    -- clear blockers
+    forM_ (IS.toList blockers) $ \m -> do
+      mcxt . at m %= \case
+        Just (Unsolved ms) -> Just (Unsolved (IS.delete constM ms))
+        Just e             -> Just e
+        _                  -> error "impossible"
+
+    mcxt . at constM ?= Constancy telMeta sp x codomain mempty
+
+    use (mcxt . at telMeta) >>= \case
+      Nothing          -> error "impossible"
+      Just Constancy{} -> error "impossible"
+      Just Solved{}    -> pure ()
+      Just Unsolved{}  -> do
+        occurs x codomain >>= \case
+          None    -> solveMeta telMeta sp VTEmpty
+          Rigid   -> pure ()
+          Flex ms -> do
+
+            -- set new blockers
+            forM_ (IS.toList ms) $ \m ->
+              mcxt . at m %= \case
+                Just (Unsolved ms) -> Just (Unsolved (IS.insert constM ms))
+                _ -> error "impossible"
+            mcxt . at constM ?= Constancy telMeta sp x codomain ms
+
+  _ -> error "impossible"
+
+newConstancy :: MId -> Spine -> Closure -> UnifyM ()
+newConstancy telMeta sp cl = do
+  x <- fresh <$> view vals <*> pure "_"
+  ~codomain <- applyM cl (VVar x)
+  constM <- newMetaEntry (Constancy telMeta sp x codomain mempty)
+  tryConstancy constM
 
 -- | Remove duplicate elements.
 ordNubBy :: Ord b => (a -> b) -> [a] -> [a]
@@ -117,13 +243,6 @@ newMeta = do
   pure $ foldr go (Meta m) sp
 
 
-bindU x (UnifyCxt vs is p) =
-  UnifyCxt ((x, Nothing):vs) ((x, Bound):is) p
-
-telBindU x ~a (UnifyCxt vs is p) =
-  UnifyCxt ((x, Nothing):vs) ((x, BoundTel a):is) p
-
-
 unify :: Val -> Val -> UnifyM ()
 unify = go where
 
@@ -154,17 +273,11 @@ unify = go where
     topT <- forceM topT
     topU <- forceM topU
     do
-      nt <- quoteM topT
-      nu <- quoteM topU
+      ~nt <- quoteM topT
+      ~nu <- quoteM topU
       debugM ("unify", nt, nu)
 
-    (freshTel :: Name -> Val -> (Name, UnifyM () -> UnifyM ())) <- do
-      vs <- view vals
-      pure $ \x a -> (fresh vs x, local (telBindU x a))
-
-    (fresh :: Name -> (Name, UnifyM () -> UnifyM ())) <- do
-      vs <- view vals
-      pure $ \x -> (fresh vs x, local (bindU x))
+    Fresh fresh freshTel <- localFresh
 
     case (topT, topU) of
       (VLam (fresh -> (VVar -> x, dive)) i t, VLam _ i' t') | i == i'->
@@ -211,26 +324,32 @@ unify = go where
       (t, VNe (HMeta m) sp) -> solveMeta m sp t
 
       (VPiTel x (VNe (HMeta a) sp) b, VPi (fresh -> (x1@(VVar -> vx1), dive)) Impl a' b') -> do
-        m <- newMetaEntry (Unsolved mempty)
-        let gamma v = VNe (HMeta m) (SApp sp v Expl)
+        telMeta <- newMetaEntry (Unsolved mempty)
+        let gamma v = VNe (HMeta telMeta) (SApp sp v Expl)
         solveMeta a sp (VTCons x1 a' (\_ -> gamma))
+
+        codomain <- hlamM (\ ~x2 -> apply b (VTcons vx1 x2))
+        newConstancy telMeta (SApp sp vx1 Expl) codomain
+
         x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
-        dive $ join $
-          go <$> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b (VTcons vx1 x2)))
-             <*> applyM b' vx1
+        dive $ go (VPiTel x2 (gamma vx1) codomain) =<< applyM b' vx1
 
       (VPiTel x a b, t) -> do
         go a VTEmpty
         join $ go <$> applyM b VTempty <*> pure t
 
       (VPi (fresh -> (x1@(VVar -> vx1), dive)) Impl a' b', VPiTel x (VNe (HMeta a) sp) b) -> do
-        m <- newMetaEntry (Unsolved mempty)
-        let gamma v = VNe (HMeta m) (SApp sp v Expl)
+        telMeta <- newMetaEntry (Unsolved mempty)
+        let gamma v = VNe (HMeta telMeta) (SApp sp v Expl)
         solveMeta a sp (VTCons x1 a' (\_ -> gamma))
+
+        codomain <- hlamM (\ ~x2 -> apply b (VTcons vx1 x2))
+        newConstancy telMeta (SApp sp vx1 Expl) codomain
+
         x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
         dive $ join $
           go <$> applyM b' vx1
-             <*> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b (VTcons vx1 x2)))
+             <*> pure (VPiTel x2 (gamma vx1) codomain)
 
       (t, VPiTel x a b) -> do
         go VTEmpty a
@@ -294,12 +413,12 @@ check :: Raw -> VTy -> ElabM Tm
 check ~topT ~topA = do
   topA  <- forceM topA
   fresh <- fresh <$> view vals
-  topAn <- quoteM topA
 
   case (topT, topA) of
     (RSrcPos p t, _) ->
       local (pos .~ p) (check t topA)
     _ -> do
+      topAn <- quoteM topA
       debugM ("check", topT, topAn)
       res <- case (topT, topA) of
 
@@ -316,13 +435,21 @@ check ~topT ~topA = do
           let x' = fresh x ++ "%"
           binding x' a $ Lam x' Impl <$> (check t =<< applyM b (VVar x'))
 
+        -- new telescope
         (t, VNe (HMeta _) _) -> do
           x      <- use nextMId <&> \i -> fresh $ "Γ" ++ show i
           tel    <- newMeta
           telv   <- evalM tel
           (t, a) <- telBinding x telv $ infer MIYes t
           a      <- closeM x =<< (telBinding x telv $ quoteM a)
-          embedUnifyM $ unify topA (VPiTel x telv a)
+
+          embedUnifyM $ do
+            (m, sp) <- case telv of
+              VNe (HMeta m) sp -> pure (m, sp)
+              _ -> error "impossible"
+            newConstancy m sp a
+            unify topA (VPiTel x telv a)
+
           pure $ LamTel x tel t
 
         (RLet x a t u, topA) -> do

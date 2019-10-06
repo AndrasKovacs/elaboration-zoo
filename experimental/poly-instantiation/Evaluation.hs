@@ -106,6 +106,7 @@ force = \case
   v@(VNe (HMeta m) sp) -> lookupMeta m >>= \case
     Unsolved{} -> pure v
     Solved v   -> force =<< vAppSp v sp
+    _          -> error "impossible"
 
   VPiTel x a b  -> vPiTel force x a b
   VLamTel x a t -> vLamTel force x a t
@@ -270,6 +271,7 @@ zonk = go where
     Meta m       -> lookupMeta m >>= \case
                       Solved v   -> quote v
                       Unsolved{} -> pure (Meta m)
+                      _          -> error "impossible"
     U            -> pure U
     Pi x i a b   -> Pi x i <$> go a <*> goBind x b
     App t u ni   -> goSp t >>= \case

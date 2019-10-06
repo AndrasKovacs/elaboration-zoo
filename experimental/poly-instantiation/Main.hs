@@ -75,7 +75,6 @@ main = mainWith getArgs parseStdin
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
-
 ex1 = main' "elab" $ unlines [
   "let the : (A : U) → A → A = \\A x.x in",
   "let id : {A} → A → A = λ x. x in",

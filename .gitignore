@@ -6,3 +6,4 @@
 TAgGS
 .stack-work/
 *.cabal
+*.lock

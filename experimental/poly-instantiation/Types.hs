@@ -8,6 +8,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.String
+import Data.List
 import Lens.Micro.Platform
 import Text.Megaparsec (SourcePos(..), unPos, initialPos)
 import Text.Printf
@@ -256,14 +257,14 @@ prettyTm prec = go (prec /= 0) where
     | x /= "_" = goPiBind x i a . goPi True b
     | otherwise =
        (if p then (" → "++) else id) .
-       go (case a of App{} -> False; _ -> True) a .
+       go (case a of App{} -> False; AppTel{} -> False; _ -> True) a .
        (" → "++) . go False b
 
   goPi p (PiTel x a b)
     | x /= "_" = goPiBind x Impl a . goPi True b
     | otherwise =
        (if p then (" → "++) else id) .
-       go (case a of App{} -> False; _ -> True) a .
+       go (case a of App{} -> False; AppTel{} -> False; _ -> True) a .
        (" → "++) . go False b
 
   goPi p t = (if p then (" -> "++) else id) . go False t
@@ -289,7 +290,7 @@ instance Show ElabError where
        "but the solution candidate\n\n" ++
        "  %s\n\n" ++
        "contains variable %s.")
-      (show m) (show sp) (show rhs) x
+      (show m) ('[':intercalate ", " sp++"]") (show rhs) x
     OccursCheck m rhs -> printf (
       "Meta %s occurs cyclically in its solution candidate:\n\n" ++
       "  %s")

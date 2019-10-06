@@ -331,7 +331,7 @@ unify = go where
         codomain <- hlamM (\ ~x2 -> apply b (VTcons vx1 x2))
         newConstancy telMeta (SApp sp vx1 Expl) codomain
 
-        x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
+        x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "₂")
         dive $ go (VPiTel x2 (gamma vx1) codomain) =<< applyM b' vx1
 
       (VPiTel x a b, t) -> do
@@ -346,7 +346,7 @@ unify = go where
         codomain <- hlamM (\ ~x2 -> apply b (VTcons vx1 x2))
         newConstancy telMeta (SApp sp vx1 Expl) codomain
 
-        x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
+        x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "₂")
         dive $ join $
           go <$> applyM b' vx1
              <*> pure (VPiTel x2 (gamma vx1) codomain)

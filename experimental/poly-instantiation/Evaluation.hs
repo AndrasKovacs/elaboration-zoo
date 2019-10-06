@@ -21,6 +21,8 @@ module Evaluation (
   , vAppM
   , zonk
   , zonkM
+  -- , zonkTels
+  -- , zonkTelsM
   ) where
 
 import Control.Monad.Reader
@@ -295,3 +297,57 @@ zonk = go where
 
 zonkM :: HasVals cxt Vals => Tm -> M cxt Tm
 zonkM t = embedEvalM (zonk t)
+
+
+-- zonkTels :: Tm -> EvalM Tm
+-- zonkTels = go where
+
+--   goSp :: Tm -> EvalM (Either Val Tm)
+--   goSp = \case
+--     Meta m       -> lookupMeta m >>= \case
+--                       Solved v -> pure $ Left v
+--                       _        -> pure $ Right (Meta m)
+--     App t u ni   -> goSp t >>= \case
+--                       Left t  -> do {u <- eval u; Left <$> vApp t u ni}
+--                       Right t -> do {u <- go u; pure $ Right $ App t u ni}
+--     AppTel a t u -> goSp t >>= \case
+--                       Left t  -> do {a <- eval a; u <- eval u; Left <$> vAppTel a t u}
+--                       Right t -> do {a <- go a; u <- go u; pure $ Right $ AppTel a t u}
+--     t            -> Right <$> go t
+
+--   goBind :: Name -> Tm -> EvalM Tm
+--   goBind x t = local (vals %~ ((x, Nothing):)) (go t)
+
+--   go :: Tm -> EvalM Tm
+--   go = \case
+--     Var x        -> pure $ Var x
+--     Meta m       -> lookupMeta m >>= \case
+--                       Solved v   -> quote v
+--                       Unsolved{} -> pure (Meta m)
+--                       _          -> error "impossible"
+--     U            -> pure U
+--     Pi x i a b   -> Pi x i <$> go a <*> goBind x b
+--     App t u ni   -> goSp t >>= \case
+--                       Left t  -> do {u <- eval u; quote =<< vApp t u ni}
+--                       Right t -> do {u <- go u; pure $ App t u ni}
+--     Lam x i t    -> Lam x i <$> goBind x t
+--     Let x a t u  -> Let x <$> go a <*> go t <*> goBind x u
+--     Tel          -> pure Tel
+--     TEmpty       -> pure TEmpty
+--     TCons x t u  -> TCons x <$> go t <*> goBind x u
+--     Rec a        -> Rec <$> go a
+--     Tempty       -> pure Tempty
+--     Tcons t u    -> Tcons <$> go t <*> go u
+--     Proj1 t      -> Proj1 <$> go t
+--     Proj2 t      -> Proj2 <$> go t
+--     PiTel x a b  -> PiTel x <$> go a <*> goBind x b
+--     AppTel a t u -> eval a >>= \case
+--                       VTEmpty      -> go t
+--                       VTCons x a b -> App t (Proj1 u)
+--                       a            -> goSp t >>= \case
+--                         Left t  -> do {u <- eval u; quote =<< vAppTel a t u}
+--                         Right t -> do {a <- quote a; u <- go u; pure $ AppTel a t u}
+--     LamTel x a b -> LamTel x <$> go a <*> goBind x b
+
+-- zonkTelsM :: HasVals cxt Vals => Tm -> M cxt Tm
+-- zonkTelsM t = embedEvalM (zonk t)

@@ -14,6 +14,8 @@ import Text.Megaparsec (SourcePos(..), unPos, initialPos)
 import qualified Data.IntMap.Strict as M
 import qualified Data.IntSet        as IS
 
+import Debug.Trace
+
 --------------------------------------------------------------------------------
 
 type Name = String
@@ -192,7 +194,8 @@ prettyTm prec = go (prec /= 0) where
     Tel            -> ("Tel"++)
     TEmpty         -> ("∙"++)
     TCons "_" a as -> showParen p (go False a . (" ▶ "++). go False as)
-    TCons x a as   -> showParen p ((x++) . (" : "++) . go False a . (" ▶ "++). go False as)
+    TCons x a as   -> showParen p (showParen True ((x++) . (" : "++) . go False a)
+                                   . (" ▶ "++). go False as)
     Tempty         -> ("[]"++)
     Rec a          -> showParen p (("Rec "++) . go True a)
     Tcons t u      -> showParen p (go True t . (" ∷ "++). go False u)
@@ -303,3 +306,18 @@ makeFields ''UnifyCxt
 makeFields ''Err
 makeFields ''St
 makeFields ''EvalEnv
+
+
+-- Debugging
+--------------------------------------------------------------------------------
+
+debug = traceShow
+
+debugM :: (Show a , Applicative f) => a -> f ()
+debugM = traceShowM
+-- debug x = pure ()
+
+debugmcxtM = do
+  ms <- M.assocs <$> use mcxt
+  debug [(x, case e of Solved{} -> True; _ -> False) | (x, e) <- ms]
+-- debugmcxt = pure ()

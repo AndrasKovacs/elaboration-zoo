@@ -1,4 +1,4 @@
-{-# options_ghc -Wno-type-defaults -Wno-unused-imports #-}
+{-# options_ghc -Wno-type-defaults #-}
 
 module Elaboration where
 
@@ -8,26 +8,12 @@ import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable
 import Lens.Micro.Platform
-import Text.Megaparsec (initialPos)
 
 import qualified Data.IntMap.Strict as M
 import qualified Data.Set           as S
 
 import Types
 import Evaluation
-
---------------------------------------------------------------------------------
-
-import Debug.Trace
-
-debug :: (Show a , Applicative f) => a -> f ()
-debug = traceShowM
--- debug x = pure ()
-
-debugmcxt = do
-  ms <- M.assocs <$> use mcxt
-  debug [(x, case e of Solved{} -> True; _ -> False) | (x, e) <- ms]
--- debugmcxt = pure ()
 
 
 -- Unification
@@ -167,6 +153,10 @@ unify = go where
   go topT topU = do
     topT <- forceM topT
     topU <- forceM topU
+    do
+      nt <- quoteM topT
+      nu <- quoteM topU
+      debugM ("unify", nt, nu)
 
     (freshTel :: Name -> Val -> (Name, UnifyM () -> UnifyM ())) <- do
       vs <- view vals
@@ -226,7 +216,7 @@ unify = go where
         solveMeta a sp (VTCons x1 a' (\_ -> gamma))
         x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
         dive $ join $
-          go <$> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b' (VTcons vx1 x2)))
+          go <$> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b (VTcons vx1 x2)))
              <*> applyM b' vx1
 
       (VPiTel x a b, t) -> do
@@ -240,7 +230,7 @@ unify = go where
         x2 <- Evaluation.fresh <$> view vals <*> pure (x ++ "2")
         dive $ join $
           go <$> applyM b' vx1
-             <*> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b' (VTcons vx1 x2)))
+             <*> (VPiTel x2 (gamma vx1) <$> hlamM (\ ~x2 -> apply b (VTcons vx1 x2)))
 
       (t, VPiTel x a b) -> do
         go VTEmpty a
@@ -301,8 +291,8 @@ insertMetas ins action = case ins of
     go t va
 
 check :: Raw -> VTy -> ElabM Tm
-check topT topA = do
-  topA <- forceM topA
+check ~topT ~topA = do
+  topA  <- forceM topA
   fresh <- fresh <$> view vals
   topAn <- quoteM topA
 
@@ -310,7 +300,7 @@ check topT topA = do
     (RSrcPos p t, _) ->
       local (pos .~ p) (check t topA)
     _ -> do
-      debug ("check", topT, topAn)
+      debugM ("check", topT, topAn)
       res <- case (topT, topA) of
 
         (RLam x ann ni t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') ni -> do
@@ -332,9 +322,7 @@ check topT topA = do
           telv   <- evalM tel
           (t, a) <- telBinding x telv $ infer MIYes t
           a      <- closeM x =<< (telBinding x telv $ quoteM a)
-
           embedUnifyM $ unify topA (VPiTel x telv a)
-
           pure $ LamTel x tel t
 
         (RLet x a t u, topA) -> do
@@ -353,7 +341,7 @@ check topT topA = do
           embedUnifyM $ unify va topA
           pure t
 
-      debug ("checked", topT)
+      debugM ("checked", topT)
       pure res
 
 
@@ -361,7 +349,7 @@ infer :: MetaInsertion -> Raw -> ElabM (Tm, VTy)
 infer ins t = case t of
   RSrcPos p t -> local (pos .~ p) (infer ins t)
   t -> do
-    debug ("infer"::String, t)
+    debugM ("infer"::String, t)
     res <- case t of
       RSrcPos{} -> error "impossible"
       RVar x -> insertMetas ins $
@@ -382,17 +370,17 @@ infer ins t = case t of
               report $ IcitMismatch i i'
             pure (a, b)
           vty@(VNe (HMeta m) sp) -> do
-            x   <- fresh <$> view vals <*> pure "x"
-            a   <- evalM =<< newMeta
-            b   <- closeM x =<< binding x a newMeta
+            x <- fresh <$> view vals <*> pure "x"
+            a <- evalM =<< newMeta
+            b <- closeM x =<< binding x a newMeta
             embedUnifyM $ unify vty (VPi x i a b)
             pure (a, b)
           vty -> do
             ty <- quoteM vty
             report $ ExpectedFunction ty
-        u   <- check u a
-        ~vu <- evalM u
-        bvu <- applyM b vu
+        u    <- check u a
+        ~vu  <- evalM u
+        ~bvu <- applyM b vu
         pure (App t u i, bvu)
 
       RLam _ _ Left{} _ ->
@@ -426,8 +414,6 @@ infer ins t = case t of
       RStopInsertion t ->
         infer MINo t
 
-    debug ("inferred", t)
+    nty <- quoteM (snd res)
+    debugM ("inferred", t, nty)
     pure res
-
-elabCxt0 :: ElabCxt
-elabCxt0 = ElabCxt [] [] [] (initialPos "(stdin)")

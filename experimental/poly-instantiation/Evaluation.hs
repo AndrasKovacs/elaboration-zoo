@@ -37,21 +37,23 @@ runEval ma ms vs = runReader ma (EvalEnv ms vs)
 embedEvalM :: HasVals cxt Vals => EvalM a -> M cxt a
 embedEvalM ma = runEval ma <$> use mcxt <*> view vals
 
-vProj1 :: Val -> Val
-vProj1 (VTcons t u) = t
-vProj1 (VNe h sp)   = VNe h (SProj1 sp)
-vProj1 _            = error "impossible"
+vProj1 :: Val -> EvalM Val
+vProj1 (VTcons t u)    = pure t
+vProj1 (VNe h sp)      = pure $ VNe h (SProj1 sp)
+vProj1 (VLamTel x a t) = vProj1 =<< vLamTel pure x a t
+vProj1 _               = error "impossible"
 
-vProj2 :: Val -> Val
-vProj2 (VTcons t u) = u
-vProj2 (VNe h sp)   = VNe h (SProj2 sp)
-vProj2 _            = error "impossible"
+vProj2 :: Val -> EvalM Val
+vProj2 (VTcons t u)    = pure u
+vProj2 (VNe h sp)      = pure $ VNe h (SProj2 sp)
+vProj2 (VLamTel x a t) = vProj2 =<< vLamTel pure x a t
+vProj2 _               = error "impossible"
 
 vVar :: Name -> EvalM Val
 vVar x = do
   vs <- view vals
   case lookup x vs of
-    Nothing -> error "impossible"
+    Nothing -> error $ "impossible: " ++ x ++ " not in scope"
     Just mv -> pure $ maybe (VVar x) id mv
 
 lookupMeta :: MId -> EvalM MetaEntry
@@ -94,8 +96,8 @@ vAppSp h = go where
   go SNil             = pure h
   go (SApp sp u i)    = do {sp <- go sp; vApp sp u i}
   go (SAppTel a sp u) = do {sp <- go sp; vAppTel a sp u}
-  go (SProj1 sp)      = vProj1 <$> go sp
-  go (SProj2 sp)      = vProj2 <$> go sp
+  go (SProj1 sp)      = vProj1 =<< go sp
+  go (SProj2 sp)      = vProj2 =<< go sp
 
 -- | Force the outermost constructor in a value. Does not force the spine
 --   of a neutral value.
@@ -114,8 +116,8 @@ forceM v = embedEvalM (force v)
 
 -- | Force a spine, computing telescope applications where possible.
 forceSp :: Spine -> EvalM Spine
-forceSp sp = vAppSp (VVar "_") sp <&> \case
-  VNe _ sp -> sp
+forceSp sp = vAppSp (VVar "_") sp >>= \case
+  VNe _ sp -> pure sp
   _        -> error "impossible"
 
 forceSpM :: HasVals cxt Vals => Spine -> M cxt Spine
@@ -144,28 +146,28 @@ vLamTel k x a t = force a >>= \case
   a -> pure (VLamTel x a t)
 
 vAppTel ::  VTy -> Val -> Val -> EvalM Val
-vAppTel t a ~u =
+vAppTel a t ~u =
   force a >>= \case
     VTEmpty       -> pure t
-    VTCons _ a as ->
-      let v1 = vProj1 u in
-      join (vAppTel <$> apply as v1 <*> vApp t v1 Impl <*> pure (vProj2 u))
+    VTCons _ a as -> do
+      ~v1 <- vProj1 u
+      join (vAppTel <$> apply as v1 <*> vApp t v1 Impl <*> vProj2 u)
     a -> case t of
       VLamTel _ _ t -> apply t u
       VNe h sp      -> pure $ VNe h (SAppTel a sp u)
       _             -> error "impossible"
 
 vApp :: Val -> Val -> Icit -> EvalM Val
-vApp (VLam _ _ t   ) ~u i    = apply t u
-vApp (VNe h sp     ) ~u i    = pure $ VNe h (SApp sp u i)
-vApp (VLamTel x a t) ~u Impl = do {t <- vLamTel pure x a t; vApp t u Impl}
-vApp _                _ _    = error "impossible"
+vApp (VLam _ _ t   ) ~u i = apply t u
+vApp (VNe h sp     ) ~u i = pure $ VNe h (SApp sp u i)
+vApp (VLamTel x a t) ~u i = do {t <- vLamTel pure x a t; vApp t u i}
+vApp _                _ _ = error "impossible"
 
 vAppM :: HasVals cxt Vals => Val -> Val -> Icit -> M cxt Val
 vAppM t ~u i = embedEvalM (vApp t u i)
 
 eval :: Tm -> EvalM Val
-eval = go where
+eval t = go t where
   go :: Tm -> EvalM Val
   go = \case
     Var x        -> vVar x
@@ -181,8 +183,8 @@ eval = go where
     Rec a        -> VRec <$> go a
     Tempty       -> pure VTempty
     Tcons t u    -> VTcons <$> go t <*> go u
-    Proj1 t      -> vProj1 <$> go t
-    Proj2 t      -> vProj2 <$> go t
+    Proj1 t      -> vProj1 =<< go t
+    Proj2 t      -> vProj2 =<< go t
     PiTel x a b  -> join (vPiTel pure x <$> go a <*> close x b)
     AppTel a t u -> join (vAppTel <$> go a <*> go t <*> go u)
     LamTel x a t -> join (vLamTel pure x <$> go a <*> close x t)

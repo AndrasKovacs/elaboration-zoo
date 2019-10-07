@@ -170,7 +170,7 @@ Some rules and notation. We assume U Russell-style universe with U : U for brevi
 (π₁ (t ∷ u))	= t     -- beta
 (π₂ (t ∷ u))	= u     -- beta
 (π₂ t ∷ π₂ t)	= t     -- eta
-t				= []    -- eta
+t             = []    -- eta
 
 
 -- Telescope functions

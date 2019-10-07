@@ -36,7 +36,7 @@ There is extensive literature. Examples:
 
 However, despite more than a decade of investigation, no practical
 implementation has landed so far in production compilers. The topic has a
-reputation for being a "swamp" of complicated and hacky solutions. Although, the
+reputation for being a "swamp" of complicated and hacky solutions. The
 GHC proposal for "quick look impredicativity" above has a chance of being
 implemented, because although far from elegant, it is simple and practically
 sufficient.

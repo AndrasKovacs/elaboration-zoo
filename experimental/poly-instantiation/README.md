@@ -68,7 +68,7 @@ id : {A : Set} → A → A
 id = λ x → x
 ```
 
-Checking `(λ x → x) : {A : Set} → A → A` results in `λ {A} x → x` as output.
+Checking `(λ x → x) : {A : Set} → A → A` results in `λ {A} x → x` as output. Example for inferring:
 
 ```
 id2 : {A : Set} → A → A

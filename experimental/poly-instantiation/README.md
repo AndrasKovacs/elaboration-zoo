@@ -135,6 +135,7 @@ represent unknown arities of implicit functions. We add two type formers:
    as soon as we know the domain arity.
 
 Some rules and notation. We assume U Russell-style universe with U : U for brevity.
+Substitution rules are omitted and obvious.
 
 ```
 

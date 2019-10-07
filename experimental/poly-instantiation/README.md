@@ -3,7 +3,7 @@
 #### Background
 
 This package implements enhanced elaboration with first-class implicit function
-types. This means that ({x : A} → B) types are proper function types, differing
+types. This means that `{x : A} → B` types are proper function types, differing
 from explicit functions only in that lambdas and applications are given by
 elaboration by default, not by the programmer. Agda has such function type, but
 its elaborator is rather weak in relation to it. This manifests to Agda users
@@ -23,7 +23,7 @@ listOK = (λ {A} x → x) ∷ []
 
 In Haskell and ML-related literature, ergonomic support for this is called
 "impredicative instantiation" or "impredicative polymorphism", and there it
-means instantiating metas with implicit function types (denoted (∀ (a :: k). t)
+means instantiating metas with implicit function types (denoted `∀ (a :: k). t`
 in Haskell). This "impredicative" is unrelated to impredicativity in type
 theory, and the naming appears to be a historic artifact.
 

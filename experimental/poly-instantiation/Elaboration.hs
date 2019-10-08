@@ -418,7 +418,7 @@ check ~topT ~topA = do
     (RSrcPos p t, _) ->
       local (pos .~ p) (check t topA)
     _ -> do
-      topAn <- quoteM topA
+      ~topAn <- quoteM topA
       debugM ("check", topT, topAn)
       res <- case (topT, topA) of
 

@@ -90,4 +90,19 @@ let t12 = revapp id poly in
 let t13 = app runST argST in
 let t14 : ({A} → A → {B} → B → B) → _ = λ r. r (λ x y. y) in
 
+let It : {X}(x : X) → U
+    = λ {X} x. (It : U) → It → It in
+
+let it : {X x} → It {X} x
+    = λ _ it . it in
+
+let Wrap : U → U
+    = λ A. (Wrap : U) → (A → Wrap) → Wrap in
+
+let wrap : {A}(a : A) → Wrap A
+    = λ {A} a _ wrap. wrap a in
+
+let prf : {A B} → Wrap ({a : A}(b : A) → It a)
+    = λ {A}{B}. wrap (the ({a : A}(b : A) → It a) (λ _. it)) in
+
 U

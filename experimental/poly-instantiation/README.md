@@ -33,9 +33,9 @@ listOK = (λ {A} x → x) ∷ []
 In Haskell and ML-related literature, this is called "impredicative
 instantiation" or "impredicative polymorphism", and there it means being able to
 instantiate metas with implicit function types (denoted `∀ (a :: k). t` in
-Haskell). This "impredicative" is orthogonal to impredicativity in type theory,
-the former notion is a property of an elaborator, the latter is a property of a
-universe in a theory (being closed under arbitrary products).
+Haskell). This "impredicative" is orthogonal to impredicativity in type theory.
+The former notion is a property of an elaborator, the latter is a property of a
+universe in a theory (that is, being closed under arbitrary products).
 
 There is extensive literature. Examples:
 
@@ -57,7 +57,7 @@ would yield strong impredicative inference in GHC/ML-like settings as well.
 
 #### Basic bidirectional elaboration
 
-I build the general and precise solution atop the bidirectional elaboration
+I build a general and precise solution atop the bidirectional elaboration
 algorithm of Agda. See Section 3.6 of [Ulf Norell's
 thesis](http://www.cse.chalmers.se/~ulfn/papers/thesis.pdf). I review the basic
 principles here.
@@ -98,7 +98,7 @@ However, there is a problem when we:
 - infer a meta-headed type for a raw term
 
 because we have no idea whether we should insert implicit things or not! If the
-blocking meta is solved to be an implicit function type, we should insert, if
+blocking meta is solved to an implicit function type, we should insert, if
 it's solved to something which is definitely not an implicit function, we should
 not.
 
@@ -147,7 +147,7 @@ example would produce an unsolved constraint. Two main problems:
 
 As we've seen, the core issue is uncertainty about implicit insertion.
 
-The solution is to add new feature to a core type theory which let us
+The solution is to add new feature to a core type theory which lets us
 represent unknown arities of implicit functions. We add two type formers:
 
 1. Telescopes. These behave as generic right-nested sigma types, can be
@@ -257,9 +257,9 @@ are more sophisticated ways than this to "wake up" constraints as well.
 OK, but what about **inferring a meta-headed type**? For now, we don't change
 anything about this: whenever we infer a meta-headed type for a term, we don't
 insert anything, and just proceed with elaboration, the same way as Agda does.
-The alternative would be to create a fresh meta-telescope, and insert a
-telescope application. This seems to be significantly more complicated than the
-case of inserting telescope lambdas: we would get unification problems with
+The alternative would be insert a telescope applicative, where both the type and the argument are fresh metas. 
+This seems to be significantly more complicated than the
+case of inserting telescope lambdas: from this we would get unification problems with
 unknown telescope applications, and we would have to invent appropriately
 generalized implicit functions types from nothing (e.g. inferring an implicit
 function type for a variable with unknown type). In the GHC/ML literature
@@ -279,14 +279,14 @@ They are *eliminated* through unification:
 
 Unifying telescopes themselves (and their lambdas and applications) is purely structural and not very interesting.
 
-With this, the previous failing example is OK:
+With this, the previously failing example is OK:
 
 ```
 list : List ({A : Set} → A → A)
 list = (λ x → x) ∷ []
 ```
 
-because, when we check `(λ x → x)`, we insert an telescope lambda with unknown domain,
+because, when we check `(λ x → x)`, we insert a telescope lambda with unknown domain,
 and later we refine the telescope lambda to `λ {A} x → x`.
 
 Also, if we have:

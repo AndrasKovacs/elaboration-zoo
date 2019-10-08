@@ -153,7 +153,7 @@ represent unknown arities of implicit functions. We add two type formers:
    function space which immediately computes to iterated implicit functions
    as soon as we know the domain arity.
 
-Some rules and notation. We assume U Russell-style universe with U : U for brevity.
+Some rules and notation. We assume `U` Russell-style universe with `U : U` for brevity.
 Substitution rules are omitted and obvious.
 
 ```

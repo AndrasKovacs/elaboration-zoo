@@ -4,7 +4,10 @@
 
 Install with `stack install`.
 
-This package has a `Main.main` function which takes some command line flags and reads input from stdin, intended for command line usage, and a `Main.main'` function with the same functionality which takes flags and input as plain strings, intended for interactive usage in ghci.
+This package has a `Main.main` function which takes some command line flags and
+reads input from stdin, intended for command line usage, and a `Main.main'`
+function with the same functionality which takes flags and input as plain
+strings, intended for interactive usage in ghci.
 
 #### Background
 
@@ -27,11 +30,12 @@ listOK : List ({A : Set} → A → A)
 listOK = (λ {A} x → x) ∷ []
 ```
 
-In Haskell and ML-related literature, this is called
-"impredicative instantiation" or "impredicative polymorphism", and there it
-means instantiating metas with implicit function types (denoted `∀ (a :: k). t`
-in Haskell). This "impredicative" is orthogonal to impredicativity in type
-theory, and the naming appears to be a historic artifact.
+In Haskell and ML-related literature, this is called "impredicative
+instantiation" or "impredicative polymorphism", and there it means being able to
+instantiate metas with implicit function types (denoted `∀ (a :: k). t` in
+Haskell). This "impredicative" is orthogonal to impredicativity in type theory,
+the former notion is a property of an elaborator, the latter is a property of a
+universe in a theory (being closed under arbitrary products).
 
 There is extensive literature. Examples:
 
@@ -250,13 +254,18 @@ We can check and re-check this constraint in whatever way we like. In my
 prototype, I re-check the constraint whenever a meta in `b` gets solved. There
 are more sophisticated ways than this to "wake up" constraints as well.
 
-OK, but what about **inferring a meta-headed type**? For now, we don't change anything about this,
-and leave this to future works. It seems to be significantly more complicated than the checking
-case: in many cases this means that we would have to invent appropriately generalized implicit 
-functions types from nothing (e.g. inferring an implicit function type for a variable with unknown type).
-In the GHC/ML literature usually no one even tries to infer such types; even in MLF polymorphically used
-bound variables must have known/annotated polymorphic types. That said, I believe some interesting
-progress could be made here using my framework. 
+OK, but what about **inferring a meta-headed type**? For now, we don't change
+anything about this: whenever we infer a meta-headed type for a term, we don't
+insert anything, and just proceed with elaboration, the same way as Agda does.
+The alternative would be to create a fresh meta-telescope, and insert a
+telescope application. This seems to be significantly more complicated than the
+case of inserting telescope lambdas: we would get unification problems with
+unknown telescope applications, and we would have to invent appropriately
+generalized implicit functions types from nothing (e.g. inferring an implicit
+function type for a variable with unknown type). In the GHC/ML literature
+usually no one even tries to infer such types; even in MLF, polymorphically used
+bound variables must have known/annotated polymorphic types. That said, I
+believe some interesting progress could be made here using my framework.
 
 #### Unifying with telescopes
 
@@ -264,10 +273,10 @@ We've just seen when and how telescope functions are creted during elaboration.
 They are *eliminated* through unification:
 
 1. If we unify a telescope function with an implicit function, we refine the
-   domain telescope to a *non-empty* telescope. 
+   domain telescope to a *non-empty* telescope.
 2. If we unify a telescope function with a type which is *definitely not* an implicit
-   function, we solve the domain telescope to be empty. 
-   
+   function, we solve the domain telescope to be empty.
+
 Unifying telescopes themselves (and their lambdas and applications) is purely structural and not very interesting.
 
 With this, the previous failing example is OK:

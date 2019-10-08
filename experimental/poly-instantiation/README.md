@@ -41,8 +41,9 @@ GHC proposal for "quick look impredicativity" above has a chance of being
 implemented, because although far from elegant, it is simple and practically
 sufficient.
 
-I present here a general solution to elaboration with first-class
-dependent implicit functions. 
+I present here a general solution to elaboration with first-class implicit functions,
+in the setting of dependent type theory. It's likely that a restriction of my algorithm
+would yield strong impredicative inference in GHC/ML-like settings as well.
 
 #### Basic bidirectional elaboration
 

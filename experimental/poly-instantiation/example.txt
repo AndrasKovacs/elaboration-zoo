@@ -7,12 +7,16 @@
 -- for metas. However, pruning is orthogonal to the "telescope" inference
 -- demonstrated here, and it could be added to this system without issue.
 
--- Also, in some cases we get unsolved metas, which is because we don't support let generalization,
--- so the dangling stuff just remains there. 
+-- In some cases we get unsolved metas, which is because we don't support let generalization,
+-- so the dangling stuff just remains there.
 
+-- In the elaboration output, telescopes are not computed away, because I haven't yet
+-- implemented a version of "zonking" which computes them. Nonetheless, you can observe
+-- that known telescopes disappear during normalization.
 
 let the	   : (A : U) → A → A = λ A x.x in
 let id	   : {A} → A → A = λ x. x in
+let const  : {A B} → A → B → A = λ x y. x in
 let choose : {A} → A → A → A = λ x y. x in
 
 let Nat  : U = (N : U) → (N → N) → N → N in
@@ -64,6 +68,7 @@ let revapp : {A B} → A → (A → B) → B = λ a f. f a in
 let IdTy : U = {A} → A → A in
 let id2 = λ x. x in
 let ids : List IdTy = cons id2 (cons (λx.x) nil) in
+let ids2 : List IdTy = map (const id) ids in
 
 let l1 = cons true (cons false nil) in
 let l2 : List Bool = nil in

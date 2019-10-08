@@ -41,6 +41,9 @@ GHC proposal for "quick look impredicativity" above has a chance of being
 implemented, because although far from elegant, it is simple and practically
 sufficient.
 
+I present here a general solution to elaboration with first-class
+dependent implicit functions. 
+
 #### Basic bidirectional elaboration
 
 I build the general and precise solution atop the bidirectional elaboration

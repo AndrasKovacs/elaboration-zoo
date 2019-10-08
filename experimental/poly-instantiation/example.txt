@@ -3,7 +3,7 @@
 -- "Guarded Impredicative Polymorphism" paper:
 --   https://www.microsoft.com/en-us/research/uploads/prod/2017/07/impredicative-pldi18.pdf
 
--- A couple of examples don't type check here, because we don't support pruning
+-- A couple of examples don't type check here, because we don't (yet) support pruning
 -- for metas. However, pruning is orthogonal to the "telescope" inference
 -- demonstrated here, and it could be added to this system without issue.
 

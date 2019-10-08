@@ -257,7 +257,7 @@ They are *eliminated* through unification:
 
 1. If we unify a telescope function with an implicit function, we refine the
    domain telescope to a *non-empty* telescope. 
-2. If we unify a telescope function with type which is *definitely not* and implicit
+2. If we unify a telescope function with a type which is *definitely not* an implicit
    function, we solve the domain telescope to be empty. 
    
 Unifying telescopes themselves (and their lambdas and applications) is purely structural and not very interesting.

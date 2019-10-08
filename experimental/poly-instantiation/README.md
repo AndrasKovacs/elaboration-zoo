@@ -6,7 +6,7 @@ This package implements enhanced elaboration with first-class implicit function
 types. This means that `{x : A} → B` types are proper function types, differing
 from explicit functions only in that lambdas and applications are given by
 elaboration by default, not by the programmer. Agda has such function type, but
-its elaborator is rather weak in relation to it. This manifests to Agda users
+its elaborator handles it rather weakly. This manifests to Agda users
 as situations where implicit lambdas have to be written out manually.
 
 A simple example where Agda cannot correctly insert implicit lambdas:
@@ -21,7 +21,7 @@ listOK : List ({A : Set} → A → A)
 listOK = (λ {A} x → x) ∷ []
 ```
 
-In Haskell and ML-related literature, ergonomic support for this is called
+In Haskell and ML-related literature, this is called
 "impredicative instantiation" or "impredicative polymorphism", and there it
 means instantiating metas with implicit function types (denoted `∀ (a :: k). t`
 in Haskell). This "impredicative" is unrelated to impredicativity in type
@@ -61,7 +61,7 @@ The handling of implicit functions is the following:
 
 In short, checking inserts implicit lambdas, inference inserts implicit applications.
 
-Examples for checking:
+Example for checking:
 
 ```
 id : {A : Set} → A → A
@@ -104,9 +104,18 @@ b = id {α} true
 -- output
 b = id {Bool} true
 ```
+Going back to the previous example where this does not work:
+```
+listError : List ({A : Set} → A → A)
+listError = (λ x → x) ∷ []
+```
+Here, we Agda checks `λ x → x`, the checking type is still a meta, inserted as an implicit
+argument for `_∷_`, so Agda assumes that no implicit lambda should be inserted, which turns
+out to be an incorrect assumption when we unify the inferred type for `(λ x → x) ∷ []` with
+`List ({A : Set} → A → A)`.
 
 A naive solution would be to postpone checking with meta-headed types, until
-the meta is solved. This works badly in practice, e.g. the above `b = id true`
+the meta is solved. This works badly in practice, e.g. already the above `b = id true`
 example would produce an unsolved constraint. Two main problems:
 
 - This assumes that *any* raw term could be wrapped in an implicit lambda, although
@@ -201,5 +210,32 @@ t{u:(x : A) ▶ Δ}      = t{π₁ u}{π₂ u : Δ[x ↦ π₁ u]}
 
 (λ{x:Δ}.t){u:Δ} = t[x ↦ u]
 (λ{x:Δ}.t{x:Δ}) = t
-
 ```
+
+A telescope function with a meta-headed domain type represents an iterated implicit function with
+unknown arity. If the domain is solved to be the empty telescope, the telescope function disappears,
+if it is solved to a non-empty telescope, it is refined to an implicit function type.
+
+This allows us to generally handle unknown insertions: we can proceed
+with elaboration and compute in the presence of such insertions
+
+The new rule for checking with meta-headed type becomes the following:
+
+Assume we are checking `t` in `Γ` with `α σ`.
+
+1. Create fresh meta `β`, standing for a telescope.
+2. Infer type `b` for `t` in `Γ, x : Rec β`.
+3. Return `λ{x:β}.t : {x : β} → b`
+
+Additionally, we want to avoid creating a `{x : β} → b` type
+which is not actually dependent, i.e. `b` does not depend on `x`.
+Such type could compute to a non-dependent implicit function type,
+which is very much useless, because implicit arguments for it are
+never inferable. So we additionally add the following postponed
+constraint:
+
+- if `x ∉ b` then solve `β` to `∙`.
+
+We can check and re-check this constraint in whatever way we like. In my
+prototype, I re-check the constraint whenever a meta in `b` gets solved. There
+are more sophisticated ways than this to "wake up" constraints as well.

@@ -7,6 +7,9 @@
 -- for metas. However, pruning is orthogonal to the "telescope" inference
 -- demonstrated here, and it could be added to this system without issue.
 
+-- Also, in some cases we get unsolved metas, which is because we don't support let generalization,
+-- so the dangling stuff just remains there. 
+
 
 let the	   : (A : U) → A → A = λ A x.x in
 let id	   : {A} → A → A = λ x. x in

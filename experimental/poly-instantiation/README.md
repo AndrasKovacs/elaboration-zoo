@@ -123,9 +123,9 @@ Going back to the previous example where this does not work:
 listError : List ({A : Set} → A → A)
 listError = (λ x → x) ∷ []
 ```
-Here, we Agda checks `λ x → x`, the checking type is still a meta, inserted as an implicit
-argument for `_∷_`, so Agda assumes that no implicit lambda should be inserted, which turns
-out to be an incorrect assumption when we unify the inferred type for `(λ x → x) ∷ []` with
+Here, when Agda checks `λ x → x`, the checking type is still a meta, inserted as an implicit
+argument for `_∷_`, so Agda assumes that no implicit lambda should be inserted. This turns
+out to be an incorrect assumption when the inferred type for `(λ x → x) ∷ []` is unified with
 `List ({A : Set} → A → A)`.
 
 A naive solution would be to postpone checking with meta-headed types, until
@@ -133,11 +133,11 @@ the meta is solved. This works badly in practice, e.g. already the above `b = id
 example would produce an unsolved constraint. Two main problems:
 
 - This assumes that *any* raw term could be wrapped in an implicit lambda, although
-  in many cases it'd dumb to do so. E.g., since `true : Bool` is a closed term which
+  in many cases it would be useless to do so. E.g., since `true : Bool` is a closed term which
   cannot depend on anything, wrapping it in implicit lambda always yields a constant
   function `λ {_} → true` with a non-dependent implicit function type `{_ : A} → Bool`.
   We do not want elaboration to create non-dependent implicit functions, because their
-  parameters are *never* inferable.
+  arguments are *never* inferable.
 - Postponing checking makes a lot of typing information inaccessible, which we could
   otherwise learn from elaborating the term. Also, we cannot compute with a term
   whose checking is postponed (a "guarded constant" in Agda terminology).
@@ -147,7 +147,7 @@ example would produce an unsolved constraint. Two main problems:
 
 As we've seen, the core issue is uncertainty about implicit insertion.
 
-The solution is to add new feature to a core type theory which lets us
+The solution is to add new features to a core type theory which let us
 represent unknown arities of implicit functions. We add two type formers:
 
 1. Telescopes. These behave as generic right-nested sigma types, can be
@@ -231,7 +231,7 @@ unknown arity. If the domain is solved to be the empty telescope, the telescope 
 if it is solved to a non-empty telescope, it is refined to an implicit function type.
 
 This allows us to generally handle unknown insertions, and we can proceed
-with elaboration and compute, without having to postpone anything.
+with elaboration and computation, without having to postpone anything.
 
 The new rule for **checking with meta-headed type** becomes the following:
 
@@ -251,13 +251,13 @@ constraint:
 - if `x ∉ b` then solve `β` to `∙`.
 
 We can check and re-check this constraint in whatever way we like. In my
-prototype, I re-check the constraint whenever a meta in `b` gets solved. There
-are more sophisticated ways than this to "wake up" constraints as well.
+prototype, I re-check the constraint whenever a meta in `b` gets solved, but
+there are certainly more sophisticated ways to do this.
 
 OK, but what about **inferring a meta-headed type**? For now, we don't change
 anything about this: whenever we infer a meta-headed type for a term, we don't
 insert anything, and just proceed with elaboration, the same way as Agda does.
-The alternative would be insert a telescope applicative, where both the type and the argument are fresh metas. 
+The alternative would be insert a telescope application, where both the telescope type and the argument are fresh metas. 
 This seems to be significantly more complicated than the
 case of inserting telescope lambdas: from this we would get unification problems with
 unknown telescope applications, and we would have to invent appropriately
@@ -269,7 +269,7 @@ believe some interesting progress could be made here using my framework.
 
 #### Unifying with telescopes
 
-We've just seen when and how telescope functions are creted during elaboration.
+We've just seen when and how telescope functions are created during elaboration.
 They are *eliminated* through unification:
 
 1. If we unify a telescope function with an implicit function, we refine the

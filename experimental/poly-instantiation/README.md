@@ -1,5 +1,11 @@
 ## elabzoo-poly-instantiation
 
+#### Usage
+
+Install with `stack install`.
+
+This package has a `Main.main` function which takes some command line flags and reads input from stdin, intended for command line usage, and a `Main.main'` function with the same functionality which takes flags and input as plain strings, intended for interactive usage in ghci.
+
 #### Background
 
 This package implements enhanced elaboration with first-class implicit function

@@ -260,6 +260,8 @@ They are *eliminated* through unification:
 2. If we unify a telescope function with type which is *definitely not* and implicit
    function, we solve the domain telescope to be empty. 
    
+Unifying telescopes themselves (and their lambdas and applications) is purely structural and not very interesting.
+
 With this, the previous failing example is OK:
 
 ```

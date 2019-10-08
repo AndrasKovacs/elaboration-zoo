@@ -226,8 +226,8 @@ A telescope function with a meta-headed domain type represents an iterated impli
 unknown arity. If the domain is solved to be the empty telescope, the telescope function disappears,
 if it is solved to a non-empty telescope, it is refined to an implicit function type.
 
-This allows us to generally handle unknown insertions: we can proceed
-with elaboration and compute in the presence of such insertions
+This allows us to generally handle unknown insertions, and we can proceed
+with elaboration and compute, without having to postpone anything.
 
 The new rule for checking with meta-headed type becomes the following:
 

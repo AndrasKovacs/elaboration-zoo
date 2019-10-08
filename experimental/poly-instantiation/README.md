@@ -249,3 +249,32 @@ constraint:
 We can check and re-check this constraint in whatever way we like. In my
 prototype, I re-check the constraint whenever a meta in `b` gets solved. There
 are more sophisticated ways than this to "wake up" constraints as well.
+
+#### Unifying with telescopes
+
+We've just seen when and how telescope functions are creted during elaboration.
+They are *eliminated* through unification:
+
+1. If we unify a telescope function with an implicit function, we refine the
+   domain telescope to a *non-empty* telescope. 
+2. If we unify a telescope function with type which is *definitely not* and implicit
+   function, we solve the domain telescope to be empty. 
+   
+With this, the previous failing example is OK:
+
+```
+list : List ({A : Set} → A → A)
+list = (λ x → x) ∷ []
+```
+
+because, when we check `(λ x → x)`, we insert an telescope lambda with unknown domain,
+and later we refine the telescope lambda to `λ {A} x → x`.
+
+Also, if we have:
+
+```
+t = true
+```
+
+The inferred type for `t` is just `Bool` as expected, because we eliminate non-dependent telescope
+functions.

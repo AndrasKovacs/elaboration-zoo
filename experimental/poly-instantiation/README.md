@@ -11,7 +11,7 @@ This package has a `Main.main` function which takes some command line flags and 
 This package implements enhanced elaboration with first-class implicit function
 types. This means that `{x : A} → B` types are proper function types, differing
 from explicit functions only in that lambdas and applications are given by
-elaboration by default, not by the programmer. Agda has such function type, but
+elaboration by default, not by the programmer. Agda has such a function type, but
 its elaborator handles it rather weakly. This manifests to Agda users
 as situations where implicit lambdas have to be written out manually.
 

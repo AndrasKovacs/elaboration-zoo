@@ -70,7 +70,7 @@ The handling of implicit functions is the following:
 
 - When checking a non-implicit-lambda raw term with an implicit function type, insert
   a new implicit lambda in the output.
-- When inferring, if the output type is an implicit lambda, insert an implicit
+- When inferring, if the output type is an implicit function, insert an implicit
   application to a fresh meta.
 
 In short, checking inserts implicit lambdas, inference inserts implicit applications.

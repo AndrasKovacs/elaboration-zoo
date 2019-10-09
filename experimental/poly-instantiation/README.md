@@ -271,6 +271,9 @@ believe some interesting progress could be made here using my framework.
 Likewise, we do not insert a fresh telescope application when **inferring a telescope function type**. 
 It seems that this causes similar complications. 
 
+There is additional examples and discussion about lambda-only vs. application insertion
+[here](https://github.com/agda/agda/issues/2099#issuecomment-540233457).
+
 #### Unifying with telescopes
 
 We've just seen when and how telescope functions are created during elaboration.

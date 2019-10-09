@@ -239,7 +239,8 @@ Assume we are checking `t` in `Γ` with `α σ`.
 
 1. Create fresh meta `β`, standing for a telescope.
 2. Infer type `b` for `t` in `Γ, x : Rec β`.
-3. Return `λ{x:β}.t : {x : β} → b`
+3. Unify `α σ` with `{x : β} → b`.
+4. Return `λ{x:β}.t : {x : β} → b`.
 
 Additionally, we want to avoid creating a `{x : β} → b` type
 which is not actually dependent, i.e. `b` does not depend on `x`.

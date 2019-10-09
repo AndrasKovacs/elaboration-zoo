@@ -57,7 +57,7 @@ would yield strong impredicative inference in GHC/ML-like settings as well.
 
 #### Basic bidirectional elaboration
 
-I build a general and precise solution atop the bidirectional elaboration
+I build atop the bidirectional elaboration
 algorithm of Agda. See Section 3.6 of [Ulf Norell's
 thesis](http://www.cse.chalmers.se/~ulfn/papers/thesis.pdf). I review the basic
 principles here.

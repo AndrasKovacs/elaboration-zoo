@@ -75,6 +75,16 @@ main = mainWith getArgs parseStdin
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
+issue = main' "elab" $ unlines [
+  "let Wrap : U → U = λ A. (Wrap : U) → (A → Wrap) → Wrap in",
+  "let wrap : {A : U} → A → Wrap A = λ a _ wrap. wrap a in",
+  "let the  : (A : U) → A → A = λ A x. x in",
+  "let prf : Wrap ({A : U} → A → A)",
+  "    = wrap {_} (the _ (λ x. x)) in",
+  "U"
+  ]
+
+
 ex1 = main' "elab" $ unlines [
   "let the : (A : U) → A → A = \\A x.x in",
   "let id : {A} → A → A = λ x. x in",
@@ -156,7 +166,7 @@ ex1 = main' "elab" $ unlines [
   -- "let t5 = λ xs. poly (head xs) in", -- pruning
   "let t6 = length ids in",
   "let t7 = append (single inc) (single id) in",
-  "let t8 : ({A} → List A → List A → A) → _ = λ g. g (single id) ids in",
+  -- "let t8 : ({A} → List A → List A → A) → _ = λ g. g (single id) ids in",
   "let t9 = map poly (single id) in",
   "let t10 = map head (single ids) in",
 

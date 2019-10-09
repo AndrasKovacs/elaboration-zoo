@@ -4,6 +4,7 @@
 module Elaboration where
 
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Foldable
@@ -242,6 +243,16 @@ newMeta = do
 
   pure $ foldr go (Meta m) sp
 
+-- | Silly heuristic for the meta-meta unification case,
+--   we solve the meta with "better" spine.
+betterSp :: Spine -> Spine -> UnifyM Bool
+betterSp sp sp' = do
+  -- ~l <- quoteM (VNe (HVar "_") sp)
+  -- ~r <- quoteM (VNe (HVar "_") sp')
+  -- debugM ("betterSp", l , r)
+  goodSp  <- catchError ((1::Int) <$ checkSp sp ) (\_ -> pure 0)
+  goodSp' <- catchError ((1::Int) <$ checkSp sp') (\_ -> pure 0)
+  pure $ (goodSp, spLen sp) > (goodSp', spLen sp')
 
 unify :: Val -> Val -> UnifyM ()
 unify = go where
@@ -315,10 +326,16 @@ unify = go where
       (VNe h sp, VNe h' sp') | h == h' ->
         goSp h h' sp sp'
 
-      (t@(VNe (HMeta m) sp), t'@(VNe (HMeta m') sp')) ->
-        if spLen sp > spLen sp'
-        then solveMeta m sp t'
-        else solveMeta m' sp' t
+      (t@(VNe (HMeta m) sp), t'@(VNe (HMeta m') sp')) -> do
+        betterSp sp sp' >>= \case
+          True  -> solveMeta m sp t'
+          False -> solveMeta m' sp' t
+
+
+
+        -- if spLen sp < spLen sp'
+        -- then solveMeta m sp t'
+        -- else solveMeta m' sp' t
 
       (VNe (HMeta m) sp, t) -> solveMeta m sp t
       (t, VNe (HMeta m) sp) -> solveMeta m sp t
@@ -393,6 +410,12 @@ insertMetas ins action = case ins of
             m  <- newMeta
             mv <- evalM m
             go (App t m Impl) =<< applyM b mv
+          -- VPiTel x a b -> do
+          --   m  <- newMeta
+          --   mv <- evalM m
+          --   ~a <- quoteM a
+          --   debugM ("inserted telapp", m)
+          --   go (AppTel a t m) =<< applyM b mv
           va -> pure (t, va)
     go t va
 
@@ -406,7 +429,12 @@ insertMetas ins action = case ins of
               m  <- newMeta
               mv <- evalM m
               go (App t m Impl) =<< applyM b mv
-          _ -> report (NoNamedImplicitArg x)
+          -- VPiTel x a b -> do
+          --   m  <- newMeta
+          --   mv <- evalM m
+          --   ~a <- quoteM a
+          --   go (AppTel a t m) =<< applyM b mv
+          -- _ -> report (NoNamedImplicitArg x)
     go t va
 
 check :: Raw -> VTy -> ElabM Tm
@@ -468,7 +496,7 @@ check ~topT ~topA = do
           embedUnifyM $ unify va topA
           pure t
 
-      debugM ("checked", topT)
+      debugM ("checked", res)
       pure res
 
 
@@ -542,5 +570,5 @@ infer ins t = case t of
         infer MINo t
 
     nty <- quoteM (snd res)
-    debugM ("inferred", t, nty)
+    debugM ("inferred", fst res, nty)
     pure res

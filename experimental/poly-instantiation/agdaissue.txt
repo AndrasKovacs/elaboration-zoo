@@ -1,0 +1,16 @@
+
+-- notes for https://github.com/agda/agda/issues/2099
+
+let Wrap : U → U
+    = λ A. (Wrap : U) → (A → Wrap) → Wrap in
+
+let wrap : {A : U} → A → Wrap A
+    = λ a _ wrap. wrap a in
+
+let the : (A : U) → A → A
+    = λ A x. x in
+
+let prf : Wrap ({A : U} → A → A)
+    = wrap {_} (the _ (λ x. x)) in
+
+U

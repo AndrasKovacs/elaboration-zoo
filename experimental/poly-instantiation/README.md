@@ -268,6 +268,9 @@ usually no one even tries to infer such types; even in MLF, polymorphically used
 bound variables must have known/annotated polymorphic types. That said, I
 believe some interesting progress could be made here using my framework.
 
+Likewise, we do not insert a fresh telescope application when **inferring a telescope function type**. 
+It seems that this causes similar complications. 
+
 #### Unifying with telescopes
 
 We've just seen when and how telescope functions are created during elaboration.

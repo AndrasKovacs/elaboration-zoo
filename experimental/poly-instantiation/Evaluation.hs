@@ -21,8 +21,6 @@ module Evaluation (
   , vAppM
   , zonk
   , zonkM
-  -- , zonkTels
-  -- , zonkTelsM
   ) where
 
 import Control.Monad.Reader
@@ -54,8 +52,8 @@ vProj2 _               = error "impossible"
 vVar :: Name -> EvalM Val
 vVar x = do
   vs <- view vals
-  case lookup x vs of
-    Nothing -> error $ "impossible: " ++ x ++ " not in scope"
+  case (lookup x vs) of
+    Nothing -> pure (VVar x) -- error $ "impossible: " ++ x ++ " not in scope"
     Just mv -> pure $ maybe (VVar x) id mv
 
 lookupMeta :: MId -> EvalM MetaEntry
@@ -175,6 +173,7 @@ eval t = go t where
   go = \case
     Var x        -> vVar x
     Let x _ t u  -> do {~v <- go t; defining x v $ go u}
+    Assume x _ t -> local (vals %~ ((x, Nothing):)) $ go t
     U            -> pure VU
     Meta m       -> vMeta m
     Pi x i a b   -> VPi x i <$> go a <*> close x b
@@ -281,6 +280,7 @@ zonk = go where
                       Right t -> do {u <- go u; pure $ App t u ni}
     Lam x i t    -> Lam x i <$> goBind x t
     Let x a t u  -> Let x <$> go a <*> go t <*> goBind x u
+    Assume x a t -> Assume x <$> go a <*> goBind x t
     Tel          -> pure Tel
     TEmpty       -> pure TEmpty
     TCons x t u  -> TCons x <$> go t <*> goBind x u
@@ -297,4 +297,3 @@ zonk = go where
 
 zonkM :: HasVals cxt Vals => Tm -> M cxt Tm
 zonkM t = embedEvalM (zonk t)
-

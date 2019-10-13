@@ -34,7 +34,8 @@ pArrow     = symbol "→" <|> symbol "->"
 pBind      = pIdent <|> symbol "_"
 
 keyword :: String -> Bool
-keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
+keyword x =
+  x == "let" || x == "in" || x == "λ" || x == "U" || x == "assume"
 
 pIdent :: Parser Name
 pIdent = try $ do
@@ -111,8 +112,17 @@ pLet = do
   u <- pTm
   pure $ RLet x (maybe RHole id ann) t u
 
+pAssume :: Parser Raw
+pAssume = do
+  symbol "assume"
+  x <- pIdent
+  ann <- char ':' *> pTm
+  symbol "in"
+  u <- pTm
+  pure $ RAssume x ann u
+
 pTm :: Parser Raw
-pTm = withPos (pLam <|> pLet <|> try pPi <|> pFunOrSpine)
+pTm = withPos (pLam <|> pLet <|> pAssume <|> try pPi <|> pFunOrSpine)
 
 pSrc :: Parser Raw
 pSrc = ws *> pTm <* eof

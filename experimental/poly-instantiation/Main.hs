@@ -30,7 +30,7 @@ displayError file (Err msg (SourcePos path (unPos -> linum) (unPos -> colnum))) 
   printf "%s\n\n" (show msg)
 
 elabCxt0 :: ElabCxt
-elabCxt0 = ElabCxt [] [] [] (initialPos "(stdin)")
+elabCxt0 = ElabCxt [] [] [] (initialPos "(stdin)") True
 
 st0 :: St
 st0 = St 0 mempty
@@ -75,13 +75,28 @@ main = mainWith getArgs parseStdin
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
+
+
+-- example for when a telescope cannot depend on local A% B% vars.
+-- this would only work with let generalization!
+outOfScopeTelRefinement = main' "elab" $ unlines [
+  "let the : (A : U) → A → A = \\A x.x in",
+  "let f = λ x y . x in",
+  "the ({A B} → A → B → A) f"
+  ]
+
 issue = main' "elab" $ unlines [
-  "let Wrap : U → U = λ A. (Wrap : U) → (A → Wrap) → Wrap in",
-  "let wrap : {A : U} → A → Wrap A = λ a _ wrap. wrap a in",
-  "let the  : (A : U) → A → A = λ A x. x in",
-  "let prf : Wrap ({A : U} → A → A)",
-  "    = wrap {_} (the _ (λ x. x)) in",
-  "U"
+ "assume Nat : U in",
+ "assume Dec : U → U in",
+ "assume meh : {A} → Dec A in",
+ "assume True : {A} → Dec A → U in",
+ "assume fromWitness : {P}{Q : Dec P} → P → True Q in",
+ "assume T : Nat → U in",
+ "let Coprime = {i} → T i in",
+ "assume coprime : Dec Coprime in",
+ "let bla : Coprime → True coprime",
+ "    = λ c. fromWitness c in",
+ "U"
   ]
 
 
@@ -101,11 +116,12 @@ ex1 = main' "elab" $ unlines [
   "let hundred = mul ten ten in",
 
   "let List : U -> U",
-  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L in",
-  "let nil : {A} -> List A",
+  "    = \\A. (L : U) -> (A -> L -> L) -> L -> L in",
+  "let nil : {A : U} -> List A",
   "    = \\cons L nil. nil in",
-  "let cons : {A} -> A -> List A -> List A",
+  "let cons : {A : U} -> A -> List A -> List A",
   "    = \\{A} x xs L cons nil. cons x (xs _ cons nil) in",
+
   "let append : {A} → List A → List A → List A",
   "    = λ xs ys L cons nil. xs _ cons (ys _ cons nil) in",
   "let map : {A B} → (A → B) → List A → List B = λ f as _ c n. as _ (λ a. c (f a)) n in",
@@ -252,3 +268,12 @@ ex2 = main' "elab" $ unlines [
 
   "the (Eq (mul ten ten) hundred) refl"
   ]
+
+  -- ?4 {A} (?3 {A})* {?6 {A}},A
+
+  -- α A {β A : γ A} =? A
+
+  -- γ = λ A. A ▶ ∙
+  -- α = λ _ A. A
+
+-- the ? (λ {y : γ} x → x){α:γ}

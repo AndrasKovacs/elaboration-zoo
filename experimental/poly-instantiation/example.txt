@@ -1,4 +1,6 @@
 
+-- usage e.g : cat example.txt | elabzoo-poly-instantiation elab
+
 -- Here I am reproducing a bunch of examples from Figure 2 in the
 -- "Guarded Impredicative Polymorphism" paper:
 --   https://www.microsoft.com/en-us/research/uploads/prod/2017/07/impredicative-pldi18.pdf

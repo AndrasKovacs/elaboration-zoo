@@ -27,18 +27,18 @@ data Fresh = Fresh
 
 bindU :: Name -> UnifyCxt -> UnifyCxt
 bindU x (UnifyCxt vs is p) =
-  UnifyCxt ((x, Nothing):vs) ((x, Bound):is) p
+  UnifyCxt ((x, Nothing):vs) ((x, Bound BVSrc):is) p
 
 telBindU :: Name -> VTy -> UnifyCxt -> UnifyCxt
 telBindU x ~a (UnifyCxt vs is p) =
-  UnifyCxt ((x, Nothing):vs) ((x, BoundTel a):is) p
+  UnifyCxt ((x, Nothing):vs) ((x, Bound (BVTel a)):is) p
 
 localFresh :: UnifyM Fresh
 localFresh = do
   vs <- view vals
   pure $ Fresh
-    (\x -> (fresh vs x, local (bindU x)))
-    (\x a -> (fresh vs x, local (telBindU x a)))
+    (\x -> let x' = fresh vs x in (x', local (bindU x')))
+    (\x a -> let x' = fresh vs x in (x', local (telBindU x' a)))
 
 -- Telscope constancy
 --------------------------------------------------------------------------------
@@ -105,26 +105,52 @@ occurs topX = go mempty where
 --------------------------------------------------------------------------------
 
 -- | Expects a forced spine.
-checkSp :: Spine -> UnifyM (Sub (Maybe Tm))
-checkSp = \case
-  SNil -> pure []
-  SApp sp u i -> forceM u >>= \case
-    VVar x -> ((x, Nothing):) <$> checkSp sp
-    v      -> do {t <- quoteM v; report $ SpineNonVar t}
-  SAppTel a sp u -> forceM u >>= \case
-    VVar x -> do {a <- quoteM a; ((x, Just a):) <$> checkSp sp}
-    v      -> do {t <- quoteM v; report $ SpineNonVar t}
-  SProj1{} -> report SpineProjection
-  SProj2{} -> report SpineProjection
+checkSp :: MId -> Spine -> Val -> UnifyM (Sub (Maybe Tm))
+checkSp topM topSp ~topRhs = go topSp where
+  err ~v = do
+    lhs <- quoteM (VNe (HMeta topM) topSp)
+    rhs <- quoteM topRhs
+    ns <- map fst <$> view info
+    report $ SpineNonVar lhs rhs
+  go = \case
+    SNil -> pure []
+    SApp sp u i -> forceM u >>= \case
+      v@(VVar x) -> (view info <&> lookup x) >>= \case
+        Just (Bound _) -> ((x, Nothing):) <$> go sp
+        Just _         -> err v
+        Nothing        -> error "impossible"
+      v -> err v
+    SAppTel a sp u -> forceM u >>= \case
+      v@(VVar x) -> (view info <&> lookup x) >>= \case
+        Just Bound{}    -> do {a <- quoteM a; ((x, Just a):) <$> go sp}
+        Just _          -> err v
+        Nothing         -> error "impossible"
+      v -> err v
+    SProj1{} -> report SpineProjection
+    SProj2{} -> report SpineProjection
+
+uniqElem :: Eq a => a -> [a] -> Maybe Bool
+uniqElem a' (a:as) | a' == a = Just $ notElem a' as
+                   | otherwise = uniqElem a' as
+uniqElem _ [] = Nothing
 
 -- | Expects a normal form.
 checkSolution :: MId -> [Name] -> Tm -> UnifyM ()
 checkSolution m vars rhs = go vars rhs where
   go ns = \case
-    Var x        -> unless (elem x ns) $ report $ ScopeError m vars rhs x
+    Var x        -> case uniqElem x ns of
+                      Nothing -> (view info <&> lookup x) >>= \case
+                        Just Assumed -> pure ()
+                        Just _       -> report $ ScopeError m vars rhs x
+                        Nothing      -> error "impossible"
+                      Just True ->
+                        pure ()
+                      Just False ->
+                        report $ NonLinearSolution m vars rhs x
+
     Pi x i a b   -> go ns a >> go (x:ns) b
     U            -> pure ()
-    Meta m'      -> when (m == m') $ report $ OccursCheck m rhs
+    Meta m'      -> when (m == m') $ report $ OccursCheck m vars rhs
     App t u _    -> go ns t >> go ns u
     Lam x i t    -> go (x:ns) t
     Tel          -> pure ()
@@ -139,11 +165,15 @@ checkSolution m vars rhs = go vars rhs where
     AppTel a t u -> go ns a >> go ns t >> go ns u
     LamTel x a t -> go ns a >> go (x:ns) t
     Let{}        -> error "impossible"
+    Assume{}     -> error "impossible"
 
 solveMeta :: MId -> Spine -> Val -> UnifyM ()
 solveMeta m sp rhs = do
+  do ~nlhs <- quoteM (VNe (HMeta m) sp)
+     ~nrhs <- quoteM rhs
+     debugM ("solve", nlhs, nrhs)
   sp <- forceSpM sp
-  sp <- checkSp sp
+  sp <- checkSp m sp rhs
   let vars = map fst sp
   rhs <- quoteM rhs
   checkSolution m vars rhs
@@ -224,9 +254,9 @@ newMetaSpine = do
   let go :: Info -> Vals -> [(Name, Maybe Tm)]
       go [] [] = []
       go ((x, i):is) (_:vs) = case i of
-        Bound      -> (x, Nothing) : go is vs
-        BoundTel a -> (x, Just (runEval (quote a) ms vs)) : go is vs
-        Defined    -> go is vs
+        Bound BVSrc     -> (x, Nothing) : go is vs
+        Bound (BVTel a) -> (x, Just (runEval (quote a) ms vs)) : go is vs
+        _               -> go is vs
       go _ _ = error "impossible"
 
   pure $ go info vals
@@ -245,13 +275,15 @@ newMeta = do
 
 -- | Silly heuristic for the meta-meta unification case,
 --   we solve the meta with "better" spine.
-betterSp :: Spine -> Spine -> UnifyM Bool
-betterSp sp sp' = do
+betterSp :: MId -> Spine -> MId -> Spine -> UnifyM Bool
+betterSp m sp m' sp' = do
   -- ~l <- quoteM (VNe (HVar "_") sp)
   -- ~r <- quoteM (VNe (HVar "_") sp')
   -- debugM ("betterSp", l , r)
-  goodSp  <- catchError ((1::Int) <$ checkSp sp ) (\_ -> pure 0)
-  goodSp' <- catchError ((1::Int) <$ checkSp sp') (\_ -> pure 0)
+  goodSp  <- catchError ((1::Int) <$
+               checkSp m  sp  (VNe (HMeta m') sp')) (\_ -> pure 0)
+  goodSp' <- catchError ((1::Int) <$
+               checkSp m' sp' (VNe (HMeta m)  sp)) (\_ -> pure 0)
   pure $ (goodSp, spLen sp) > (goodSp', spLen sp')
 
 unify :: Val -> Val -> UnifyM ()
@@ -327,7 +359,7 @@ unify = go where
         goSp h h' sp sp'
 
       (t@(VNe (HMeta m) sp), t'@(VNe (HMeta m') sp')) -> do
-        betterSp sp sp' >>= \case
+        betterSp m sp m' sp' >>= \case
           True  -> solveMeta m sp t'
           False -> solveMeta m' sp' t
 
@@ -381,23 +413,28 @@ unify = go where
 --------------------------------------------------------------------------------
 
 bind :: Name -> VTy -> ElabCxt -> ElabCxt
-bind x ~a (ElabCxt vs ts is p) =
-  ElabCxt ((x, Nothing):vs) ((x, a):ts) ((x, Bound):is) p
+bind x ~a (ElabCxt vs ts is p top) =
+  ElabCxt ((x, Nothing):vs) ((x, a):ts) ((x, Bound BVSrc):is) p top
 
 telBind :: Name -> VTy -> ElabCxt -> ElabCxt
-telBind x ~a (ElabCxt vs ts is p) =
-  ElabCxt ((x, Nothing):vs) ((x, VRec a):ts) ((x, BoundTel a):is) p
+telBind x ~a (ElabCxt vs ts is p top) =
+  ElabCxt ((x, Nothing):vs) ((x, VRec a):ts) ((x, Bound(BVTel a)):is) p top
 
 define :: Name -> Val -> VTy -> ElabCxt -> ElabCxt
-define x ~v ~a (ElabCxt vs ts is p) =
-  ElabCxt ((x, Just v):vs) ((x, a):ts) ((x, Defined):is) p
+define x ~v ~a (ElabCxt vs ts is p top) =
+  ElabCxt ((x, Just v):vs) ((x, a):ts) ((x, Defined):is) p top
+
+assume :: Name -> VTy -> ElabCxt -> ElabCxt
+assume x ~a (ElabCxt vs ts is p top) =
+  ElabCxt ((x, Nothing):vs) ((x, a):ts) ((x, Assumed):is) p top
 
 binding x ~a     = local (bind x a)
 telBinding x ~a  = local (telBind x a)
 defining x ~v ~a = local (define x v a)
+assuming x ~a    = local (assume x a)
 
 embedUnifyM :: UnifyM a -> ElabM a
-embedUnifyM = withReaderT (\(ElabCxt vs ts is p) -> UnifyCxt vs is p)
+embedUnifyM = withReaderT (\(ElabCxt vs ts is p top) -> UnifyCxt vs is p)
 
 insertMetas :: MetaInsertion -> ElabM (Tm, VTy) -> ElabM (Tm, VTy)
 insertMetas ins action = case ins of
@@ -434,7 +471,7 @@ insertMetas ins action = case ins of
           --   mv <- evalM m
           --   ~a <- quoteM a
           --   go (AppTel a t m) =<< applyM b mv
-          -- _ -> report (NoNamedImplicitArg x)
+          _ -> report (NoNamedImplicitArg x)
     go t va
 
 check :: Raw -> VTy -> ElabM Tm
@@ -454,14 +491,20 @@ check ~topT ~topA = do
           case ann of
             Just ann -> do {ann <- evalM =<< check ann VU; embedUnifyM (unify ann a)}
             Nothing  -> pure ()
-          let v = VVar (fresh x)
+          let x' = fresh x
+              v = VVar x'
           local
-            (\(ElabCxt vs ts is p) -> ElabCxt ((x, Just v):vs) ((x, a):ts) ((x, Bound):is) p)
+            (\(ElabCxt vs ts is p isTop) ->
+                ElabCxt ((x, Just v):(x', Nothing):vs)
+                        ((x, a):(x', a):ts)
+                        ((x, Bound BVSrc):(x', Bound BVRenamed):is)
+                        p isTop)
             (Lam x i' <$> (check t =<< applyM b v))
 
         (t, VPi x Impl a b) -> do
           let x' = fresh x ++ "%"
-          binding x' a $ Lam x' Impl <$> (check t =<< applyM b (VVar x'))
+          binding x' a $
+            Lam x' Impl <$> (check t =<< applyM b (VVar x'))
 
         -- new telescope
         (t, VNe (HMeta _) _) -> do
@@ -481,9 +524,9 @@ check ~topT ~topA = do
           pure $ LamTel x tel t
 
         (RLet x a t u, topA) -> do
-          a   <- check a VU
+          a   <- local (isTop .~ False) $ check a VU
           ~va <- evalM a
-          t   <- check t va
+          t   <- local (isTop .~ False) $ check t va
           ~vt <- evalM t
           u   <- defining x vt va $ check u topA
           pure $ Let x a t u
@@ -541,11 +584,60 @@ infer ins t = case t of
       RLam _ _ Left{} _ ->
         report CannotInferNamedLam
 
-      RLam x _ (Right i) t -> insertMetas ins $ do
-        a      <- evalM =<< newMeta
-        (t, b) <- binding x a $ infer MIYes t
-        b      <- closeM x =<< (binding x a $ quoteM b)
-        pure (Lam x i t, VPi x i a b)
+      -- UGLY, I copypasted code all over this. TODO: refactor, invent
+      -- right combinators for this.
+      RLam x ann (Right i) t -> insertMetas ins $ do
+        a  <- case ann of
+          Just a  -> evalM =<< check a VU
+          Nothing -> evalM =<< newMeta
+
+        (telx, telv, ntel, t, nb) <- binding x a $ do
+          telx   <- use nextMId >>= \i -> fresh <$> view vals <*> pure ("Γ" ++ show i)
+          tel    <- newMeta
+          telv   <- evalM tel
+          (t, b) <- telBinding telx telv $ infer MIYes t
+          nb     <- telBinding telx telv $ quoteM b
+          ntel   <- quoteM telv
+          pure (telx, telv, ntel, t, nb)
+
+        vs <- view vals
+        let telTy ms ~a = runEval (eval ntel) ms ((x, Just a):vs)
+            bodyTy ms ~a ~tel = runEval (eval nb) ms ((telx, Just tel):(x, Just a):vs)
+
+        binding x a $ do
+          embedUnifyM $ do
+            (m, sp) <- case telv of
+              VNe (HMeta m) sp -> pure (m, sp)
+              _ -> error "impossible"
+            newConstancy m sp $ \ms ~tel -> bodyTy ms (VVar x) tel
+
+        pure (Lam x i (LamTel telx ntel t),
+              VPi x i a $ \ms ~a ->
+                VPiTel telx (telTy ms a) $ \ms ~tel -> bodyTy ms a tel)
+
+
+
+
+          -- pure (Lam x i (LamTel telx ntel t),
+          --       VPi x i a $ \ms a -> VPiTel x (runEval (eval ntel) ms _) _)
+
+          -- embedUnifyM $ do
+          --   (m, sp) <- case telv of
+          --     VNe (HMeta m) sp -> pure (m, sp)
+          --     _ -> error "impossible"
+          --   newConstancy m sp b
+          --   let piTel = VPiTel telx telv b
+
+        -- b  <- closeM x =<< binding x a newMeta
+        -- let pi = VPi x i a b
+        -- tm <- check (RLam x Nothing (Right i) t) pi
+        -- pure (tm, pi)
+
+      -- RLam x _ (Right i) t -> insertMetas ins $ do
+      --   a      <- evalM =<< newMeta
+      --   (t, b) <- binding x a $ infer MIYes t
+      --   b      <- closeM x =<< (binding x a $ quoteM b)
+      --   pure (Lam x i t, VPi x i a b)
 
       RPi x i a b -> do
         a   <- check a VU
@@ -559,12 +651,33 @@ infer ins t = case t of
         pure (t, va)
 
       RLet x a t u -> do
-        a        <- check a VU
+        a        <- local (isTop .~ False) $ check a VU
         ~va      <- evalM a
-        t        <- check t va
+        t        <- local (isTop .~ False) $ check t va
         ~vt      <- evalM t
         (!u, vb) <- defining x vt va $ infer ins u
         pure (Let x a t u, vb)
+
+
+      RAssume x a t -> do
+        view isTop >>= \case
+          True  -> pure ()
+          False -> report AssumptionNotTopLevel
+        a        <- local (isTop .~ False) $ check a VU
+
+      -- we can only admit an assumption if there are no unsolved
+      -- metas! (same as freezing in Agda)
+        do ms <- use mcxt
+           forM_ ms $ \case
+             Solved{}   -> pure ()
+             Constancy _ _ _ _ blockers
+               | IS.null blockers -> pure ()
+               | otherwise -> report UnsolvedAfterAssumption
+             Unsolved{} -> report UnsolvedAfterAssumption
+
+        ~va      <- evalM a
+        (!t, vb) <- assuming x va $ infer ins t
+        pure (Assume x a t, vb)
 
       RStopInsertion t ->
         infer MINo t

@@ -34,6 +34,7 @@ data Raw
   | RU
   | RPi Name Icit Raw Raw
   | RLet Name Raw Raw Raw
+  | RAssume Name Raw Raw
   | RHole
   | RStopInsertion Raw
   | RSrcPos SourcePos Raw
@@ -51,6 +52,7 @@ instance Show Raw where
       RU                   -> U
       RPi x i a b          -> Pi x i (go a) (go b)
       RLet x a t u         -> Let x (go a) (go t) (go u)
+      RAssume x a t        -> Assume x (go a) (go t)
       RHole                -> Var "_"
       RStopInsertion t     -> App (go t) (Var "!") Expl
       RSrcPos _ t          -> go t
@@ -80,13 +82,15 @@ type Types = Sub VTy
 type Info  = Sub VarInfo
 type MCxt  = M.IntMap MetaEntry
 
-data VarInfo = Bound | BoundTel VTy | Defined
+data BoundVar = BVSrc | BVTel ~VTy | BVRenamed
+data VarInfo = Bound BoundVar | Defined | Assumed
 
 data ElabCxt = ElabCxt {
   elabCxtVals  :: Vals,
   elabCxtTypes :: Types,
   elabCxtInfo  :: Info,
-  elabCxtPos   :: SourcePos}
+  elabCxtPos   :: SourcePos,
+  elabCxtIsTop :: Bool}
 
 data UnifyCxt  = UnifyCxt {
   unifyCxtVals  :: Vals,
@@ -105,6 +109,7 @@ type EvalM   = Reader EvalEnv
 data Tm
   = Var Name
   | Let Name Ty Tm Tm
+  | Assume Name Ty Tm
 
   | Pi Name Icit Ty Ty
   | Lam Name Icit Tm
@@ -180,16 +185,19 @@ pattern VMeta :: MId -> Val
 pattern VMeta m = VNe (HMeta m) SNil
 
 data ElabError
-  = SpineNonVar Tm
+  = SpineNonVar Tm Tm -- ^ lhs, rhs
   | SpineProjection
   | ScopeError MId [Name] Tm Name -- ^ Meta, spine, rhs, offending variable
-  | OccursCheck MId Tm
+  | OccursCheck MId [Name] Tm
   | UnifyError Tm Tm
   | NameNotInScope Name
   | ExpectedFunction Tm -- ^ Inferred type.
   | NoNamedImplicitArg Name
   | CannotInferNamedLam
   | IcitMismatch Icit Icit
+  | AssumptionNotTopLevel
+  | NonLinearSolution MId [Name] Tm Name -- ^ Meta, spine, rhs, nonlinear variable
+  | UnsolvedAfterAssumption
 
 -- Lenses
 --------------------------------------------------------------------------------
@@ -213,6 +221,9 @@ prettyTm prec = go (prec /= 0) where
     Let x a t u ->
       ("let "++) . (x++) . (" : "++) . go False  a . ("\n    = "++)
       . go False t  . ("\nin\n"++) . go False u
+    Assume x a t ->
+      ("assume "++) . (x++) . (" : "++) . go False  a . ("\n    = "++)
+      . ("\nin\n"++) . go False t
     App (App t u i) u' i' ->
       showParen p (go False  t . (' ':) . goArg  u i . (' ':) . goArg  u' i')
     App (AppTel _ t u) u' i' ->
@@ -233,14 +244,18 @@ prettyTm prec = go (prec /= 0) where
     Proj2 t        -> showParen p (("₂ "++). go True t)
     t@PiTel{}      -> showParen p (goPi False t)
     AppTel a (App t u i) u'  ->
-      showParen p (go False  t . (' ':) . goArg u i . (' ':) . go True a
-                   . ("* "++) . goArg  u' Impl)
+      showParen p (go False  t . (' ':) . goArg u i . (' ':) .
+                   bracket (go False u' . (" : "++) . go False a))
+
     AppTel a' (AppTel a t u) u' ->
-      showParen p (go False t . (' ':) . go True a . ("* "++) . goArg u Impl
-                   . (' ':) . go True a' . ("* "++) . goArg  u' Impl)
-    AppTel a t u -> showParen p (go True t . (' ':) . go True a . ("* "++) . goArg u Impl)
+      showParen p (go False t . (' ':)
+                   . bracket (go False u  . (" : "++) . go False a)
+                   . bracket (go False u' . (" : "++) . go False a'))
+    AppTel a t u ->
+      showParen p (go True t . (' ':)
+                   . bracket (go False u  . (" : "++) . go False a))
     LamTel x a t -> showParen p (("λ"++)
-                    . bracket ((x++) . (" : "++) . go False a) . goLam t)
+                   . bracket ((x++) . (" : "++) . go False a) . goLam t)
 
   goArg :: Tm -> Icit -> ShowS
   goArg t i = icit i (bracket (go False t)) (go True t)
@@ -267,14 +282,14 @@ prettyTm prec = go (prec /= 0) where
        go (case a of App{} -> False; AppTel{} -> False; _ -> True) a .
        (" → "++) . go False b
 
-  goPi p t = (if p then (" -> "++) else id) . go False t
+  goPi p t = (if p then (" → "++) else id) . go False t
 
   goLamBind :: Name -> Icit -> ShowS
   goLamBind x i = icit i bracket id ((if null x then "_" else x) ++)
 
   goLam :: Tm -> ShowS
-  goLam (Lam x i t)    = (' ':) . goLamBind x i    . goLam t
-  goLam (LamTel x a t) = (' ':) . goLamBind x Impl . goLam t
+  goLam (Lam x i t)    = (' ':) . goLamBind x i . goLam t
+  goLam (LamTel x a t) = (' ':) . bracket ((x++) . (" : "++) . go False a) . goLam t
   goLam t = (". "++) . go False t
 
 instance Show Tm where showsPrec = prettyTm
@@ -282,19 +297,19 @@ instance IsString Tm where fromString = Var
 
 instance Show ElabError where
   show = \case
-    SpineNonVar t -> printf "Non-variable value in meta spine:\n\n  %s"  (show t)
+    SpineNonVar lhs rhs -> printf (
+      "Non-bound-variable value in meta spine in equation:\n\n" ++
+      "  %s =? %s")
+      (show lhs) (show rhs)
     SpineProjection -> "Projection in meta spine"
-    ScopeError m sp rhs x -> printf
-      ("Solution scope error.\n" ++
-       "Meta %s can only depend on %s variables,\n" ++
-       "but the solution candidate\n\n" ++
-       "  %s\n\n" ++
-       "contains variable %s.")
-      (show m) ('[':intercalate ", " sp++"]") (show rhs) x
-    OccursCheck m rhs -> printf (
-      "Meta %s occurs cyclically in its solution candidate:\n\n" ++
-      "  %s")
-      (show m) (show rhs)
+    ScopeError m sp rhs x -> printf (
+      "Variable %s is out of scope in equation\n\n" ++
+      "  %s %s =? %s")
+      (show x) (show m) ('[':intercalate ", " sp++"]") (show rhs)
+    OccursCheck m sp rhs -> printf (
+      "Meta %s occurs cyclically in its solution candidate in equation:\n\n" ++
+      "  %s %s =? %s")
+      (show m) ('[':intercalate ", " sp++"]") (show rhs)
     UnifyError lhs rhs -> printf
       ("Cannot unify\n\n" ++
        "  %s\n\n" ++
@@ -312,6 +327,13 @@ instance Show ElabError where
     IcitMismatch i i' -> printf (
       "Function icitness mismatch: expected %s, got %s.")
       (show i) (show i')
+    AssumptionNotTopLevel -> "Assumption only allowed in the top scope."
+    NonLinearSolution m sp rhs x -> printf
+      ("Nonlinear variable %s in meta spine in equation\n\n" ++
+       "  %s %s =? %s")
+      (show x) (show m) ('[':intercalate ", " sp++"]") (show rhs)
+    UnsolvedAfterAssumption -> "Unsolved meta remains after assumption"
+
 
 report :: HasPos cxt SourcePos => ElabError -> M cxt a
 report err = do
@@ -323,7 +345,8 @@ report err = do
 --------------------------------------------------------------------------------
 
 debug :: Show a => a -> b -> b
-debug = traceShow
+-- debug = traceShow
+debug _ b = b
 
 debugM :: (Show a , Applicative f) => a -> f ()
 -- debugM = traceShowM
@@ -332,4 +355,3 @@ debugM x = pure ()
 debugmcxtM = do
   ms <- M.assocs <$> use mcxt
   debug [(x, case e of Solved{} -> True; _ -> False) | (x, e) <- ms]
--- debugmcxt = pure ()

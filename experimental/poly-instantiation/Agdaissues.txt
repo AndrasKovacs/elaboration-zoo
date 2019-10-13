@@ -1,0 +1,170 @@
+
+-- Notes for code examples in Agda github issues.
+-- usage e.g : cat Agdaissues.txt | elabzoo-poly-instantiation elab
+-- Telescopes are currently not computed away from elaboration output.
+
+-- https://github.com/agda/agda/issues/2099#issuecomment-305922361
+--------------------------------------------------------------------------------
+
+-- I explained the behavior at
+-- https://github.com/agda/agda/issues/2099#issuecomment-540233457
+
+-- let Wrap : U → U
+--     = λ A. (Wrap : U) → (A → Wrap) → Wrap in
+-- let wrap : {A : U} → A → Wrap A
+--     = λ a _ wrap. wrap a in
+-- let the : (A : U) → A → A
+--     = λ A x. x in
+-- let prf : Wrap ({A : U} → A → A)
+--     = wrap {_} (the _ (λ x. x)) in
+-- U
+
+
+-- https://github.com/agda/agda/issues/2099#issuecomment-540773967
+--------------------------------------------------------------------------------
+
+-- my comment: https://github.com/agda/agda/issues/2099#issuecomment-540799683
+
+-- The main point here is telescope insertion between lambdas. I cannot closely
+-- reproduce the Agda example because it uses constructor-headed function
+-- inference. I added telescope insertion after inferred lambdas, so the
+-- following works now.
+
+-- let id : {A} → A → A
+--      = λ x. x in
+
+-- let test : {A} → A → {B} → B → A
+--     = id (λ x y. x) in
+-- U
+
+
+-- https://github.com/agda/agda/issues/1079#issuecomment-129028215
+--------------------------------------------------------------------------------
+
+-- assume Bool : U in
+-- assume true : Bool in
+-- assume false : Bool in
+-- let Ty : U = {T : Bool → U} → ({b : Bool} → T b → T true) → T false in
+-- let test : Ty → Ty = λ f g. f (λ {b}. g {b}) in
+-- U
+
+{-
+Here my system behaves the same as Agda. The problem is not really about
+implicit insertion but solving modulo the eta rule for Bool. When we elaborate,
+we get:
+  λ f g. f (λ {b} → g {α f T g b})
+then we get the following equations:
+  α true  =? true
+  α false =? false
+the above is solvable uniquely solvable module the eta rule
+for Bool as:
+  α = λ b. if b then true else false
+which is the same as
+  α = λ b. b
+the latter is obtained when we write out (λ {b} → g {b}).
+
+Unfortunately, if we don't have Bool eta, then the two constraints are not
+uniquely solvable.
+
+But you might say, can we just *not* insert the implicit lambda around "g", and
+then the problem becomes solvable?  Well, if we wanted to implement a general
+algorithm which does not insert insert this case, that would also have to reason
+modulo Bool eta! So, I believe this is a question about Bool eta first and
+foremost.
+-}
+
+
+-- https://github.com/agda/agda/issues/1079#issuecomment-392325549
+--------------------------------------------------------------------------------
+
+assume Nat : U in
+assume Dec : U → U in
+assume meh : {A} → Dec A in
+assume True : {A} → Dec A → U in
+assume fromWitness : {P}{Q : Dec P} → P → True Q in
+assume T : Nat → U in
+
+let Coprime = {i} → T i in
+assume coprime : Dec Coprime in
+
+let bla : Coprime → True coprime
+    = λ c. fromWitness c in
+U
+
+-- This example works fine in my system. Only lambda insertion is needed.
+
+
+-- https://github.com/agda/agda/issues/1079#issuecomment-393411912
+--------------------------------------------------------------------------------
+
+-- assume T : U in
+-- assume tt : T in
+
+-- let flip : {t₁ t₂ t₃} → (t₁ → t₂ → t₃) → t₂ → t₁ → t₃
+--     = λ f x y . f y x in
+
+-- let R : U
+--   = (f : {a b c : U}{x : T} → (a → b) → (b → c) → T) →
+--     (let g : {a b c} → (b → c) → (a → b) → T
+--            = flip (f {x = tt}) in
+--     U)
+--     in
+-- U
+
+-- This example works fine here, but it is actually an unrelated issue in Agda,
+-- caused by the lack of implicit lambda insertion in local let-s.
+
+
+-- https://github.com/agda/agda/issues/3468#issue-393677107
+--------------------------------------------------------------------------------
+
+-- assume T : U in
+-- assume tt : T in
+-- assume Into : U → U → U in
+-- assume con  : {A B} → (A → B) → Into A B in
+-- assume into : {A B} → Into A B → A → B in
+
+-- let implicitT : Into ({t : T} → T) T
+--     = con (λ x. tt) in
+
+-- let tt2 : {t : T} → T
+--     = tt in
+
+-- let cantfill : T
+--     = into _ tt2 in
+
+-- U
+
+-- This example behaves the same as Agda, because of the "constant implicit
+-- function elimination". Basically, my implementation assumes that users do not
+-- write, or want to get from elaboration functions like {t : T} → T, and
+-- quickly resolves the telescope around tt2 to be empty.
+
+-- We can get non-Agda-like behavior by removing the constancy constraint.
+-- However, I maintain that it's a good assumption.
+
+
+-- https://github.com/agda/agda/issues/1387#issue-99824785
+--------------------------------------------------------------------------------
+
+-- let Bool  : U = (B : _) → B → B → B in
+-- let true  : Bool = λ _ t f. t in
+-- let false : Bool = λ _ t f. f in
+
+-- let Eq : {A} → A → A → U = λ {A} x y. (P : A → U) → P x → P y in
+-- let refl : {A x} → Eq {A} x x = λ _ px. px in
+
+-- let T : Bool → U = λ b. b _ ({A} → A → A) U in
+
+-- assume g : (b : Bool) → Eq b true → T b → Bool in
+-- assume f : (b : Bool) → T b → Eq b true → Bool in
+
+-- let works : Bool = g _ refl (λ x. x) in
+-- let test  : Bool = f _ (λ x. x) refl in
+-- U
+
+-- This does not work here because of the lack of postponing:
+-- when we check (λ x.x) in test, we get a non-pattern spine for
+-- the f _ meta, because of T.
+
+-- With postponing, it would be fine.

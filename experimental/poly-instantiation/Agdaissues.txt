@@ -56,7 +56,7 @@ we get:
 then we get the following equations:
   α true  =? true
   α false =? false
-the above is solvable uniquely solvable module the eta rule
+the above is solvable uniquely solvable modulo the eta rule
 for Bool as:
   α = λ b. if b then true else false
 which is the same as

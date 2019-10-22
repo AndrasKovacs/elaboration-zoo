@@ -68,7 +68,7 @@ uniquely solvable.
 
 But you might say, can we just *not* insert the implicit lambda around "g", and
 then the problem becomes solvable?  Well, if we wanted to implement a general
-algorithm which does not insert insert this case, that would also have to reason
+algorithm which does not insert in this case, that would also have to reason
 modulo Bool eta! So, I believe this is a question about Bool eta first and
 foremost.
 -}

@@ -463,9 +463,6 @@ infer cxt@Cxt{..} = \case
 
   RU -> pure (U, VU) -- type-in-type
 
-  -- an upgrade to this would be to also proceed if the inferred type for "t"
-  -- is meta-headed, in which case we would need to create two fresh metas and
-  -- refine "t"'s type to a function type.
   RApp t u -> do
     (t, va) <- infer cxt t
     -- ensuring that t has function type.
@@ -474,9 +471,7 @@ infer cxt@Cxt{..} = \case
       VPi _ a b ->
         pure (a, b)
 
-      -- if it has a meta-headed type, we only infer a non-dependent function
-      -- type, because a dependent one is pretty hopeless with our current
-      -- sophistication of unification
+      -- if it has a meta-headed type, we try to refine it to a function type.
       va@(VNe (HMeta x) sp) -> do
         (a, b) <- freshPi cxt "x"
         ~na    <- quoteM _vals va

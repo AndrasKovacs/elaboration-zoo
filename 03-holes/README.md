@@ -85,7 +85,7 @@ bound variables in the scope of the hole.
 On encountering the hole, the elaborator creates a fresh meta "α" and
 plugs the hole with α applied to the local bound variables. The created meta
 may or may not be solved later, during unification. In the above example,
-the solution will be "α = λ A x. A". Note that metas don't have to abstract
+the solution will be `α = λ A x. A`. Note that metas don't have to abstract
 over *definitions*, because those can be always unfolded in meta solutions.
 
 (Putting all metas in a topmost-level mutual block is *not* a good idea
@@ -110,22 +110,22 @@ generally:
     α t₁ t₂ t₃ ... tₙ =? u
 ~~~
 
-where the left side is a meta "α" applied to a spine (sequence) of terms. We may
+where the left side is a meta `α` applied to a spine (sequence) of terms. We may
 call this a "meta-headed" equation. Meta-headed equations have unique solutions
 up to βη-conversion if the so-called "pattern condition" holds.
 
-Let us abbreviate a sequence/spine of terms with "σ" or "δ", and a term applied
-to a spine as "t σ". Let "FreeVars(t)" denote the set of free variables
-(including metas) of a term. Let "t ∈! σ" denote that "t" occurs exactly once in
-the sequence "σ".
+Let us abbreviate a sequence/spine of terms with `σ` or `δ`, and a term applied
+to a spine as `t σ`. Let `FreeVars(t)` denote the set of free variables
+(including metas) of a term. Let `t ∈! σ` denote that `t` occurs exactly once in
+the sequence `σ`.
 
-Defining the pattern condition for (α σ =? u):
+Defining the pattern condition for `α σ =? u`:
 
-  1. Spine check              : σ is of the form x₁, x₂, ... xₙ where xᵢ are all bound variables.
-  2. Scope + linearity check  : ∀ (x ∈ FreeVars(u)). x ∈! σ
-  3. Occurs check             : α ∉ FreeVars(u)
+  1. Spine check              : `σ` is of the form `x₁, x₂, ... xₙ` where `xᵢ` are all bound variables.
+  2. Scope + linearity check  : `∀ (x ∈ FreeVars(u)). x ∈! σ`
+  3. Occurs check             : `α ∉ FreeVars(u)`
 
-If 1-3 holds, then (α := λ σ. u) is the unique solution for (α σ =? u), where "λ σ" means
+If 1-3 holds, then `α := λ σ. u` is the unique solution for `α σ =? u`, where `λ σ` means
 binding all variables in σ with lambdas.
 
 Some explanations. If the *spine check* fails, then it is easy see that unique solutions
@@ -164,22 +164,22 @@ can sometimes find solutions. Example for unsolvable equation:
     α x y =? (z -> z)
 ~~~
 
-where (z -> z) is a function type and "z" is a bound variable. Since "α" is
+where `z -> z` is a function type and `z` is a bound variable. Since `α` is
 defined on the top level, it cannot depend on any local variable, and all
 dependency must be expressed through λ parameters. So, it's totally not possible
-to put "z -> z" in the solution, because that's not meaningful in the top-level
+to put `z -> z` in the solution, because that's not meaningful in the top-level
 scope. Another example, which is possibly solvable:
 
 ~~~
     α x y =? (x -> β x z)
 ~~~
 
-where α, β are metas and x,y,z are bound variables. This is solvable if the
-solution of β is constant in the second parameter, because then "β x z" reduces
-to an expression which does not contain the illegal "z" variable. Agda and Coq
+where `α, β` are metas and `x,y,z` are bound variables. This is solvable if the
+solution of β is constant in the second parameter, because then `β x z` reduces
+to an expression which does not contain the illegal `z` variable. Agda and Coq
 can handle this situation by attempting to refine β to a function which is
 constant in the appropriate parameter. This is called "pruning", and it is
-analogously applicable when the illegal occurring variable is "α" itself (occurs
+analogously applicable when the illegal occurring variable is `α` itself (occurs
 check). We do not implement pruning here.
 
 The scope check also has a *linearity condition*: recall the "x ∈! σ" part.

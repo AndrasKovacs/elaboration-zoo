@@ -190,7 +190,7 @@ right hand side. A nonlinear σ would be ambiguous, for example
     α x x =? x
 ~~~
 
-is solvable as (α := λ x _. x) and also as (α := λ _ x. x).
+is solvable as `α := λ x _. x` and also as `α := λ _ x. x`.
 
 The current implementation ignores the linearity condition, and always picks the
 rightmost variable occurrence in solutions. This makes solutions non-unique, but

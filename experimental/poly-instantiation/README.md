@@ -191,10 +191,10 @@ Substitution rules are omitted and obvious.
 ─────────────────────────────────── projections
 Γ ⊢ π₁ t : A   Γ ⊢ π₂ t : B[x↦π₁ t]
 
-(π₁ (t ∷ u))	= t     -- beta
-(π₂ (t ∷ u))	= u     -- beta
-(π₂ t ∷ π₂ t)	= t     -- eta
-t             = []    -- eta
+(π₁ (t ∷ u))   = t     -- beta
+(π₂ (t ∷ u))   = u     -- beta
+(π₁ t ∷ π₂ t)  = t     -- eta
+t              = []    -- eta
 
 
 -- Telescope functions

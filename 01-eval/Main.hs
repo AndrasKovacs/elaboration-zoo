@@ -1,3 +1,4 @@
+{-# language Strict #-}
 
 module Main where
 

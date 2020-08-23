@@ -1,6 +1,6 @@
 
--- how to run: elabzoo-eval nf < example.txt
--- or in emacs shell: cat example.txt | elabzoo-eval nf
+-- how to run: elabzoo-eval-HOAS nf < example.txt
+-- or in emacs shell: cat example.txt | elabzoo-eval-HOAS nf
 
 let five	= \s z. s (s (s (s (s z)))) in
 let add		= \a b s z. a s (b s z) in

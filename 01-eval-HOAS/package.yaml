@@ -1,5 +1,5 @@
 
-name:                elabzoo-eval
+name:                elabzoo-eval-HOAS
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3

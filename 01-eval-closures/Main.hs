@@ -1,4 +1,4 @@
-{-# language Strict #-}
+{-# language Strict, LambdaCase, ViewPatterns #-}
 
 module Main where
 
@@ -49,12 +49,15 @@ data Tm
 -- evaluation
 --------------------------------------------------------------------------------
 
+type Env = [(Name, Maybe Val)]
+
 data Val
   = VVar Name
   | VApp Val ~Val
-  | VLam Name (Val -> Val)
+  | VLam {-# unpack #-} Closure
 
-type Env = [(Name, Maybe Val)]
+data Closure = Cl Name Env Tm
+
 
 fresh :: Env -> Name -> Name
 fresh env "_" = "_"
@@ -62,29 +65,32 @@ fresh env x   = case lookup x env of
   Just _  -> fresh env (x ++ "'")
   Nothing -> x
 
+appCl :: Closure -> Val -> Val
+appCl (Cl x env t) ~u = eval ((x, Just u):env) t
+
+freshCl :: Env -> Closure -> (Name, Closure)
+freshCl env cl@(Cl x _ _) = (fresh env x, cl)
+
 eval :: Env -> Tm -> Val
 eval env = \case
   Var x     -> maybe (VVar x) id (fromJust $ lookup x env)
   App t u   -> case (eval env t, eval env u) of
-                 (VLam _ t, u) -> t u
-                 (t       , u) -> VApp t u
-  Lam x t   -> VLam x (\u -> eval ((x, Just u):env) t)
+                 (VLam cl, u) -> appCl cl u
+                 (t      , u) -> VApp t u
+  Lam x t   -> VLam (Cl x env t)
   Let x t u -> eval ((x, Just (eval env t)):env) u
 
 quote :: Env -> Val -> Tm
 quote env = \case
-  VVar x                  -> Var x
-  VApp t u                -> App (quote env t) (quote env u)
-  VLam (fresh env -> x) t -> Lam x (quote ((x, Nothing):env) (t (VVar x)))
+  VVar x                        -> Var x
+  VApp t u                      -> App (quote env t) (quote env u)
+  VLam (freshCl env -> (x, cl)) -> Lam x (quote ((x, Nothing):env) (appCl cl (VVar x)))
 
 nf :: Env -> Tm -> Tm
 nf env = quote env . eval env
 
-
-
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
-
 
 
 -- parsing

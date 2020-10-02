@@ -1,5 +1,5 @@
 
-name:                elabzoo-typecheck
+name:                elabzoo-holes-debruijn
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3
@@ -11,6 +11,8 @@ category:            Language
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
 default-extensions:
+- FlexibleContexts
+- GeneralizedNewtypeDeriving
 - LambdaCase
 - NoMonomorphismRestriction
 - OverloadedStrings
@@ -31,8 +33,9 @@ ghc-options:
 dependencies:
 - base >= 4.7 && < 5
 - containers
-- mtl
 - megaparsec
+- mmorph
+- mtl
 
 source-dirs: .
 

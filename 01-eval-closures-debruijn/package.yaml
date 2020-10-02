@@ -1,5 +1,5 @@
 
-name:                elabzoo-eval-closures
+name:                elabzoo-eval-closures-debruijn
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3

@@ -2,9 +2,11 @@
 resolver: lts-15.8
 
 packages:
-  - 01-eval-HOAS/
-  - 01-eval-closures/
-  - 01-eval-debruijn/
-  - 02-typecheck/
+  - 01-eval-closures-debruijn/
+  - 01-eval-closures-names/
+  - 01-eval-HOAS-names/
+  - 02-typecheck-closures-debruijn/
+  - 02-typecheck-HOAS-names/
   - 03-holes/
+  - 03-holes-debruijn/
   - 04-implicit-args/

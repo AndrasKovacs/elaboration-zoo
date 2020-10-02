@@ -1,5 +1,5 @@
 
-name:                elabzoo-eval-HOAS
+name:                elabzoo-typecheck-HOAS-names
 version:             0.1.0.0
 github:              "AndrasKovacs/elaboration-zoo"
 license:             BSD3
@@ -10,6 +10,17 @@ category:            Language
 
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
+default-extensions:
+- LambdaCase
+- NoMonomorphismRestriction
+- OverloadedStrings
+- PatternSynonyms
+- RecordWildCards
+- StandaloneDeriving
+- Strict
+- TupleSections
+- ViewPatterns
+
 ghc-options:
 - -Wall
 - -Wno-name-shadowing
@@ -19,6 +30,8 @@ ghc-options:
 
 dependencies:
 - base >= 4.7 && < 5
+- containers
+- mtl
 - megaparsec
 
 source-dirs: .

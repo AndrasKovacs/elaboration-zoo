@@ -4,6 +4,7 @@ resolver: lts-15.8
 packages:
   - 01-eval-HOAS/
   - 01-eval-closures/
+  - 01-eval-debruijn/
   - 02-typecheck/
   - 03-holes/
   - 04-implicit-args/

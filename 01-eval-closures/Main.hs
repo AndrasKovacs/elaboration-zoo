@@ -49,7 +49,7 @@ data Tm
 -- evaluation
 --------------------------------------------------------------------------------
 
-type Env = [(Name, Maybe Val)]
+type Env = [(Name, Val)]
 
 data Val
   = VVar Name
@@ -58,36 +58,35 @@ data Val
 
 data Closure = Cl Name Env Tm
 
-
-fresh :: Env -> Name -> Name
-fresh env "_" = "_"
-fresh env x   = case lookup x env of
-  Just _  -> fresh env (x ++ "'")
-  Nothing -> x
+fresh :: [Name] -> Name -> Name
+fresh ns "_" = "_"
+fresh ns x   = case elem x ns of
+  True  -> fresh ns (x ++ "'")
+  False -> x
 
 appCl :: Closure -> Val -> Val
-appCl (Cl x env t) ~u = eval ((x, Just u):env) t
+appCl (Cl x env t) ~u = eval ((x, u):env) t
 
-freshCl :: Env -> Closure -> (Name, Closure)
-freshCl env cl@(Cl x _ _) = (fresh env x, cl)
+freshCl :: [Name] -> Closure -> (Name, Closure)
+freshCl ns cl@(Cl x _ _) = (fresh ns x, cl)
 
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var x     -> maybe (VVar x) id (fromJust $ lookup x env)
+  Var x     -> fromJust $ lookup x env
   App t u   -> case (eval env t, eval env u) of
                  (VLam cl, u) -> appCl cl u
                  (t      , u) -> VApp t u
   Lam x t   -> VLam (Cl x env t)
-  Let x t u -> eval ((x, Just (eval env t)):env) u
+  Let x t u -> eval ((x, eval env t):env) u
 
-quote :: Env -> Val -> Tm
-quote env = \case
-  VVar x                        -> Var x
-  VApp t u                      -> App (quote env t) (quote env u)
-  VLam (freshCl env -> (x, cl)) -> Lam x (quote ((x, Nothing):env) (appCl cl (VVar x)))
+quote :: [Name] -> Val -> Tm
+quote ns = \case
+  VVar x                       -> Var x
+  VApp t u                     -> App (quote ns t) (quote ns u)
+  VLam (freshCl ns -> (x, cl)) -> Lam x (quote (x:ns) (appCl cl (VVar x)))
 
 nf :: Env -> Tm -> Tm
-nf env = quote env . eval env
+nf env = quote (map fst env) . eval env
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------

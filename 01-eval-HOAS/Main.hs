@@ -33,6 +33,21 @@ ex3 = main' "nf" $ unlines [
   "thousand"
   ]
 
+-- pre-define values, values can be optimized by GHC
+
+vid :: Val
+vid = VLam "x" $ \x -> x
+
+-- compiled by GHC to code
+vApplyTwice :: Val
+vApplyTwice = VLam "f" $ \f -> VLam "x" $ \x -> f $$ (f $$ x)
+
+-- data Closure = HOAS (Val -> Val) | FirstOrder Env Tm
+
+-- Look at all 3 versions (HOAS + names, closure + names, deBruijn + closure)
+--   (rewrite it from from memory (40 lines))
+--    ( what is this enough for? many kinds of type theories (not for cubical) )
+-- Next: bidirectional checking (involves conversion checking)
 
 -- syntax
 --------------------------------------------------------------------------------
@@ -54,33 +69,34 @@ data Val
   | VApp Val ~Val
   | VLam Name (Val -> Val)
 
-type Env = [(Name, Maybe Val)]
+type Env = [(Name, Val)]
 
-fresh :: Env -> Name -> Name
-fresh env "_" = "_"
-fresh env x   = case lookup x env of
-  Just _  -> fresh env (x ++ "'")
-  Nothing -> x
+fresh :: [Name] -> Name -> Name
+fresh ns "_" = "_"
+fresh ns x   = case elem x ns of
+  True  -> fresh ns (x ++ "'")
+  False -> x
+
+infixl 2 $$
+($$) :: Val -> Val -> Val
+($$) (VLam _ t) ~u = t u
+($$) t          ~u = VApp t u
 
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var x     -> maybe (VVar x) id (fromJust $ lookup x env)
-  App t u   -> case (eval env t, eval env u) of
-                 (VLam _ t, u) -> t u
-                 (t       , u) -> VApp t u
-  Lam x t   -> VLam x (\u -> eval ((x, Just u):env) t)
-  Let x t u -> eval ((x, Just (eval env t)):env) u
+  Var x     -> fromJust $ lookup x env
+  App t u   -> eval env t $$ eval env u
+  Lam x t   -> VLam x (\u -> eval ((x, u):env) t)
+  Let x t u -> eval ((x, eval env t):env) u
 
-quote :: Env -> Val -> Tm
-quote env = \case
-  VVar x                  -> Var x
-  VApp t u                -> App (quote env t) (quote env u)
-  VLam (fresh env -> x) t -> Lam x (quote ((x, Nothing):env) (t (VVar x)))
+quote :: [Name] -> Val -> Tm
+quote ns = \case
+  VVar x                 -> Var x
+  VApp t u               -> App (quote ns t) (quote ns u)
+  VLam (fresh ns -> x) t -> Lam x (quote (x:ns) (t (VVar x)))
 
 nf :: Env -> Tm -> Tm
-nf env = quote env . eval env
-
-
+nf env = quote (map fst env) . eval env
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------

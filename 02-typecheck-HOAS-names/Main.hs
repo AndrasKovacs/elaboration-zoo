@@ -75,6 +75,10 @@ data Val
 
 type Env = [(Name, Val)]
 
+-- NOTE: a [Name] suffices for getting fresh names, but it's more convenient
+--   here to use an Env, because this way we don't have to constantly unzip the
+--   names from the values. Alternatively, we could store the names and types in
+--   unzipped form to begin with, but that'd make lookup less neat.
 fresh :: Env -> Name -> Name
 fresh env "_" = "_"
 fresh env x   = case lookup x env of
@@ -130,6 +134,8 @@ conv env t u = case (t, u) of
   _ -> False
 
 type VTy = Val
+
+-- | Typing context.
 type Cxt = [(Name, VTy)]
 
 -- | Typechecking monad. After we throw an error, we annotate it at the innermost
@@ -209,39 +215,38 @@ infer env cxt = \case
 -- printing
 --------------------------------------------------------------------------------
 
+-- printing precedences
+atomp = 3  :: Int -- U, var
+appp  = 2  :: Int -- application
+pip   = 1  :: Int -- pi
+letp  = 0  :: Int -- let, lambda
+
+-- | Wrap in parens if expression precedence is lower than
+--   enclosing expression precedence.
+par :: Int -> Int -> ShowS -> ShowS
+par p p' = showParen (p' < p)
+
 prettyTm :: Int -> Tm -> ShowS
-prettyTm prec = go (prec /= 0) where
-  goArg t      = go True t
-  goPiBind x a = showParen True ((x++) . (" : "++) . go False a)
-  goLamBind x  = (x++)
+prettyTm prec = go prec where
 
-  goLam (Lam x t) = (' ':) . goLamBind x . goLam t
-  goLam t         = (". "++) . go False t
+  piBind x a =
+    showParen True ((x++) . (" : "++) . go letp a)
 
-  goPi :: Bool -> Tm -> ShowS
-  goPi p (Pi x a b)
-    | x /= "_" = goPiBind x a . goPi True b
-    | otherwise =
-       (if p then (" → "++) else id) .
-       go (case a of App{} -> False; _ -> True) a .
-       (" → "++) . go False b
-  goPi p t = (if p then (" -> "++) else id) . go False t
-
-  go :: Bool -> Tm -> ShowS
+  go :: Int -> Tm -> ShowS
   go p = \case
-    Var x -> (x++)
-    App (App t u) u' ->
-      showParen p (go False t . (' ':) . goArg u . (' ':) . goArg u')
-
-    App t u  -> showParen p (go True t . (' ':) . goArg u)
-    Lam x t  -> showParen p (("λ "++) . goLamBind x . goLam t)
-    Pi x a b -> showParen p (goPi False (Pi x a b))
-
-    Let x a t u ->
-      ("let "++) . (x++) . (" : "++) . go False a . ("\n    = "++)
-      . go False t  . ("\nin\n"++) . go False  u
-    U -> ('U':)
-    SrcPos _ t -> go p t
+    Var x       -> (x++)
+    App t u     -> par p appp $ go appp t . (' ':) . go atomp u
+    Lam x t     -> par p letp $ ("λ "++) . (x++) . goLam t where
+                     goLam (Lam x t) = (' ':) . (x++) . goLam t
+                     goLam t         = (". "++) . go letp t
+    U           -> ("U"++)
+    Pi "_" a b  -> par p pip $ go appp a . (" → "++) . go pip b
+    Pi x a b    -> par p pip $ piBind x a . goPi b where
+                     goPi (Pi x a b) | x /= "_" = piBind x a . goPi b
+                     goPi b = (" → "++) . go pip b
+    Let x a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp a
+                     . ("\n    = "++) . go letp t . ("\nin\n"++) . go letp u
+    SrcPos _ t  -> go p t
 
 instance Show Tm where showsPrec = prettyTm
 

@@ -73,34 +73,33 @@ data Val
   | VPi Name Val (Val -> Val)
   | VU
 
-type Env = [(Name, Maybe Val)]
+type Env = [(Name, Val)]
 
 fresh :: Env -> Name -> Name
 fresh env "_" = "_"
 fresh env x   = case lookup x env of
   Just _  -> fresh env (x ++ "'")
-  Nothing -> x
+  _       -> x
 
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var x       -> maybe (VVar x) id (fromJust $ lookup x env)
+  Var x       -> fromJust $ lookup x env
   App t u     -> case (eval env t, eval env u) of
                    (VLam _ t, u) -> t u
                    (t       , u) -> VApp t u
-  Lam x t     -> VLam x (\u -> eval ((x, Just u):env) t)
-  Pi x a b    -> VPi x (eval env a) (\u -> eval ((x, Just u):env) b)
-  Let x _ t u -> eval ((x, Just (eval env t)):env) u
+  Lam x t     -> VLam x (\u -> eval ((x, u):env) t)
+  Pi x a b    -> VPi x (eval env a) (\u -> eval ((x, u):env) b)
+  Let x _ t u -> eval ((x, eval env t):env) u
   U           -> VU
   SrcPos _ t  -> eval env t
 
 quote :: Env -> Val -> Tm
 quote env = \case
-  VVar x   -> Var x
-  VApp t u -> App (quote env t) (quote env u)
-  VLam (fresh env -> x) t -> Lam x (quote ((x, Nothing):env) (t (VVar x)))
-  VPi  (fresh env -> x) a b ->
-    Pi x (quote env a) (quote ((x, Nothing):env) (b (VVar x)))
-  VU -> U
+  VVar x                    -> Var x
+  VApp t u                  -> App (quote env t) (quote env u)
+  VLam (fresh env -> x) t   -> Lam x (quote ((x, VVar x):env) (t (VVar x)))
+  VPi  (fresh env -> x) a b -> Pi x (quote env a) (quote ((x, VVar x):env) (b (VVar x)))
+  VU                        -> U
 
 nf :: Env -> Tm -> Tm
 nf env = quote env . eval env
@@ -113,17 +112,17 @@ conv :: Env -> Val -> Val -> Bool
 conv env t u = case (t, u) of
   (VU, VU) -> True
 
-  (VPi (fresh env -> gx) a b, VPi x' a' b') ->
-    conv env a a' && conv ((gx, Nothing):env) (b (VVar gx)) (b' (VVar gx))
+  (VPi (fresh env -> x) a b, VPi x' a' b') ->
+    conv env a a' && conv ((x, VVar x):env) (b (VVar x)) (b' (VVar x))
 
-  (VLam (fresh env -> gx) t, VLam x' t') ->
-    conv ((gx, Nothing):env) (t (VVar gx)) (t' (VVar gx))
+  (VLam (fresh env -> x) t, VLam x' t') ->
+    conv ((x, VVar x):env) (t (VVar x)) (t' (VVar x))
 
   -- checking eta conversion for Lam
-  (VLam (fresh env -> gx) t, u) ->
-    conv ((gx, Nothing):env) (t (VVar gx)) (VApp u (VVar gx))
-  (u, VLam (fresh env -> gx) t) ->
-    conv ((gx, Nothing):env) (VApp u (VVar gx)) (t (VVar gx))
+  (VLam (fresh env -> x) t, u) ->
+    conv ((x, VVar x):env) (t (VVar x)) (VApp u (VVar x))
+  (u, VLam (fresh env -> x) t) ->
+    conv ((x, VVar x):env) (VApp u (VVar x)) (t (VVar x))
 
   (VVar x  , VVar x'   ) -> x == x'
   (VApp t u, VApp t' u') -> conv env t t' && conv env u u'
@@ -147,20 +146,20 @@ quoteShow env = show . quote env
 addPos :: SourcePos -> M a -> M a
 addPos pos ma = case ma of
   Left (msg, Nothing) -> Left (msg, Just pos)
-  x -> x
+  ma                  -> ma
 
 check :: Env -> Cxt -> Raw -> VTy -> M ()
 check env cxt t a = case (t, a) of
   (SrcPos pos t, _) -> addPos pos (check env cxt t a)
 
   (Lam x t, VPi (fresh env -> x') a b) ->
-    check ((x, Just (VVar x')):env) ((x, a):cxt) t (b (VVar x'))
+    check ((x, VVar x'):env) ((x, a):cxt) t (b (VVar x'))
 
   (Let x a' t' u, _) -> do
     check env cxt a' VU
     let ~a'' = eval env a'
     check env cxt t' a''
-    check ((x, Just (eval env t')):env) ((x, a''):cxt) u a
+    check ((x, eval env t'):env) ((x, a''):cxt) u a
 
   _ -> do
     tty <- infer env cxt t
@@ -193,14 +192,14 @@ infer env cxt = \case
 
   Pi x a b -> do
     check env cxt a VU
-    check ((x, Nothing):env) ((x, eval env a):cxt) b VU
+    check ((x, VVar x):env) ((x, eval env a):cxt) b VU
     pure VU
 
   Let x a t u -> do
     check env cxt a VU
     let ~a' = eval env a
     check env cxt t a'
-    infer ((x, Just (eval env t)):env) ((x, a'):cxt) u
+    infer ((x, eval env t):env) ((x, a'):cxt) u
 
 
 --------------------------------------------------------------------------------

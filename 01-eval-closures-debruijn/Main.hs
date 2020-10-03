@@ -1,8 +1,5 @@
 
--- elaboration-zoo:
-
 {-# language Strict, LambdaCase, ViewPatterns, DerivingVia #-}
-{-# options_ghc -Wno-unused-imports -Wno-type-defaults #-}
 
 module Main where
 

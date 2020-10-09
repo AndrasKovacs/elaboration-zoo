@@ -210,6 +210,9 @@ type M = Either (String, SourcePos)
 report :: Cxt -> String -> M a
 report cxt msg = Left (msg, pos cxt)
 
+showVal :: Cxt -> Val -> String
+showVal cxt v = prettyTm 0 (map fst (types cxt)) (quote (lvl cxt) v) []
+
 -- bidirectional algorithm:
 --   use check when the type is already known
 --   use infer if the type is unknown
@@ -247,24 +250,16 @@ check cxt t a = case (t, a) of
             (showVal cxt a) (showVal cxt tty))
     pure t
 
-showVal :: Cxt -> Val -> String
-showVal cxt v = prettyTm 0 (map fst (types cxt)) (quote (lvl cxt) v) []
-
-inferVar :: Cxt -> Types -> Name -> M (Ix, VTy)
-inferVar cxt []              x = report cxt ("variable out of scope: " ++ x)
-inferVar cxt ((x', a):types) x
-   | x == x'   = pure (0, a)
-   | otherwise = do
-       (x, a) <- inferVar cxt types x
-       pure (x + 1, a)
-
 infer :: Cxt -> Raw -> M (Tm, VTy)
 infer cxt = \case
   RSrcPos pos t -> infer (cxt {pos = pos}) t
 
   RVar x -> do
-    (x, a) <- inferVar cxt (types cxt) x
-    pure (Var x, a)
+    let go i [] = report cxt ("variable out of scope: " ++ x)
+        go i ((x', a):tys)
+          | x == x'   = pure (Var i, a)
+          | otherwise = go (i + 1) tys
+    go 0 (types cxt)
 
   RU -> pure (U, VU)   -- U : U rule
 

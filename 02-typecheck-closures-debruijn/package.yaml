@@ -19,6 +19,7 @@ default-extensions:
 - StandaloneDeriving
 - Strict
 - TupleSections
+- DerivingVia
 - ViewPatterns
 
 ghc-options:

@@ -19,60 +19,10 @@ import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
 
 
--- examples
---------------------------------------------------------------------------------
-
--- main' "elab" prints the input, but with holes filled by inferred values or
--- unsolved metas
-ex1 = main' "elab" $ unlines [
-  "let id : (A : U) -> A -> A",
-  "      = \\A x. x;",
-  "let id2 : (A : _) -> A -> A",
-  "      = \\A x. id _ x;",
-  "id"
-  ]
-
--- example output which contains unsolved meta, as "?2 A x" in
--- id2. This means that "?2" is the second hole in the expression,
--- and is in a scope with "A" and "x" as bound variables.
-ex2 = main' "elab" $ unlines [
-  "let id : (A : U) -> A -> A",
-  "      = \\A x. x ;",
-  "let id2 : (A : _) -> A -> A",
-  "      = \\A x. id _ _ ;",
-  "id2"
-  ]
-
--- ex3 = parseString $ unlines [
-ex3 = main' "elab" $ unlines [
-  "let id : (A : _) -> A -> A",
-  "    = \\A x. x ;",
-  "let List : U -> U",
-  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L ;",
-  "let nil : (A : _) -> List A",
-  "    = \\A L cons nil. nil ;",
-  "let cons : (A : _) -> A -> List A -> List A",
-  "    = \\A x xs L cons nil. cons x (xs _ cons nil) ;",
-  "let Bool : U",
-  "    = (B : _) -> B -> B -> B ;",
-  "let true : Bool",
-  "    = \\B t f. t ;",
-  "let false : Bool",
-  "    = \\B t f. f ;",
-  "let not : Bool -> Bool",
-  "    = \\b B t f. b B f t ;",
-  "let list1 : List Bool",
-  "    = cons _ (id _ true) (nil _) ;",
-  "let Eq : (A : _) -> A -> A -> U",
-  "    = \\A x y. (P : A -> U) -> P x -> P y ;",
-  "let refl : (A : _)(x : A) -> Eq A x x",
-  "    = \\A x P px. px ;",
-  "\\x. refl _ (cons _ true true)"
-  ]
-
-
 -- Metacontext
 --------------------------------------------------------------------------------
+
+newtype MetaVar = MetaVar {unMetaVar :: Int} deriving (Eq, Show, Num) via Int
 
 data MetaEntry = Solved Val | Unsolved
 
@@ -100,23 +50,11 @@ reset = do
 --------------------------------------------------------------------------------
 
 infixl 4 :>
-pattern xs :> x = x : xs
+pattern xs :> x <- x:xs where (:>) xs ~x = x:xs
 {-# complete (:>), [] #-}
-
-foldList :: b -> (b -> a -> b) -> [a] -> b
-foldList nil snoc = foldr (flip snoc) nil
 
 -- Raw syntax
 --------------------------------------------------------------------------------
-
--- | De Bruijn index.
-newtype Ix  = Ix {unIx :: Int} deriving (Eq, Show, Num) via Int
-
--- | De Bruijn level.
-newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int
-
--- | Metavariable.
-newtype MetaVar = MetaVar {unMetaVar :: Int} deriving (Eq, Show, Num) via Int
 
 type Name = String
 
@@ -126,13 +64,16 @@ data Raw
   | RApp Raw Raw           -- t u
   | RU                     -- U
   | RPi Name Raw Raw       -- (x : A) -> B
-  | RLet Name Raw Raw Raw  -- let x : A = t in u
+  | RLet Name Raw Raw Raw  -- let x : A = t; u
   | RSrcPos SourcePos Raw  -- source position for error reporting
   | RHole                  -- _
   deriving Show
 
 -- Core syntax
 --------------------------------------------------------------------------------
+
+-- | De Bruijn index.
+newtype Ix  = Ix {unIx :: Int} deriving (Eq, Show, Num) via Int
 
 data BD = Bound | Defined
   deriving Show
@@ -153,6 +94,9 @@ data Tm
 -- Evaluation
 --------------------------------------------------------------------------------
 
+-- | De Bruijn level.
+newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int
+
 type Env     = [Val]
 type Spine   = [Val]
 data Closure = Closure Env Tm
@@ -171,11 +115,6 @@ pattern VMeta m = VFlex m []
 infixl 8 $$
 ($$) :: Closure -> Val -> Val
 ($$) (Closure env t) ~u = eval (env :> u) t
-
-vVar :: Env -> Ix -> Val
-vVar (_  :> a) 0 = a
-vVar (as :> _) n = vVar as (n - 1)
-vVar _         _ = error "impossible"
 
 vApp :: Val -> Val -> Val
 vApp t ~u = case t of
@@ -203,11 +142,11 @@ vAppBDs env ~v bds = case (env, bds) of
 
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var x              -> vVar env x
+  Var x              -> env !! unIx x
   App t u            -> vApp (eval env t) (eval env u)
   Lam x t            -> VLam x (Closure env t)
   Pi x a b           -> VPi x (eval env a) (Closure env b)
-  Let x _ t u        -> eval (env :> eval env t) u
+  Let _ _ t u        -> eval (env :> eval env t) u
   U                  -> VU
   Meta m             -> vMeta m
   InsertedMeta m bds -> vAppBDs env (vMeta m) bds
@@ -264,7 +203,7 @@ invert cod sp = do
         (dom, ren) <- go sp
         case force t of
           VVar (Lvl x) | IM.notMember x ren -> pure (dom + 1, IM.insert x dom ren)
-          _ -> throwIO UnifyError
+          _                                 -> throwIO UnifyError
 
   (dom, ren) <- go sp
   pure $ PRen dom cod ren
@@ -296,10 +235,10 @@ lams l = go 0 where
   go x t = Lam ("x"++show (x+1)) $ go (x + 1) t
 
 solve :: Lvl -> MetaVar -> Spine -> Val -> IO ()
-solve gamma m sp rhs = do                           -- rhs : Val Γ A
-  pren <- invert gamma sp                           -- ren : Ren Δ Γ
-  rhs  <- rename m pren rhs                         -- rhs : Tm Δ A[ren]
-  let solution = eval [] $ lams (dom pren) rhs
+solve gamma m sp rhs = do                           -- rhs      : Val Γ A
+  pren <- invert gamma sp                           -- pren     : PartialRen Δ Γ
+  rhs  <- rename m pren rhs                         -- rhs      : Tm Δ (A[pren])
+  let solution = eval [] $ lams (dom pren) rhs      -- solution : Val ∙ (Δ ⇒ A[pren])
   modifyIORef' mcxt $ IM.insert (unMetaVar m) (Solved solution)
 
 unifySp :: Lvl -> Spine -> Spine -> IO ()
@@ -315,8 +254,10 @@ unify l t u = case (force t, force u) of
   (VLam _ t   , t'           ) -> unify (l + 1) (t $$ VVar l) (t' `vApp` VVar l)
   (VU         , VU           ) -> pure ()
   (VPi x a b  , VPi x' a' b' ) -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)
+
   (VRigid x sp, VRigid x' sp') | x == x' -> unifySp l sp sp'
   (VFlex m sp , VFlex m' sp' ) | m == m' -> unifySp l sp sp'
+
   (VFlex m sp , t'           ) -> solve l m sp t'
   (t          , VFlex m' sp' ) -> solve l m' sp' t
   _                            -> throwIO UnifyError
@@ -441,7 +382,7 @@ infer cxt = \case
     pure (t, a)
 
 
--- printing
+-- Printing
 --------------------------------------------------------------------------------
 
 cxtNames :: Cxt -> [Name]
@@ -552,7 +493,7 @@ displayError file (Error cxt e) = do
   printf "%s\n" msg
 
 
--- parsing
+-- Parsing
 --------------------------------------------------------------------------------
 
 type Parser = Parsec Void String
@@ -634,6 +575,7 @@ parseStdin = do
   tm   <- parseString file
   pure (tm, file)
 
+
 -- main
 --------------------------------------------------------------------------------
 
@@ -675,3 +617,57 @@ main = mainWith getArgs parseStdin
 -- | Run main with inputs as function arguments.
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
+
+
+{-
+-- examples
+--------------------------------------------------------------------------------
+
+-- main' "elab" prints the input, but with holes filled by inferred values or
+-- unsolved metas
+ex1 = main' "elab" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "      = \\A x. x;",
+  "let id2 : (A : _) -> A -> A",
+  "      = \\A x. id _ x;",
+  "id"
+  ]
+
+-- example output which contains unsolved meta, as "?2 A x" in
+-- id2. This means that "?2" is the second hole in the expression,
+-- and is in a scope with "A" and "x" as bound variables.
+ex2 = main' "elab" $ unlines [
+  "let id : (A : U) -> A -> A",
+  "      = \\A x. x ;",
+  "let id2 : (A : _) -> A -> A",
+  "      = \\A x. id _ _ ;",
+  "id2"
+  ]
+
+-- ex3 = parseString $ unlines [
+ex3 = main' "elab" $ unlines [
+  "let id : (A : _) -> A -> A",
+  "    = \\A x. x ;",
+  "let List : U -> U",
+  "    = \\A. (L : _) -> (A -> L -> L) -> L -> L ;",
+  "let nil : (A : _) -> List A",
+  "    = \\A L cons nil. nil ;",
+  "let cons : (A : _) -> A -> List A -> List A",
+  "    = \\A x xs L cons nil. cons x (xs _ cons nil) ;",
+  "let Bool : U",
+  "    = (B : _) -> B -> B -> B ;",
+  "let true : Bool",
+  "    = \\B t f. t ;",
+  "let false : Bool",
+  "    = \\B t f. f ;",
+  "let not : Bool -> Bool",
+  "    = \\b B t f. b B f t ;",
+  "let list1 : List Bool",
+  "    = cons _ (id _ true) (nil _) ;",
+  "let Eq : (A : _) -> A -> A -> U",
+  "    = \\A x y. (P : A -> U) -> P x -> P y ;",
+  "let refl : (A : _)(x : A) -> Eq A x x",
+  "    = \\A x P px. px ;",
+  "\\x. refl _ (cons _ true x)"
+  ]
+-}

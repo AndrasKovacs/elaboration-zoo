@@ -1,4 +1,3 @@
-{-# options_ghc -Wno-unused-imports #-}
 
 module Main where
 
@@ -6,7 +5,6 @@ import Prelude hiding (lookup)
 import Control.Applicative hiding (many, some)
 import Control.Monad
 import Data.Char
-import Data.Maybe
 import Data.Void
 import System.Environment
 import System.Exit
@@ -319,7 +317,7 @@ prettyTm prec = go prec where
 
     App t u                   -> par p appp $ go appp ns t . (' ':) . go atomp ns u
 
-    Lam (fresh ns -> x) t     -> par p letp $ ("λ "++) . (x++) . goLam ns t where
+    Lam (fresh ns -> x) t     -> par p letp $ ("λ "++) . (x++) . goLam (x:ns) t where
                                    goLam ns (Lam x t) = (' ':) . (x++) . goLam (x:ns) t
                                    goLam ns t         = (". "++) . go letp ns t
 
@@ -433,7 +431,7 @@ displayError file (msg, SourcePos path (unPos -> linum) (unPos -> colnum)) = do
   printf "%s\n" msg
 
 helpMsg = unlines [
-  "usage: elabzoo-typecheck [--help|nf|type]",
+  "usage: elabzoo-typecheck-closures-debruijn [--help|nf|type]",
   "  --help : display this message",
   "  nf     : read & typecheck expression from stdin, print its normal form and type",
   "  type   : read & typecheck expression from stdin, print its type"]

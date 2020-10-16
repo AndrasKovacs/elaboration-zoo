@@ -11,7 +11,13 @@ category:            Language
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
 default-extensions:
+- DerivingVia
+- DeriveAnyClass
+- DeriveFunctor
+- DeriveFoldable
+- DeriveTraversable
 - FlexibleContexts
+- GeneralizedNewtypeDeriving
 - LambdaCase
 - NoMonomorphismRestriction
 - OverloadedStrings
@@ -28,13 +34,12 @@ ghc-options:
 - -Wno-missing-signatures
 - -Wno-unused-do-bind
 - -Wno-unused-matches
+- -Wno-missing-pattern-synonym-signatures
 
 dependencies:
 - base >= 4.7 && < 5
 - containers
 - megaparsec
-- mmorph
-- mtl
 
 source-dirs: .
 

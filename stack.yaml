@@ -8,5 +8,4 @@ packages:
   - 02-typecheck-closures-debruijn/
   - 02-typecheck-HOAS-names/
   - 03-holes/
-  - 03-holes-debruijn/
   - 04-implicit-args/

@@ -326,7 +326,8 @@ prettyTm prec = go prec where
     Pi "_" a b                -> par p pip $ go appp ns a . (" → "++) . go pip ("_":ns) b
 
     Pi (fresh ns -> x) a b    -> par p pip $ piBind ns x a . goPi (x:ns) b where
-                                   goPi ns (Pi "_" a b) = (" → "++) . go pip ("_":ns) b
+                                   goPi ns (Pi "_" a b) = (" → "++) . go appp ns a
+                                                          . (" → "++) . go pip ("_":ns) b
                                    goPi ns (Pi x a b)   = piBind ns x a . goPi (x:ns) b
                                    goPi ns b            = (" → "++) . go pip ns b
 

@@ -1,13 +1,8 @@
 
-{-# language Strict, LambdaCase, ViewPatterns, DerivingVia #-}
-
 module Main where
 
 import Prelude hiding (lookup, length)
 import Control.Applicative hiding (many, some)
-import Control.Monad
-import Data.Char
-import Data.Maybe
 import Data.Void
 import System.Environment
 import System.Exit

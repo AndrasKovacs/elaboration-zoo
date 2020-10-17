@@ -19,10 +19,8 @@ default-extensions:
 - FlexibleContexts
 - GeneralizedNewtypeDeriving
 - LambdaCase
-- NoMonomorphismRestriction
 - OverloadedStrings
 - PatternSynonyms
-- RecordWildCards
 - StandaloneDeriving
 - Strict
 - TupleSections
@@ -45,3 +43,5 @@ source-dirs: .
 
 executable:
   main: Main.hs
+  ghc-options:
+  - -O

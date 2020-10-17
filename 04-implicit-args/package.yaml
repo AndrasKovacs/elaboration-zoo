@@ -11,15 +11,13 @@ category:            Language
 description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
 
 default-extensions:
-- BangPatterns
-- EmptyCase
+- DerivingVia
+- DeriveAnyClass
 - FlexibleContexts
+- GeneralizedNewtypeDeriving
 - LambdaCase
-- NoMonomorphismRestriction
 - OverloadedStrings
 - PatternSynonyms
-- RecordWildCards
-- ScopedTypeVariables
 - StandaloneDeriving
 - Strict
 - TupleSections
@@ -36,10 +34,10 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - megaparsec
-- mmorph
-- mtl
 
 source-dirs: .
 
 executable:
   main: Main.hs
+  ghc-options:
+  - -O

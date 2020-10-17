@@ -1,51 +1,41 @@
--- how to elaborate: elabzoo-implicit-args elab < example.txt
--- or in emacs shell: cat example.txt | elabzoo-implicit-args elab
 
-let id : {A} -> A -> A = \x. x in
 
--- by default metas are inserted for implicit arguments but
--- (!) can be used to stop insertion at any point. The (id!) expression
---  has a polymorphic type {A} → A → A
-let id2 : {A} → A → A = id (id!) in
+let id : {A} -> A -> A = \x. x;
 
 let const : {A B} -> A -> B -> A
-    = \x y. x in
+    = \x y. x;
 
 -- definition types can be omitted
-let constTy = {A B} → A → B → A in
+let constTy = {A B} → A → B → A;
 
 -- explicit id function used for annotation as in Idris
-let the : (A : _) -> A -> A = \_ x. x in
+let the : (A : _) -> A -> A = \_ x. x;
 
 -- implicit application follows Agda convention.
-let namedArgTest = const {B = U} U in
-let namedArgTest2 = the constTy (λ x y. x) {B = U} U in
+let namedArgTest = const {B = U} U;
+let namedArgTest2 = the constTy (λ x y. x) {B = U} U;
 
 -- bool
 let Bool : U
-    = (B : _) -> B -> B -> B in
+    = (B : _) -> B -> B -> B;
 let true : Bool
-    = \B t f. t in
+    = \B t f. t;
 let false : Bool
-    = \B t f. f in
+    = \B t f. f;
 let not : Bool -> Bool
-    = \b B t f. b B f t in
+    = \b B t f. b B f t;
 
 -- lists
 let List : U -> U
-    = \A. (L : _) -> (A -> L -> L) -> L -> L in
+    = \A. (L : _) -> (A -> L -> L) -> L -> L;
 let nil : {A} -> List A
-    = \L cons nil. nil in
+    = \L cons nil. nil;
 let cons : {A} -> A -> List A -> List A
-    = \x xs L cons nil. cons x (xs L cons nil) in
+    = \x xs L cons nil. cons x (xs L cons nil);
 let map : {A B} -> (A -> B) -> List A -> List B
-    = \{A}{B} f xs L c n. xs L (\a. c (f a)) n in
+    = \{A}{B} f xs L c n. xs L (\a. c (f a)) n;
 let list1 : List Bool
-    = cons true (cons false (cons true nil)) in
-
--- using ! when mapping over lists
--- idlist has type List ({A} -> A -> A)
-let idlist = map (const (id!)) list1 in
+    = cons true (cons false (cons true nil));
 
 -- dependent function composition
 let comp : {A}{B : A -> U}{C : {a} -> B a -> U}
@@ -53,23 +43,26 @@ let comp : {A}{B : A -> U}{C : {a} -> B a -> U}
            (g : (a : A) -> B a)
            (a : A)
            -> C (g a)
-    = \f g a. f (g a) in
+    = \f g a. f (g a);
 
-let compExample = comp (cons true) (cons false) nil in
+let compExample = comp (cons true) (cons false) nil;
 
 -- nat
 let Nat : U
-    = (N : U) -> (N -> N) -> N -> N in
+    = (N : U) -> (N -> N) -> N -> N;
 let mul : Nat -> Nat -> Nat
-    = \a b N s z. a _ (b _ s) z in
+    = \a b N s z. a _ (b _ s) z;
 let ten : Nat
-    = \N s z. s (s (s (s (s (s (s (s (s (s z))))))))) in
-let hundred = mul ten ten in
+    = \N s z. s (s (s (s (s (s (s (s (s (s z)))))))));
+let hundred = mul ten ten;
 
 -- Leibniz equality
 let Eq : {A} -> A -> A -> U
-    = \{A} x y. (P : A -> U) -> P x -> P y in
+    = \{A} x y. (P : A -> U) -> P x -> P y;
 let refl : {A}{x : A} -> Eq x x
-    = \_ px. px in
+    = \_ px. px;
+
+let sym : {A x y} → Eq {A} x y → Eq y x
+  = λ {A}{x}{y} p. p (λ y. Eq y x) refl;
 
 the (Eq (mul ten ten) hundred) refl

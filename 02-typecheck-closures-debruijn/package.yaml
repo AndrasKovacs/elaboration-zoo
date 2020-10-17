@@ -32,10 +32,11 @@ ghc-options:
 dependencies:
 - base >= 4.7 && < 5
 - containers
-- mtl
 - megaparsec
 
 source-dirs: .
 
 executable:
   main: Main.hs
+  ghc-options:
+  - -O

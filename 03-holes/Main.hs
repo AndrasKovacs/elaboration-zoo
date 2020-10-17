@@ -582,10 +582,12 @@ unify l t u = case (force t, force u) of
 
 type Types = [(String, VTy)]
 
-data Cxt = Cxt {
+
+data Cxt = Cxt {           -- used for:
+                           -----------------------------------
     env   :: Env           -- evaluation
-  , lvl   :: Lvl           -- evaluation
-  , types :: Types         -- raw name lookup, printing
+  , lvl   :: Lvl           -- unification
+  , types :: Types         -- raw name lookup, pretty printing
   , bds   :: [BD]          -- fresh meta creation
   , pos   :: SourcePos     -- error reporting
   }
@@ -718,8 +720,8 @@ appp  = 2  :: Int -- application
 pip   = 1  :: Int -- pi
 letp  = 0  :: Int -- let, lambda
 
--- | Wrap in parens if expression precedence is lower than
---   enclosing expression precedence.
+-- Wrap in parens if expression precedence is lower than
+-- enclosing expression precedence.
 par :: Int -> Int -> ShowS -> ShowS
 par p p' = showParen (p' < p)
 

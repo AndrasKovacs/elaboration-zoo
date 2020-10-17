@@ -1,9 +1,8 @@
 
-This file contains a bit more formal account of pattern unification. I will show
-that a pattern equation (i.e. an equation satisfying pattern conditions) has a
-unique solution. I will not treat metavariables and metacontexts in a formal
-way, so the occurs check condition is only given as a (hopefully obvious)
-extraneous way. I will omit several proofs of stated properties.
+This file contains a bit more formal account of pattern unification. I will not
+treat metavariables and metacontexts in a formal way, so the occurs check
+condition is only given as a (hopefully obvious) afterthought. I will omit
+several proofs of stated properties.
 
 We assume that the syntax of the type theory is given by an initial
 category-with-families with some (unspecified) type formers.

@@ -2,6 +2,9 @@
 
 Minimal implementation of an elaborator with holes and pattern unification.
 
+There's also a short semi-formal explanation of Miller pattern unification with
+dependent types in [pattern-unification.txt](pattern-unification.txt).
+
 Further reading, roughly in preferred order:
 
 - Ulf Norell's PhD thesis, chapter 3,

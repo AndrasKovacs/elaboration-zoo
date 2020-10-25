@@ -1,5 +1,5 @@
 
-resolver: lts-15.8
+resolver: lts-16.19
 
 packages:
   - 01-eval-closures-debruijn/

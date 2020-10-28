@@ -1,0 +1,45 @@
+
+name:                elabzoo-typed-metas
+version:             0.1.0.0
+github:              "AndrasKovacs/elaboration-zoo"
+license:             BSD3
+author:              "András Kovács"
+maintainer:          "puttamalac@gmail.com"
+copyright:           "2019 András Kovács"
+category:            Language
+
+description:         "Small implementations of elaborators for type theories, with varying complexity and feature set"
+
+default-extensions:
+- DerivingVia
+- DeriveAnyClass
+- ConstraintKinds
+- EmptyCase
+- FlexibleContexts
+- GeneralizedNewtypeDeriving
+- LambdaCase
+- OverloadedStrings
+- PatternSynonyms
+- StandaloneDeriving
+- Strict
+- TupleSections
+- ViewPatterns
+
+ghc-options:
+- -Wall
+- -Wno-name-shadowing
+- -Wno-missing-signatures
+- -Wno-unused-do-bind
+- -Wno-unused-matches
+
+dependencies:
+- base >= 4.7 && < 5
+- containers
+- megaparsec
+
+source-dirs: .
+
+executable:
+  main: Main.hs
+  ghc-options:
+  - -O

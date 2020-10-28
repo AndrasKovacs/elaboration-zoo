@@ -1,0 +1,67 @@
+
+let id : {A} → A → A = λx. x;
+
+let const : {A B} → A → B → A
+    = λx y. x;
+
+-- definition types can be omitted
+let constTy = {A B} → A → B → A;
+
+-- explicit id function used for annotation as in Idris
+let the : (A : _) → A → A = λ_ x. x;
+
+-- implicit application follows Agda convention.
+let namedArgTest = const {B = U} U;
+let namedArgTest2 = the constTy (λ x y. x) {B = U} U;
+
+-- bool
+let Bool : U
+    = (B : _) → B → B → B;
+let true : Bool
+    = λB t f. t;
+let false : Bool
+    = λB t f. f;
+let not : Bool → Bool
+    = λb B t f. b B f t;
+
+-- lists
+let List : U → U
+    = λA. (L : _) → (A → L → L) → L → L;
+let nil : {A} → List A
+    = λL cons nil. nil;
+let cons : {A} → A → List A → List A
+    = λx xs L cons nil. cons x (xs L cons nil);
+let map : {A B} → (A → B) → List A → List B
+    = λ{A}{B} f xs L c n. xs L (λa. c (f a)) n;
+let list1 : List Bool
+    = cons true (cons false (cons true nil));
+
+-- dependent function composition
+let comp : {A}{B : A → U}{C : {a} → B a → U}
+           (f : {a}(b : B a) → C b)
+           (g : (a : A) → B a)
+           (a : A)
+           → C (g a)
+    = λf g a. f (g a);
+
+let compExample = comp (cons true) (cons false) nil;
+
+-- nat
+let Nat : U
+    = (N : U) → (N → N) → N → N;
+let mul : Nat → Nat → Nat
+    = λa b N s z. a _ (b _ s) z;
+let ten : Nat
+    = λN s z. s (s (s (s (s (s (s (s (s (s z)))))))));
+let hundred = mul ten ten;
+
+-- Leibniz equality
+let Eq : {A} → A → A → U
+    = λ{A} x y. (P : A → U) → P x → P y;
+let refl : {A}{x : A} → Eq x x
+    = λ_ px. px;
+
+let sym : {A x y} → Eq {A} x y → Eq y x
+  = λ {A}{x}{y} p. p (λ y. Eq y x) refl;
+
+the (Eq (mul ten ten) hundred) refl

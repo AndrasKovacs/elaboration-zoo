@@ -8,6 +8,13 @@ type Ty = Tm
 type Pruning = [Maybe Icit]  -- spine of some variables in the context
                              -- Nothing skips over some variable in context
 
+-- | A reversed pruning. Used for pruning Pi domains, where we have to iterate
+--   inside-out.
+newtype RevPruning = RevPruning Pruning
+
+revPruning :: Pruning -> RevPruning
+revPruning = RevPruning . reverse
+
 data Path
   = Here
   | Define Path Name ~Ty ~Tm   -- point: Path does not store Val-s!

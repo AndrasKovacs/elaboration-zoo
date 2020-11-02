@@ -58,22 +58,38 @@ main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
 
-ex1 = main' "nf" $ unlines [
-  "λ f a b. f b a"
+ex1 = main' "elab" $ unlines [
+  -- "λ f a b. f a b"
+
+  "let Eq : {A : U} → A → A → U",
+  "    = λ {A} x y. (P : A → U) → P x → P y;",
+  "let refl : {A : U}{x : A} → Eq {A} x x",
+  "    = λ _ px. px;",
+  "let id : (A : U) → A → A = λ _ x. x;",
+
+  "let m : (A : U)(B : U) → U → U → U = _;",
+
+  "λ a b. id (Eq (m a a) (λ x y. y)) refl"
+
 
   -- "let Eq : {A : U} → A → A → U",
   -- "    = λ {A} x y. (P : A → U) → P x → P y;",
   -- "let refl : {A : U}{x : A} → Eq {A} x x",
   -- "    = λ _ px. px;",
+  -- "let id : (A : U) → A → A = λ _ x. x;",
 
-  -- "let a : U = _;",
-  -- "let b : U = _;",
-  -- "let c : U = _;",
-  -- "let d : U = _;",
+  -- "let m : U → U → U → U = _;",
 
-  -- "let p : Eq {U} a b = refl {U}{b};",
-  -- "let p : Eq {U} b c = refl {U}{c};",
-  -- "let p : Eq {U} c d = refl {U}{d};",
+  -- "λ a b c. id (Eq (m a b a) (m c b c)) refl"
+
+  -- "let a = _;",
+  -- "let b = _;",
+  -- "let c = _;",
+  -- "let d = _;",
+
+  -- "let p : Eq a b = refl {U}{b};",
+  -- "let p : Eq b c = refl {U}{c};",
+  -- "let p : Eq c d = refl {U}{d};",
   -- -- "let p : Eq a U = refl;",
   -- "U"
 
@@ -133,7 +149,7 @@ ex1 = main' "nf" $ unlines [
   -- "    = λ_ px. px;",
   -- "",
   -- "let sym : {A x y} → Eq {A} x y → Eq y x",
-  -- "  = λ {A}{x}{y} p. p (λ y. Eq y x) refl;",
+  -- "  = λ {_}{x}{y} p. p (λ y. Eq y x) refl;",
   -- "",
 
   -- "the (Eq (mul ten ten) hundred) refl  "

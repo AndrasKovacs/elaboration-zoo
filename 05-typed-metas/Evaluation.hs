@@ -1,5 +1,5 @@
 
-module Evaluation (($$), quote, eval, nf, force, lvl2Ix, vApp) where
+module Evaluation (($$), quote, eval, nf, force, lvl2Ix, vApp, vAppSp) where
 
 import Common
 import Metacontext
@@ -27,12 +27,12 @@ vMeta m = case lookupMeta m of
   Solved _ v _ -> v
   Unsolved{}   -> VMeta m
 
-vAppMetaClosure :: Dbg => Env -> Val -> MetaClosure -> Val
-vAppMetaClosure env ~v mcl = case (env, mcl) of
-  ([]       , Nil             ) -> v
-  (env :> t , Bind mcl _ _    ) -> vApp (vAppMetaClosure env v mcl) t Expl
-  (env :> t , Define mcl _ _ _) -> vAppMetaClosure env v mcl
-  _                             -> impossible
+vAppPruning :: Dbg => Env -> Val -> Pruning -> Val
+vAppPruning env ~v pr = case (env, pr) of
+  ([]       , []           ) -> v
+  (env :> t , pr :> Just i ) -> vApp (vAppPruning env v pr) t i
+  (env :> t , pr :> Nothing) -> vAppPruning env v pr
+  _                          -> impossible
 
 vVar :: Dbg => Env -> Ix -> Val
 vVar env x | unIx x < length env = env !! unIx x
@@ -41,14 +41,14 @@ vVar env x = error $ "index out of env: "
 
 eval :: Dbg => Env -> Tm -> Val
 eval env = \case
-  Var x              -> vVar env x
-  App t u i          -> vApp (eval env t) (eval env u) i
-  Lam x i t          -> VLam x i (Closure env t)
-  Pi x i a b         -> VPi x i (eval env a) (Closure env b)
-  Let _ _ t u        -> eval (env :> eval env t) u
-  U                  -> VU
-  Meta m             -> vMeta m
-  InsertedMeta m mcl -> vAppMetaClosure env (vMeta m) mcl
+  Var x           -> vVar env x
+  App t u i       -> vApp (eval env t) (eval env u) i
+  Lam x i t       -> VLam x i (Closure env t)
+  Pi x i a b      -> VPi x i (eval env a) (Closure env b)
+  Let _ _ t u     -> eval (env :> eval env t) u
+  U               -> VU
+  Meta m          -> vMeta m
+  AppPruning t pr -> vAppPruning env (eval env t) pr
 
 force :: Dbg => Val -> Val
 force = \case

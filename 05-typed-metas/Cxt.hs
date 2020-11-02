@@ -12,23 +12,20 @@ import Value
 -- Elaboration context
 --------------------------------------------------------------------------------
 
-data NameOrigin = Inserted | Source deriving Eq
-
-type Types = [(String, NameOrigin, VTy)]
-
 data Cxt = Cxt {
-    env         :: Env
-  , lvl         :: Lvl
-  , metaClosure :: MetaClosure
-  , srcNames    :: M.Map Name (Lvl, VTy)
-  , pos         :: SourcePos
+    env       :: Env                   -- for eval
+  , lvl       :: Lvl                   -- for going under binders
+  , path      :: Path                  -- types of fresh metas
+  , pruning   :: Pruning               -- terms of fresh metas (mask of bound variables)
+  , srcNames  :: M.Map Name (Lvl, VTy) -- *only* contains info relevant to raw name lookup
+  , pos       :: SourcePos
   }
 
 names :: Cxt -> [Name]
-names = go . metaClosure where
-  go Nil               = []
-  go (Define ms x _ _) = x: go ms
-  go (Bind ms x _)     = x: go ms
+names = go . path where
+  go Here                = []
+  go (Define path x _ _) = go path :> x
+  go (Bind path x _)     = go path :> x
 
 showVal :: Cxt -> Val -> String
 showVal cxt v =
@@ -41,22 +38,26 @@ instance Show Cxt where
   show = show . names
 
 emptyCxt :: SourcePos -> Cxt
-emptyCxt = Cxt [] 0 Nil mempty
+emptyCxt = Cxt [] 0 Here [] mempty
 
 -- | Extend Cxt with a bound variable.
 bind :: Cxt -> Name -> VTy -> Cxt
-bind (Cxt env l mcl ns pos) x ~a =
-  Cxt (env :> VVar l) (l + 1) (Bind mcl x (quote l a)) (M.insert x (l, a) ns) pos
+bind (Cxt env l path pr ns pos) x ~a =
+  Cxt (env :> VVar l)
+      (l + 1)
+      (Bind path x (quote l a))
+      (pr :> Just Expl)
+      (M.insert x (l, a) ns) pos
 
 -- | Insert a new binding.
 newBinder :: Cxt -> Name -> VTy -> Cxt
-newBinder (Cxt env l mcl ns pos) x ~a =
-  Cxt (env :> VVar l) (l + 1) (Bind mcl x (quote l a)) ns pos
+newBinder (Cxt env l path pr ns pos) x ~a =
+  Cxt (env :> VVar l) (l + 1) (Bind path x (quote l a)) (pr :> Just Expl) ns pos
 
 -- | Extend Cxt with a definition.
 define :: Cxt -> Name -> Tm -> Val -> Ty -> VTy -> Cxt
-define (Cxt env l mcl ns pos) x ~t ~vt ~a ~va  =
-  Cxt (env :> vt) (l + 1) (Define mcl x a t) (M.insert x (l, va) ns) pos
+define (Cxt env l path pr ns pos) x ~t ~vt ~a ~va  =
+  Cxt (env :> vt) (l + 1) (Define path x a t) (pr :> Nothing) (M.insert x (l, va) ns) pos
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
 closeVal :: Cxt -> Val -> Closure

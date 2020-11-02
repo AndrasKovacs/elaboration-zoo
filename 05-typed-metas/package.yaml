@@ -21,6 +21,7 @@ default-extensions:
 - OverloadedStrings
 - PatternSynonyms
 - StandaloneDeriving
+- ScopedTypeVariables
 - Strict
 - TupleSections
 - ViewPatterns

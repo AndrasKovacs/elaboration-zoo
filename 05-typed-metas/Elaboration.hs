@@ -21,18 +21,23 @@ import qualified Presyntax as P
 -- Elaboration
 --------------------------------------------------------------------------------
 
-closeTy :: MetaClosure -> Ty -> Ty
+-- We convert type in context to a closed iterated Pi type
+-- x : A, y : B ⊢ C
+-- ∙ ⊢ (x : A)(y : B) → C
+
+-- check (λ x. t) with (x : A) → B
+
+closeTy :: Path -> Ty -> Ty
 closeTy mcl b = case mcl of
-  Nil              -> b
+  Here             -> b
   Bind mcl x a     -> closeTy mcl (Pi x Expl a b)
   Define mcl x a t -> closeTy mcl (Let x a t b)
 
 freshMeta :: Dbg => Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
-  -- traceShowM ("closure", metaClosure cxt, closeTy (metaClosure cxt) (quote (lvl cxt) a))
-  let ~closed = eval [] $ closeTy (metaClosure cxt) (quote (lvl cxt) a)
+  let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
   m <- pushMeta closed
-  pure $ InsertedMeta m (metaClosure cxt)
+  pure $ AppPruning (Meta m) (pruning cxt)
 
 unifyCatch :: Dbg => Cxt -> Val -> Val -> IO ()
 unifyCatch cxt t t' =

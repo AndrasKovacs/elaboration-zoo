@@ -21,7 +21,10 @@ type Dbg = HasCallStack
 type Name = String
 
 data Icit = Impl | Expl deriving (Eq)
-data BD = Bound | Defined deriving Show
+
+icit :: Icit -> a -> a -> a
+icit Impl a _ = a
+icit Expl _ b = b
 
 instance Show Icit where
   show Impl = "implicit"

@@ -30,7 +30,7 @@ nextMetaVar :: IORef MetaVar
 nextMetaVar = unsafeDupablePerformIO $ newIORef 0
 {-# noinline nextMetaVar #-}
 
-greatestMeta :: IORef (Maybe MetaVar)
+greatestMeta :: IORef (Maybe MetaVar)  -- when I push a new meta, I have to link it to the last element
 greatestMeta = unsafeDupablePerformIO $ newIORef Nothing
 {-# noinline greatestMeta #-}
 
@@ -50,18 +50,10 @@ readMeta m = do
 lookupMeta :: MetaVar -> MetaEntry
 lookupMeta = unsafeDupablePerformIO . readMeta
 
-data CompareMetas
-  = Same
-  | Less VTy
-  | Greater
-
-compareMetas :: MetaVar -> MetaVar -> CompareMetas
+compareMetas :: MetaVar -> MetaVar -> Ordering
 compareMetas m1 m2 = case (lookupMeta m1, lookupMeta m2) of
-  (Unsolved l _, Unsolved l' va') -> case compare (order l) (order l') of
-    LT -> Less va'
-    GT -> Greater
-    EQ -> Same
-  _ -> impossible
+  (Unsolved l _, Unsolved l' _) -> compare (order l) (order l')
+  _                             -> impossible
 
 readLink :: MetaVar -> IO Link
 readLink m = do
@@ -99,6 +91,11 @@ pushMeta ~va = do
                   (Unsolved (Link (Just mmax) wm Nothing) va) $
                   ms
   pure m
+
+-- | Example strengthening: move γ before α
+--   (for example, if I want to solve α with t containg γ
+-- | α : A, β : B, γ : C
+-- | γ : C, α : A, β : B     (have to check that C does not depend on α, β)
 
 -- | Assuming that m1 < m2, both unsolved, insert m2 just before m1.
 strengthenMeta :: MetaVar -> MetaVar -> VTy -> IO ()

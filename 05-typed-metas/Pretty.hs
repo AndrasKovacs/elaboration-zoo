@@ -44,37 +44,49 @@ prettyTm prec = go prec where
   lamBind x Impl = bracket (x++)
   lamBind x Expl = (x++)
 
-  goMCl :: Int -> [Name] -> MetaVar -> MetaClosure -> ShowS
-  goMCl p ns m mcl = case (ns, mcl) of
-    ([]      , Nil             ) -> (("?"++show m)++)
-    (ns :> n , Bind mcl _ _    ) -> par p appp $ goMCl appp ns m mcl . (' ':) . (n++)
-    (ns :> n , Define mcl _ _ _) -> goMCl appp ns m mcl
-    _                            -> error "impossible"
+  goPr :: Int -> [Name] -> [Name] -> Tm -> Pruning -> ShowS
+  goPr p topNs ns t pr = goPr' p ns pr (0 :: Int) where
+    goPr' p ns pr x = case (ns, pr) of
+      ([]      , []           ) -> go p topNs t
+      (ns :> n , pr :> Just i ) -> par p appp $ goPr' appp ns pr (x + 1) . (' ':)
+                                   . icit i bracket id (case n of "_" -> (("@"++show x)++); n -> (n++))
+      (ns :> n , pr :> Nothing) -> goPr' appp ns pr (x + 1)
+      _                         -> impossible
+
+  goIx :: [Name] -> Ix -> ShowS
+  goIx ns topIx = go ns topIx where
+    go [] _ = impossible
+    go ("_":ns) 0 = (("@"++show topIx)++)
+    go (n:ns)   0 = (n++)
+    go (n:ns)   x = go ns (x - 1)
 
   go :: Int -> [Name] -> Tm -> ShowS
   go p ns = \case
-    Var (Ix x)                -> ((ns !! x)++)
+    Var x                     -> goIx ns x
 
     App t u Expl              -> par p appp $ go appp ns t . (' ':) . go atomp ns u
     App t u Impl              -> par p appp $ go appp ns t . (' ':) . bracket (go letp ns u)
 
     Lam (fresh ns -> x) i t   -> par p letp $ ("λ "++) . lamBind x i . goLam (ns:>x) t where
-                                   goLam ns (Lam x i t) = (' ':) . lamBind x i . goLam (ns:>x) t
-                                   goLam ns t           = (". "++) . go letp ns t
+                                   goLam ns (Lam (fresh ns -> x) i t) =
+                                     (' ':) . lamBind x i . goLam (ns:>x) t
+                                   goLam ns t =
+                                     (". "++) . go letp ns t
 
     U                         -> ("U"++)
 
     Pi "_" Expl a b           -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
 
     Pi (fresh ns -> x) i a b  -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
-                                   goPi ns (Pi x i a b) | x /= "_" = piBind ns x i a . goPi (ns:>x) b
+                                   goPi ns (Pi (fresh ns -> x) i a b)
+                                     | x /= "_" = piBind ns x i a . goPi (ns:>x) b
                                    goPi ns b = (" → "++) . go pip ns b
 
     Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
                                  . ("\n  = "++) . go letp ns t . (";\n\n"++) . go letp (ns:>x) u
 
     Meta m                    -> (("?"++show m)++)
-    InsertedMeta m mcl        -> goMCl p ns m mcl
+    AppPruning t pr           -> goPr p ns ns t pr
 
 showTm0 :: Tm -> String
 showTm0 t = prettyTm 0 [] t []

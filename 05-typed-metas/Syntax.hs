@@ -5,19 +5,24 @@ import Common
 
 type Ty = Tm
 
-data MetaClosure
-  = Nil
-  | Define MetaClosure Name ~Ty ~Tm
-  | Bind MetaClosure Name ~Ty
+type Pruning = [Maybe Icit]  -- spine of some variables in the context
+                             -- Nothing skips over some variable in context
+
+data Path
+  = Here
+  | Define Path Name ~Ty ~Tm   -- point: Path does not store Val-s!
+  | Bind Path Name ~Ty
   deriving Show
 
 data Tm
   = Var Ix
   | Lam Name Icit Tm
   | App Tm Tm Icit
+  | AppPruning Tm Pruning   -- Instead: InsertedMeta MetaVar [BD] (any Tm can be applied to a pruning)
   | U
   | Pi Name Icit Ty Ty
   | Let Name Ty Tm Tm
   | Meta MetaVar
-  | InsertedMeta MetaVar MetaClosure
   deriving Show
+
+-- x, y, z ⊢ f [Just Expl, Just Impl, Nothing]

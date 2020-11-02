@@ -146,7 +146,8 @@ infer cxt = \case
         pure (a, b)
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt VU
-        b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
+        b@(Closure _ mb) <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
+        -- traceShowM (showVal cxt a, mb)
         unifyCatch cxt tty (VPi "x" i a b)
         pure (a, b)
 

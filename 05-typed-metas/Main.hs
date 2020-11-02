@@ -58,23 +58,24 @@ main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
 
-ex1 = main' "elab" $ unlines [
+ex1 = main' "nf" $ unlines [
+  "λ f a b. f b a"
 
-  "let Eq : {A : U} → A → A → U",
-  "    = λ {A} x y. (P : A → U) → P x → P y;",
-  "let refl : {A : U}{x : A} → Eq {A} x x",
-  "    = λ _ px. px;",
+  -- "let Eq : {A : U} → A → A → U",
+  -- "    = λ {A} x y. (P : A → U) → P x → P y;",
+  -- "let refl : {A : U}{x : A} → Eq {A} x x",
+  -- "    = λ _ px. px;",
 
-  "let a : U = _;",
-  "let b : U = _;",
-  "let c : U = _;",
-  "let d : U = _;",
+  -- "let a : U = _;",
+  -- "let b : U = _;",
+  -- "let c : U = _;",
+  -- "let d : U = _;",
 
-  "let p : Eq {U} a b = refl {U}{b};",
-  "let p : Eq {U} b c = refl {U}{c};",
-  "let p : Eq {U} c d = refl {U}{d};",
-  -- "let p : Eq a U = refl;",
-  "U"
+  -- "let p : Eq {U} a b = refl {U}{b};",
+  -- "let p : Eq {U} b c = refl {U}{c};",
+  -- "let p : Eq {U} c d = refl {U}{d};",
+  -- -- "let p : Eq a U = refl;",
+  -- "U"
 
   -- "let id : {A} → A → A = λ x. x;",
   -- "let id2 : {A} → A → A = λ x. id x;",

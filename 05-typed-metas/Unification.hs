@@ -27,10 +27,9 @@ lift :: PartialRenaming -> PartialRenaming
 lift (PRen occ dom cod ren) =
   PRen occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
 
--- weaken : PRen Γ Δ → PRen (Γ, A) Δ
--- weaken σ = σ ∘ (p : Sub (Γ, A) Γ)
-weaken :: PartialRenaming -> PartialRenaming
-weaken (PRen occ dom cod ren) = PRen occ (dom + 1) cod ren
+-- skip : PRen Γ Δ → PRen Γ (Δ, A)
+skip :: PartialRenaming -> PartialRenaming
+skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
 -- invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
 invert :: Dbg => Lvl -> Spine -> IO PartialRenaming
@@ -90,6 +89,8 @@ prune pren m sp = do
     OKNonRenaming -> pure (foldr (\(Just u, i) t -> App t u i) (Meta m) sp, m, mty)
     NeedsPruning  -> do
 
+      -- traceShowM ("prune"::String, m, sp)
+
       -- mty is the un-pruned type of "m"
       -- I want to compute a type which has fewer Pi arguments
       prunedty <- let
@@ -98,11 +99,15 @@ prune pren m sp = do
           ([]               , a          ) -> rename pren a
           ((Just _ , _) : sp, VPi x i a b) -> Pi x i <$> rename pren a
                                                      <*> go sp (lift pren) (b $$ VVar (cod pren))
-          ((Nothing, _) : sp, VPi x i a b) -> go sp (weaken pren) (b $$ VVar (cod pren))
+          ((Nothing, _) : sp, VPi x i a b) -> go sp (skip pren) (b $$ VVar (cod pren))
           _                                -> impossible
 
-        in eval [] <$> go (reverse sp) (PRen Nothing 0 0 mempty) mty
+        in go (reverse sp) (PRen Nothing 0 0 mempty) mty
 
+      -- traceShowM (quote (cod pren) mty)
+      -- traceShowM prunedty
+
+      prunedty <- pure $ eval [] prunedty
       m' <- pushMeta prunedty
       let metaPruning = map (\(mt, i) -> i <$ mt) sp
       let solution = eval [] $ lams (Lvl $ length sp) mty $ AppPruning (Meta m') metaPruning
@@ -165,10 +170,14 @@ lams l a t = go a (0 :: Lvl) where
 
 solve :: Dbg => Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = do
+  pren <- invert gamma sp
+  solveWithPRen m pren rhs
+
+solveWithPRen :: MetaVar -> PartialRenaming -> Val -> IO ()
+solveWithPRen m pren rhs = do
   (mlink, mty) <- readMeta m >>= \case
     Unsolved mlink a -> pure (mlink, a)
     _                -> impossible
-  pren <- invert gamma sp
   rhs  <- rename (pren {occ = Just m}) rhs
   let solution = eval [] $ lams (dom pren) mty rhs
   modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
@@ -182,12 +191,24 @@ unifySp l sp sp' = case (sp, sp') of
   (sp :> (t, _), sp' :> (t', _)) -> unifySp l sp sp' >> unify l t t'
   _                              -> throwIO UnifyError -- rigid mismatch error
 
+flexFlex :: Lvl -> MetaVar -> Spine -> MetaVar -> Spine -> IO ()
+flexFlex gamma m sp m' sp'
+
+  -- usually, a longer spine indicates that the meta is in an inner scope. If we solve
+  -- inner metas with outer metas, that means that we have to do fewer pruning!
+  | length sp < length sp' = flexFlex gamma m' sp' m sp
+
+flexFlex gamma m sp m' sp' =
+  try (invert gamma sp) >>= \case
+    Left UnifyError -> do {pren <- invert gamma sp'; solveWithPRen m' pren (VFlex m sp)}
+    Right pren      -> solveWithPRen m pren (VFlex m' sp')
+
 unify :: Dbg => Lvl -> Val -> Val -> IO ()
 unify l t u = case (force t, force u) of
   (VU         , VU             ) -> pure ()
-  (VPi x i a b, VPi x' i' a' b') | i == i' -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)
-  (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp l sp sp'
-  (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp l sp sp'
+  (VPi x i a b, VPi x' i' a' b') | i == i'   -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)
+  (VRigid x sp, VRigid x' sp'  ) | x == x'   -> unifySp l sp sp'
+  (VFlex m sp , VFlex m' sp'   )             -> flexFlex l m sp m' sp'
   (VLam _ _ t , VLam _ _ t'    ) -> unify (l + 1) (t $$ VVar l) (t' $$ VVar l)
   (t          , VLam _ i t'    ) -> unify (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)
   (VLam _ i t , t'             ) -> unify (l + 1) (t $$ VVar l) (vApp t' (VVar l) i)

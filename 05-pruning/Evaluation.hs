@@ -7,39 +7,39 @@ import Syntax
 import Value
 
 infixl 8 $$
-($$) :: Dbg => Closure -> Val -> Val
+($$) :: Closure -> Val -> Val
 ($$) (Closure env t) ~u = eval (env :> u) t
 
-vApp :: Dbg => Val -> Val -> Icit -> Val
+vApp :: Val -> Val -> Icit -> Val
 vApp t ~u i = case t of
   VLam _ _ t  -> t $$ u
   VFlex  m sp -> VFlex m  (sp :> (u, i))
   VRigid x sp -> VRigid x (sp :> (u, i))
   _           -> impossible
 
-vAppSp :: Dbg => Val -> Spine -> Val
+vAppSp :: Val -> Spine -> Val
 vAppSp t = \case
   []           -> t
   sp :> (u, i) -> vApp (vAppSp t sp) u i
 
-vMeta :: Dbg => MetaVar -> Val
+vMeta :: MetaVar -> Val
 vMeta m = case lookupMeta m of
   Solved _ v _ -> v
   Unsolved{}   -> VMeta m
 
-vAppPruning :: Dbg => Env -> Val -> Pruning -> Val
+vAppPruning :: Env -> Val -> Pruning -> Val
 vAppPruning env ~v pr = case (env, pr) of
   ([]       , []           ) -> v
   (env :> t , pr :> Just i ) -> vApp (vAppPruning env v pr) t i
   (env :> t , pr :> Nothing) -> vAppPruning env v pr
   _                          -> impossible
 
-vVar :: Dbg => Env -> Ix -> Val
+vVar :: Env -> Ix -> Val
 vVar env x | unIx x < length env = env !! unIx x
 vVar env x = error $ "index out of env: "
                   ++ show ("env len"::String, length env, "ix"::String, x)
 
-eval :: Dbg => Env -> Tm -> Val
+eval :: Env -> Tm -> Val
 eval env = \case
   Var x           -> vVar env x
   App t u i       -> vApp (eval env t) (eval env u) i
@@ -50,7 +50,7 @@ eval env = \case
   Meta m          -> vMeta m
   AppPruning t pr -> vAppPruning env (eval env t) pr
 
-force :: Dbg => Val -> Val
+force :: Val -> Val
 force = \case
   VFlex m sp | Solved _ t _ <- lookupMeta m -> force (vAppSp t sp)
   t -> t
@@ -58,12 +58,12 @@ force = \case
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 
-quoteSp :: Dbg => Lvl -> Tm -> Spine -> Tm
+quoteSp :: Lvl -> Tm -> Spine -> Tm
 quoteSp l t = \case
   []           -> t
   sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
 
-quote :: Dbg => Lvl -> Val -> Tm
+quote :: Lvl -> Val -> Tm
 quote l t = case force t of
   VFlex m sp  -> quoteSp l (Meta m) sp
   VRigid x sp -> quoteSp l (Var (lvl2Ix l x)) sp
@@ -71,5 +71,5 @@ quote l t = case force t of
   VPi x i a b -> Pi x i (quote l a) (quote (l + 1) (b $$ VVar l))
   VU          -> U
 
-nf :: Dbg => Env -> Tm -> Tm
+nf :: Env -> Tm -> Tm
 nf env t = quote (Lvl (length env)) (eval env t)

@@ -19,20 +19,20 @@ import qualified Presyntax as P
 
 --------------------------------------------------------------------------------
 
-freshMeta :: Dbg => Cxt -> VTy -> IO Tm
+freshMeta :: Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
   let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
   m <- pushMeta closed
   pure $ AppPruning (Meta m) (pruning cxt)
 
-unifyCatch :: Dbg => Cxt -> Val -> Val -> IO ()
+unifyCatch :: Cxt -> Val -> Val -> IO ()
 unifyCatch cxt t t' =
   unify (lvl cxt) t t'
   `catch` \UnifyError ->
     throwIO $ Error cxt $ CantUnify (quote (lvl cxt) t) (quote (lvl cxt) t')
 
 -- | Insert fresh implicit applications.
-insert' :: Dbg => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert' :: Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
 insert' cxt act = go =<< act where
   go (t, va) = case force va of
     VPi x Impl a b -> do
@@ -43,14 +43,14 @@ insert' cxt act = go =<< act where
 
 -- | Insert fresh implicit applications to a term which is not
 --   an implicit lambda (i.e. neutral).
-insert :: Dbg => Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
+insert :: Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)
 insert cxt act = act >>= \case
   (t@(Lam _ Impl _), va) -> pure (t, va)
   (t               , va) -> insert' cxt (pure (t, va))
 
 -- | Insert fresh implicit applications until we hit a Pi with
 --   a particular binder name.
-insertUntilName :: Dbg => Cxt -> Name -> IO (Tm, VTy) -> IO (Tm, VTy)
+insertUntilName :: Cxt -> Name -> IO (Tm, VTy) -> IO (Tm, VTy)
 insertUntilName cxt name act = go =<< act where
   go (t, va) = case force va of
     va@(VPi x Impl a b) -> do
@@ -63,7 +63,7 @@ insertUntilName cxt name act = go =<< act where
     _ ->
       throwIO $ Error cxt $ NoNamedImplicitArg name
 
-check :: Dbg => Cxt -> P.Tm -> VTy -> IO Tm
+check :: Cxt -> P.Tm -> VTy -> IO Tm
 check cxt t a = case (t, force a) of
   (P.SrcPos pos t, a) ->
     check (cxt {pos = pos}) t a
@@ -92,7 +92,7 @@ check cxt t a = case (t, force a) of
     unifyCatch cxt expected inferred
     pure t
 
-infer :: Dbg => Cxt -> P.Tm -> IO (Tm, VTy)
+infer :: Cxt -> P.Tm -> IO (Tm, VTy)
 infer cxt = \case
   P.SrcPos pos t ->
     infer (cxt {pos = pos}) t

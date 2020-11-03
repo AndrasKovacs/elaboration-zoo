@@ -214,7 +214,7 @@ flexFlex gamma m sp m' sp' =
 
 
 -- | Try to solve the problem (Γ ⊢ m spine =? m spine') by intersection.
---   If spine and spine are both renamings, but different, then
+--   If spine and spine' are both renamings, but different, then
 --   we prune all arguments from m which differ in spine and spine'.
 --
 --   If some of spine/spine' are not renamings, we fall back to simple unification.

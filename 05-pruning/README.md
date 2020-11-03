@@ -5,6 +5,8 @@ New features:
 - typed metas
 - pruning
 
+You can look at [example.txt](example.txt) for examples which can be elaborated thanks to new features.
+
 #### Typed & ordered metacontext
 
 Previously, the metacontext was conceptually an untyped mutual block of definitions.

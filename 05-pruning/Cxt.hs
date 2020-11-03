@@ -12,12 +12,12 @@ import Value
 -- Elaboration context
 --------------------------------------------------------------------------------
 
-data Cxt = Cxt {
-    env       :: Env                   -- for eval
-  , lvl       :: Lvl                   -- for going under binders
-  , path      :: Path                  -- types of fresh metas
-  , pruning   :: Pruning               -- terms of fresh metas (mask of bound variables)
-  , srcNames  :: M.Map Name (Lvl, VTy) -- *only* contains info relevant to raw name lookup
+data Cxt = Cxt {                       -- Used for:
+    env       :: Env                   -- evaluation
+  , lvl       :: Lvl                   -- going under binders
+  , path      :: Path                  -- getting types of fresh metas
+  , pruning   :: Pruning               -- getting terms of fresh metas (mask of bound variables)
+  , srcNames  :: M.Map Name (Lvl, VTy) -- only contains info relevant to raw name lookup
   , pos       :: SourcePos
   }
 
@@ -47,17 +47,31 @@ bind (Cxt env l path pr ns pos) x ~a =
       (l + 1)
       (Bind path x (quote l a))
       (pr :> Just Expl)
-      (M.insert x (l, a) ns) pos
+      (M.insert x (l, a) ns)
+      pos
 
--- | Insert a new binding.
+-- | Insert a new binding. This is used when we insert a new implicit lambda in
+--   checking.
 newBinder :: Cxt -> Name -> VTy -> Cxt
 newBinder (Cxt env l path pr ns pos) x ~a =
-  Cxt (env :> VVar l) (l + 1) (Bind path x (quote l a)) (pr :> Just Expl) ns pos
+  Cxt (env :> VVar l)
+      (l + 1)
+      (Bind path x (quote l a))
+      (pr :> Just Expl)
+      ns                        -- Unchanged! An inserted binder cannot be accessed from
+      pos                       --   source syntax
 
--- | Extend Cxt with a definition.
+-- | Extend with a definition. We require both terms and values, for efficiency,
+--   because when we elaborate let-definitions, we usually already have terms
+--   for the definition and its type.
 define :: Cxt -> Name -> Tm -> Val -> Ty -> VTy -> Cxt
 define (Cxt env l path pr ns pos) x ~t ~vt ~a ~va  =
-  Cxt (env :> vt) (l + 1) (Define path x a t) (pr :> Nothing) (M.insert x (l, va) ns) pos
+  Cxt (env :> vt)
+      (l + 1)
+      (Define path x a t)
+      (pr :> Nothing)
+      (M.insert x (l, va) ns)
+      pos
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
 closeVal :: Cxt -> Val -> Closure

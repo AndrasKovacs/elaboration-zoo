@@ -13,7 +13,6 @@ import Metacontext
 import Syntax
 import Value
 
--- Unification
 --------------------------------------------------------------------------------
 
 -- partial renaming from Γ to Δ
@@ -27,16 +26,16 @@ data PartialRenaming = PRen {
 lift :: PartialRenaming -> PartialRenaming
 lift (PRen occ dom cod ren) = PRen occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
 
--- skip : PRen Γ Δ → PRen Γ (Δ, A)
+-- skip : PRen Γ Δ → PRen Γ (Δ, x : A)
 skip :: PartialRenaming -> PartialRenaming
 skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
 -- | invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
 --   Optionally returns a pruning of nonlinear spine entries, is there's any.
-invert :: Dbg => Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
+invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
-  let go :: Dbg => Spine -> IO (Lvl, IM.IntMap Lvl, Pruning, Bool)
+  let go :: Spine -> IO (Lvl, IM.IntMap Lvl, Pruning, Bool)
       go []             = pure (0, mempty, [], True)
       go (sp :> (t, i)) = do
         (dom, ren, pr, isLinear) <- go sp
@@ -48,20 +47,6 @@ invert gamma sp = do
 
   (dom, ren, pr, isLinear) <- go sp
   pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
-
-
-data PruneStatus = OKRenaming | OKNonRenaming | NeedsPruning
-
--- [x, y, z]  -- OKRenaming: valid spine which is a renaming
---            -- OKNonRenaming: valid but has something which is not a var
---            -- NeedsPruning: renaming with some illegal variables
-
--- (we can only do pruning on renamings!)
-
--- ?1 x =? (?0 [x, True, y])    -- can we prune y?
-
--- ?0 : (a : A)(b : Bool)(c : if b then ... else ...) → if b then ... else ...
--- (if we only have vars in spine, dependencies cannot change (based on canonical value computation))
 
 
 -- | Remove some arguments from a closed iterated Pi type.
@@ -77,23 +62,32 @@ pruneTy (RevPruning pr) a = go pr (PRen Nothing 0 0 mempty) a where
 -- | Prune arguments from a meta, return new meta + pruned type.
 pruneMeta :: Pruning -> MetaVar -> IO (MetaVar, VTy)
 pruneMeta pruning m = do
+
   (mlink, mty) <- readMeta m >>= \case
     Unsolved mlink a -> pure (mlink, a)
     _                -> impossible
 
   prunedty <- eval [] <$> pruneTy (revPruning pruning) mty
+
   m' <- pushMeta prunedty
   strengthenMeta m m' prunedty
+
   let solution = eval [] $ lams (Lvl $ length pruning) mty $ AppPruning (Meta m') pruning
   modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
   pure (m', prunedty)
 
+
+data SpinePruneStatus
+  = OKRenaming    -- ^ Valid spine which is a renaming
+  | OKNonRenaming -- ^ Valid spine but not a renaming (has a non-var entry)
+  | NeedsPruning  -- ^ A spine which is a renaming and has out-of-scope var entries
+
 -- | Prune illegal var occurrences from a meta + spine.
 --   Returns: renamed + pruned term, head meta after pruning, type of the head meta after pruning.
-pruneVFlex :: Dbg => PartialRenaming -> MetaVar -> Spine -> IO (Tm, MetaVar, VTy)
+pruneVFlex :: PartialRenaming -> MetaVar -> Spine -> IO (Tm, MetaVar, VTy)
 pruneVFlex pren m sp = do
 
-  (sp :: [(Maybe Tm, Icit)], status :: PruneStatus) <- let
+  (sp :: [(Maybe Tm, Icit)], status :: SpinePruneStatus) <- let
     go []             = pure ([], OKRenaming)
     go (sp :> (t, i)) = do
       (sp, status) <- go sp
@@ -112,44 +106,46 @@ pruneVFlex pren m sp = do
     OKNonRenaming -> readMeta m >>= \case Unsolved _ a -> pure (m, a); _ -> impossible
     NeedsPruning  -> pruneMeta (map (\(mt, i) -> i <$ mt) sp) m
 
-  pure (foldr (\(mu, i) t -> maybe t (\u -> App t u i) mu) (Meta m') sp, m', mty')
+  let t = foldr (\(mu, i) t -> maybe t (\u -> App t u i) mu) (Meta m') sp
+  pure (t, m', mty')
 
 
-renameSp :: Dbg => PartialRenaming -> Tm -> Spine -> IO Tm
+renameSp :: PartialRenaming -> Tm -> Spine -> IO Tm
 renameSp pren t = \case
   []             -> pure t
   (sp :> (u, i)) -> App <$> renameSp pren t sp <*> rename pren u <*> pure i
 
--- perform the partial renaming on rhs, while also checking for "m" occurrences.
-rename :: Dbg => PartialRenaming -> Val -> IO Tm
+rename :: PartialRenaming -> Val -> IO Tm
 rename pren t = case force t of
 
-  -- rename some
+
   VFlex m' sp -> do
 
-    case occ pren of  -- are we doing meta occurs check?
+    case occ pren of
+
+      -- no occurs check
       Nothing -> do
         (t, _, _) <- pruneVFlex pren m' sp
         pure t
 
+      -- occurs check
       Just m  -> case compareMetas m m' of
-        EQ ->
-          throwIO UnifyError     -- occurs check
 
-        LT -> do            -- to-be-solved meta is earlier in the context
-                            -- I have to move m' before m
+        EQ ->
+          throwIO UnifyError -- occurs check
+
+        LT -> do            -- m' is out of scope, we have to strengthen it
           (t, m', mty') <- pruneVFlex pren m' sp
           mty' <- rename (PRen (Just m) 0 0 mempty) mty'
           strengthenMeta m m' (eval [] mty')
           pure t
 
-        GT -> do            -- to-be-solved meta already has m' in scope
+        GT -> do            -- m' is in scope
           (t, _, _) <- pruneVFlex pren m' sp
           pure t
 
-
   VRigid (Lvl x) sp -> case IM.lookup x (ren pren) of
-    Nothing -> throwIO UnifyError                             -- scope error ("escaping variable" error)
+    Nothing -> throwIO UnifyError  -- scope error ("escaping variable" error)
     Just x' -> renameSp pren (Var $ lvl2Ix (dom pren) x') sp
 
   VLam x i t  -> Lam x i <$> rename (lift pren) (t $$ VVar (cod pren))
@@ -166,17 +162,23 @@ lams l a t = go a (0 :: Lvl) where
     VPi x i a b   -> Lam x i $ go (b $$ VVar l') (l' + 1)
     _             -> impossible
 
-solve :: Dbg => Lvl -> MetaVar -> Spine -> Val -> IO ()
+-- | Solve (Γ ⊢ m spine =? rhs)
+solve :: Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = do
   pren <- invert gamma sp
   solveWithPRen m pren rhs
 
+-- | Solve m given the result of inversion on a spine.
 solveWithPRen :: MetaVar -> (PartialRenaming, Maybe Pruning) -> Val -> IO ()
 solveWithPRen m (pren, pruneNonlinear) rhs = do
+
   (mlink, mty) <- readMeta m >>= \case
     Unsolved mlink a -> pure (mlink, a)
     _                -> impossible
 
+  -- if the spine was non-linear, we check that the non-linear arguments
+  -- can be pruned from the meta type (i.e. that the pruned solution will
+  -- be well-typed)
   case pruneNonlinear of
     Nothing -> pure ()
     Just pr -> () <$ pruneTy (revPruning pr) mty
@@ -185,7 +187,7 @@ solveWithPRen m (pren, pruneNonlinear) rhs = do
   let solution = eval [] $ lams (dom pren) mty rhs
   modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
 
-unifySp :: Dbg => Lvl -> Spine -> Spine -> IO ()
+unifySp :: Lvl -> Spine -> Spine -> IO ()
 unifySp l sp sp' = case (sp, sp') of
   ([]          , []            ) -> pure ()
 
@@ -194,6 +196,8 @@ unifySp l sp sp' = case (sp, sp') of
   (sp :> (t, _), sp' :> (t', _)) -> unifySp l sp sp' >> unify l t t'
   _                              -> throwIO UnifyError -- rigid mismatch error
 
+
+-- | Solve (Γ ⊢ m spine =? m' spine').
 flexFlex :: Lvl -> MetaVar -> Spine -> MetaVar -> Spine -> IO ()
 flexFlex gamma m sp m' sp'
 
@@ -209,6 +213,11 @@ flexFlex gamma m sp m' sp' =
     Right pren      -> solveWithPRen m pren (VFlex m' sp')
 
 
+-- | Try to solve the problem (Γ ⊢ m spine =? m spine') by intersection.
+--   If spine and spine are both renamings, but different, then
+--   we prune all arguments from m which differ in spine and spine'.
+--
+--   If some of spine/spine' are not renamings, we fall back to simple unification.
 intersect :: Lvl -> MetaVar -> Spine -> Spine -> IO ()
 intersect l m sp sp' = do
 
@@ -224,7 +233,7 @@ intersect l m sp sp' = do
     Just pr -> () <$ pruneMeta pr m
 
 
-unify :: Dbg => Lvl -> Val -> Val -> IO ()
+unify :: Lvl -> Val -> Val -> IO ()
 unify l t u = case (force t, force u) of
   (VU         , VU             ) -> pure ()
   (VPi x i a b, VPi x' i' a' b') | i == i' -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)

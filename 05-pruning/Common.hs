@@ -13,10 +13,10 @@ import GHC.Stack
 import Debug.Trace
 import Data.Coerce
 
+type Dbg = HasCallStack
+
 impossible :: Dbg => a
 impossible = error "impossible"
-
-type Dbg = HasCallStack
 
 type Name = String
 
@@ -38,7 +38,8 @@ newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int
 
 newtype MetaVar = MetaVar {unMetaVar :: Int} deriving (Eq, Show, Num) via Int
 
--- Snoc
+
+-- Snoc lists
 --------------------------------------------------------------------------------
 
 infixl 4 :>

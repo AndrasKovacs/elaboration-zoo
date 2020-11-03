@@ -17,21 +17,7 @@ import Value
 
 import qualified Presyntax as P
 
-
--- Elaboration
 --------------------------------------------------------------------------------
-
--- We convert type in context to a closed iterated Pi type
--- x : A, y : B ⊢ C
--- ∙ ⊢ (x : A)(y : B) → C
-
--- check (λ x. t) with (x : A) → B
-
-closeTy :: Path -> Ty -> Ty
-closeTy mcl b = case mcl of
-  Here             -> b
-  Bind mcl x a     -> closeTy mcl (Pi x Expl a b)
-  Define mcl x a t -> closeTy mcl (Let x a t b)
 
 freshMeta :: Dbg => Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
@@ -147,7 +133,6 @@ infer cxt = \case
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt VU
         b@(Closure _ mb) <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
-        -- traceShowM (showVal cxt a, mb)
         unifyCatch cxt tty (VPi "x" i a b)
         pure (a, b)
 

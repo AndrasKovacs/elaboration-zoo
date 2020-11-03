@@ -76,7 +76,7 @@ section 3.4. in:
 
   http://www.cse.chalmers.se/~abela/unif-sigma-long.pdf
 
-We'll stick to the simple version.
+We stick to the simple version.
 
 
 #### Intersection & non-linear spines

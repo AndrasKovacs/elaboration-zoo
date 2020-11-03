@@ -13,8 +13,7 @@ Now it's typed and ordered by dependency. Hence, it can be viewed as an ordinary
 sequence of let-definitions.
 
 When every meta solution is in normal form, the ordering is not relevant in the
-elaboration output, since no meta solution refers to any other meta solutions (
-everything is unfolded in normal forms).
+elaboration output, since no meta solution refers to any other meta solutions (everything is unfolded in normal forms).
 
 However, it is a crucial optimization to allow meta solution in non-normal form.
 We don't support it in this package, but later we will. In this case, meta solutions

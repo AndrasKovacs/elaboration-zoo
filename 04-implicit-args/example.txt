@@ -1,19 +1,62 @@
 
 
-let id : {A} -> A -> A = \x. x;
+-- bracketed args are implicit, elaboration inserts implicit lambdas for them (if they're not
+-- already present)
+let id : {A : U} -> A -> A = \x. x;   -- elaborated to \{A} x. x
 
-let const : {A B} -> A -> B -> A
-    = \x y. x;
+-- implicit arg types can be omitted
+let const : {A B} -> A -> B -> A = \x y. x;
 
--- definition types can be omitted
-let constTy = {A B} → A → B → A;
+-- function arguments can be grouped:
+let group1 : {A B : U}(x y z : A) -> B -> B = \x y z b. b;
+let group2 : {A B}(x y z : A) -> B -> B = \x y z b. b;
 
 -- explicit id function used for annotation as in Idris
 let the : (A : _) -> A -> A = \_ x. x;
 
--- implicit application follows Agda convention.
-let namedArgTest = const {B = U} U;
-let namedArgTest2 = the constTy (λ x y. x) {B = U} U;
+-- implicit args can be explicitly given
+let argTest1 = const {U}{U} U;
+
+-- or can be given by name (names come from the function types)
+let argTest2 = const {B = U} U;  -- only give B, the second implicit arg
+
+-- likewise, implicit lambdas can be explicitly given
+let id2 : {A} -> A -> A = \{A} x. x;
+
+-- we can also bind only some implicit args, using named implicit lambdas
+let namedLam  : {A B C} -> A -> B -> C -> A = \{B = B} a b c. a; -- second arg in scope as B
+let namedLam2 : {A B C} -> A -> B -> C -> A = \{B = X} a b c. a; -- second arg in scope as X
+let namedLam2 : {A B C} -> A -> B -> C -> A = \{C = X} a b c. a; -- third arg in scope as X
+
+{-
+Implicit application insertion rules:
+
+  - In "t u", if t has type {x : A} -> B, we insert a fresh application as t {?a} u
+  - In "t {x = u}", we insert applications until we hit the "x" domain name. if t's type
+    has no such domain binder name, it's an error.
+  - In "t {u}", we do not insert applications
+  - Otherwise, given t,
+    - if t = \{x}. t, we don't insert
+    - otherwise if t has type {x : A} -> B, we insert a fresh application
+
+Implicit lambda insertion rules:
+
+  - We check t with {x : A} -> B
+    - if t is an implicit lambda or a named implicit lambda with name=x, we don't insert
+    - otherwise, we insert \{x}
+-}
+
+-- Here the output rhs is \{A}. id {A}. First, we insert \{A}, then we apply id to {?n},
+-- and ?n is solved to A a bit later.
+let insert : {A} -> A -> A = id;
+
+-- Here we don't insert, because rhs is already an implicit lambda. This gives us
+-- an ambiguous type, but if we had typed lambda binders, we could do \{A : U}(x
+-- : A). x, in which case we'd get the expected Agda-like elab output.
+let noinsert = \{A} x. x;
+
+
+--------------------------------------------------------------------------------
 
 -- bool
 let Bool : U

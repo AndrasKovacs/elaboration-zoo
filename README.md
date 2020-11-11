@@ -1,5 +1,7 @@
 # elaboration-zoo
 
+Here are some [video recordings](https://www.youtube.com/playlist?list=PL2ZpyLROj5FOt99f_KCxARvd1hDqKns5b) from a seminar, covering some of the packages here plus additional topics. 
+
 Work in progress. Each numbered directory contains a
 [stack](https://docs.haskellstack.org/en/stable/README/) package. In each
 directory, the `stack build` command builds the executable, `stack install`

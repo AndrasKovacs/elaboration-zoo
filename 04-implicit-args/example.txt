@@ -50,10 +50,12 @@ Implicit lambda insertion rules:
 -- and ?n is solved to A a bit later.
 let insert : {A} -> A -> A = id;
 
--- Here we don't insert, because rhs is already an implicit lambda. This gives us
--- an ambiguous type, but if we had typed lambda binders, we could do \{A : U}(x
--- : A). x, in which case we'd get the expected Agda-like elab output.
-let noinsert = \{A} x. x;
+-- Here we don't insert, because rhs is already an implicit lambda.
+let noinsert = \{A} x. the A x;
+
+-- Here we insert, because although we already have an implicit lambda, it is applied
+-- explicitly to something.
+let insert2 = (\{A} x. the A x) U;  -- (\{A} x. the A x) {U} U
 
 
 --------------------------------------------------------------------------------

@@ -1,0 +1,240 @@
+
+./Main.hs,121
+module Main Main1,2
+helpMsg helpMsg20,21
+mainWith mainWith27,28
+main main52,53
+main' main'56,57
+ex1 ex160,61
+
+./Cxt.hs,407
+data Cxt Cxt14,15
+data Cxt = Cxt Cxt14,15
+    env env15,16
+  , lvl lvl16,17
+  , path path17,18
+  , pruning pruning18,19
+  , srcNames srcNames19,20
+  , pos pos20,21
+names names23,24
+showVal showVal29,30
+showTm showTm33,34
+instance Show Show Cxt36,37
+  show show37,38
+emptyCxt emptyCxt39,40
+bind bind43,44
+newBinder newBinder54,55
+define define66,67
+closeVal closeVal76,77
+
+./Metacontext.hs,655
+module Metacontext Metacontext1,2
+data Link Link27,28
+data Link = Link Link27,28
+    prev prev28,29
+  , weight weight29,30
+  , next next30,31
+data MetaEntryMetaEntry33,34
+  = Solved Solved34,35
+  | Unsolved Unsolved35,36
+link link37,38
+modifyLink modifyLink41,42
+nextMetaVar nextMetaVar45,46
+greatestMeta greatestMeta52,53
+type MCxt MCxt56,57
+mcxt mcxt58,59
+readMeta readMeta62,63
+lookupMeta lookupMeta69,70
+compareMetas compareMetas74,75
+readLink readLink79,80
+updateLink updateLink87,88
+pushMeta pushMeta92,93
+strengthenMeta strengthenMeta119,120
+reassignWeights reassignWeights156,157
+reset reset164,165
+
+./Presyntax.hs,309
+module Presyntax Presyntax1,2
+data TmTm5,6
+  = Var Var6,7
+  | Lam Lam7,8
+  | App App8,9
+  | U U9,10
+  | Pi Pi10,11
+  | Let Let11,12
+  | Sg Sg12,13
+  | Pair Pair13,14
+  | Proj1 Proj114,15
+  | Proj2 Proj215,16
+  | ProjField ProjField16,17
+  | Hole Hole17,18
+  | SrcPos SrcPos18,19
+
+./Elaboration.hs,213
+module Elaboration Elaboration1,2
+freshMeta freshMeta21,22
+unifyCatch unifyCatch27,28
+insert' insert'34,35
+insert insert45,46
+insertUntilName insertUntilName52,53
+check check65,66
+infer infer94,95
+
+./Parser.hs,609
+type Parser Parser19,20
+ws ws21,22
+withPos withPos24,25
+lexeme lexeme27,28
+symbol symbol28,29
+char char29,30
+parens parens30,31
+braces braces31,32
+pArrow pArrow32,33
+pProd pProd33,34
+pBind pBind34,35
+keyword keyword36,37
+pIdent pIdent39,40
+pAtom pAtom46,47
+goProj goProj53,54
+pProjExp pProjExp63,64
+pArg pArg66,67
+pApp pApp71,72
+pLamBinder pLamBinder77,78
+pLam pLam83,84
+pSigmaExp pSigmaExp91,92
+pPiBinder pPiBinder104,105
+pPiExp pPiExp111,112
+pLet pLet129,130
+pTm pTm140,141
+pSrc pSrc143,144
+parseString parseString146,147
+parseStdin parseStdin155,156
+
+./Common.hs,517
+module Common Common1,2
+type Dbg Dbg15,16
+impossible impossible17,18
+type Name Name20,21
+data Icit Icit22,23
+data Icit = Impl Impl22,23
+data Icit = Impl | Expl Expl22,23
+icit icit24,25
+instance Show Show Icit28,29
+  show show29,30
+newtype Ix Ix33,34
+newtype Ix  = Ix {unIx unIx33,34
+newtype Lvl Lvl36,37
+newtype Lvl = Lvl {unLvl unLvl36,37
+newtype MetaVar MetaVar38,39
+newtype MetaVar = MetaVar {unMetaVar unMetaVar38,39
+pattern (:(46,47
+pattern xs xs47,48
+pattern xs :> :>47,48
+
+./Evaluation.hs,264
+module Evaluation Evaluation1,2
+($($$)9,10
+vApp vApp12,13
+vAppSp vAppSp19,20
+vMeta vMeta24,25
+vAppPruning vAppPruning29,30
+vVar vVar36,37
+eval eval41,42
+force force52,53
+lvl2Ix lvl2Ix57,58
+quoteSp quoteSp60,61
+quote quote65,66
+nf nf73,74
+
+./Errors.hs,422
+module Errors Errors1,2
+data UnifyError UnifyError12,13
+data UnifyError = UnifyErrorUnifyError12,13
+data ElabErrorElabError15,16
+  = NameNotInScope NameNotInScope16,17
+  | CantUnify CantUnify17,18
+  | InferNamedLamInferNamedLam18,19
+  | NoNamedImplicitArg NoNamedImplicitArg19,20
+  | IcitMismatch IcitMismatch20,21
+data Error Error23,24
+data Error = Error Error23,24
+displayError displayError26,27
+
+./Pretty.hs,209
+module Pretty Pretty1,2
+fresh fresh18,19
+atomp atomp24,25
+appp appp25,26
+pip pip26,27
+letp letp27,28
+par par31,32
+prettyTm prettyTm34,35
+showTm0 showTm090,91
+displayMetas displayMetas94,95
+
+./Syntax.hs,424
+module Syntax Syntax1,2
+type Ty Ty5,6
+type Pruning Pruning10,11
+newtype RevPruning RevPruning14,15
+revPruning revPruning16,17
+data PathPath20,21
+  = HereHere21,22
+  | Define Define22,23
+  | Bind Bind23,24
+closeTy closeTy30,31
+data TmTm36,37
+  = Var Var37,38
+  | Lam Lam38,39
+  | App App39,40
+  | AppPruning AppPruning40,41
+  | UU41,42
+  | Pi Pi42,43
+  | Let Let43,44
+  | Meta Meta44,45
+
+./Unification.hs,713
+module Unification Unification1,2
+data PartialRenaming PartialRenaming18,19
+data PartialRenaming = PRen PRen18,19
+    occ occ19,20
+  , dom dom20,21
+  , cod cod21,22
+  , ren ren22,23
+lift lift25,26
+skip skip29,30
+invert invert34,35
+pruneTy pruneTy52,53
+pruneMeta pruneMeta62,63
+data SpinePruneStatusSpinePruneStatus79,80
+  = OKRenaming OKRenaming80,81
+  | OKNonRenaming OKNonRenaming81,82
+  | NeedsPruning NeedsPruning82,83
+pruneVFlex pruneVFlex86,87
+renameSp renameSp112,113
+rename rename117,118
+lams lams156,157
+solve solve165,166
+solveWithPRen solveWithPRen171,172
+unifySp unifySp189,190
+flexFlex flexFlex200,201
+intersect intersect220,221
+unify unify235,236
+
+./Value.hs,369
+module Value Value1,2
+type Env Env6,7
+type Spine Spine7,8
+data Closure Closure8,9
+data Closure = Closure Closure8,9
+type VTy VTy9,10
+data ValVal11,12
+  = VFlex VFlex12,13
+  | VRigid VRigid13,14
+  | VLam VLam14,15
+  | VPi VPi15,16
+  | VUVU16,17
+pattern VVar VVar18,19
+pattern VVar x x19,20
+pattern VMeta VMeta21,22
+pattern VMeta m m22,23

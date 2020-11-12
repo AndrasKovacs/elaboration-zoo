@@ -1,5 +1,5 @@
 
-module Unification (unify) where
+module Unification (unify, freshMeta) where
 
 import Control.Monad
 import Control.Exception
@@ -12,6 +12,37 @@ import Evaluation
 import Metacontext
 import Syntax
 import Value
+import Cxt
+
+--------------------------------------------------------------------------------
+
+-- | Create a fresh meta with given type.
+freshMeta :: Cxt -> VTy -> IO Tm
+freshMeta cxt a = do
+  let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
+  m <- pushMeta closed
+  pure $ AppPruning (Meta m) (pruning cxt)
+
+-- | Create a fresh meta which is maximally expanded along Pi and Sg eta.
+freshExpandedMeta :: Cxt -> VTy -> IO Tm
+freshExpandedMeta cxt a = case force a of
+  VSg x a b -> do
+    t <- freshExpandedMeta cxt a
+    u <- freshExpandedMeta cxt (b $$ eval (env cxt) t)
+    pure (Pair t u)
+  VPi x i a b -> do
+    t <- freshExpandedMeta (bind cxt x a) (b $$ VVar (lvl cxt))
+    pure (Lam x i t)
+  a -> do
+    freshMeta cxt a
+
+etaExpandMeta :: MetaVar -> IO ()
+etaExpandMeta m = do
+  (link, a) <- case lookupMeta m of
+    Unsolved link a -> pure (link, a)
+    _               -> impossible
+  m' <- freshExpandedMeta (emptyCxt (initialPos "")) a
+  solveWithPRen m (PRen (Just m) 0 0 mempty, Nothing) (eval [] m')
 
 --------------------------------------------------------------------------------
 
@@ -31,7 +62,7 @@ skip :: PartialRenaming -> PartialRenaming
 skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
 -- | invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
---   Optionally returns a pruning of nonlinear spine entries, is there's any.
+--   Optionally returns a pruning of nonlinear spine entries, if there's any.
 invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
@@ -45,8 +76,9 @@ invert gamma sp = do
             True  -> pure (dom + 1, IM.delete x ren    , Nothing : pr, False   )
             False -> pure (dom + 1, IM.insert x dom ren, Just i  : pr, isLinear)
           _ -> throwIO UnifyError
-      go _ =
-        throwIO UnifyError
+      go SProj1{}     = throwIO SpineProjection
+      go SProj2{}     = throwIO SpineProjection
+      go SProjField{} = throwIO SpineProjection
 
   (dom, ren, pr, isLinear) <- go sp
   pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
@@ -171,9 +203,10 @@ lams l a t = go a (0 :: Lvl) where
 
 -- | Solve (Γ ⊢ m spine =? rhs)
 solve :: Lvl -> MetaVar -> Spine -> Val -> IO ()
-solve gamma m sp rhs = do
-  pren <- invert gamma sp
-  solveWithPRen m pren rhs
+solve gamma m sp rhs = try (invert gamma sp) >>= \case
+  Left SpineProjection -> etaExpandMeta m >> unify gamma (VFlex m sp) rhs
+  Left e               -> throwIO e
+  Right pren           -> solveWithPRen m pren rhs
 
 -- | Solve m given the result of inversion on a spine.
 solveWithPRen :: MetaVar -> (PartialRenaming, Maybe Pruning) -> Val -> IO ()
@@ -222,10 +255,9 @@ flexFlex gamma m sp m' sp'
 flexFlex gamma m sp m' sp' =
 
   -- It may be that only one of the two spines is invertible
-  try (invert gamma sp) >>= \case
-    Left UnifyError -> do {pren <- invert gamma sp'; solveWithPRen m' pren (VFlex m sp)}
-    Right pren      -> solveWithPRen m pren (VFlex m' sp')
-
+  try @UnifyError (invert gamma sp) >>= \case
+    Left _      -> do {pren <- invert gamma sp'; solveWithPRen m' pren (VFlex m sp)}
+    Right pren  -> solveWithPRen m pren (VFlex m' sp')
 
 -- | Try to solve the problem (Γ ⊢ m spine =? m spine') by intersection.
 --   If spine and spine' are both renamings, but different, then

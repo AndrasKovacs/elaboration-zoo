@@ -10,7 +10,6 @@ import Common
 import Cxt
 import Errors
 import Evaluation
-import Metacontext
 import Syntax
 import Unification
 import Value
@@ -18,12 +17,6 @@ import Value
 import qualified Presyntax as P
 
 --------------------------------------------------------------------------------
-
-freshMeta :: Cxt -> VTy -> IO Tm
-freshMeta cxt a = do
-  let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
-  m <- pushMeta closed
-  pure $ AppPruning (Meta m) (pruning cxt)
 
 unifyCatch :: Cxt -> Val -> Val -> IO ()
 unifyCatch cxt t t' =

@@ -1,6 +1,7 @@
 
 module Unification (unify, freshMeta) where
 
+import Prelude hiding (curry)
 import Control.Monad
 import Control.Exception
 import Data.IORef
@@ -13,6 +14,42 @@ import Metacontext
 import Syntax
 import Value
 import Cxt
+
+-- type Iso   = (Lvl, Lvl, Env, Env)
+-- type TyIso = (Val, Val)
+
+-- curryIso :: Iso -> Iso
+-- curryIso (l, l', f, g) =
+--   ( l + 1
+--   , l' + 2
+--   , (f :> vProj1 (VVar l) :> vProj2 (VVar l))
+--   , (g :> VPair (VVar l') (VVar (l' + 1))))
+
+-- iso1 :: Iso -> Lvl
+-- iso1 (l, _, _, _) = l
+
+-- iso2 :: Iso -> Lvl
+-- iso2 (_, l', _, _) = l'
+
+-- -- curry :: VTy -> VTy
+-- -- curry (VPi x i (VSg y a b) c) =
+-- --   VPi x i a \a -> curry (VPi y i b \b -> c $$ VPair a b)
+-- --      hyp : Π B C → D
+-- --           Π A
+-- -- curry (VPi x i a b) =
+-- --   VPi x i a \a -> curry (b $$ a)
+-- -- curry a = a
+
+-- curry :: Iso -> VTy -> VTy
+-- curry iso (force -> VPi x i (force -> VSg y a b) c) =
+--   let foo = curry (curryIso iso) (VPi y i (b $$ VVar (iso1 iso)) _)
+--   in _
+--   -- VPi x i a $ curry _ _
+--   -- VPi x i a \a -> curry (curryIso iso) (VPi y i b \b -> c $$ VPair a b)
+
+--   -- case curry (curryIso iso) (VPi "b" i (b $$ VVar (iso1 iso)) \b -> c $$ () of
+--   --   _ -> _
+
 
 --------------------------------------------------------------------------------
 

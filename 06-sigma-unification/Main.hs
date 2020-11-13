@@ -126,10 +126,13 @@ ex2 = main' "elab" $ unlines [
   "let Id : {C} → Functor C C",
   "  = λ {C}. (λ x. x, λ f. f, tt) ;",
 
-  "let Id : {C} → Functor C C = Id;",  -- Functor injectivity!
+  "let Id : {C} → Functor C C = Id;",  -- unsolved components!
 
   "let Comp : {C D E} → Functor D E → Functor C D → Functor C E",
   "  = λ {C}{D}{E} F G. (λ i. F.Obj (G.Obj i), λ f. F.Mor (G.Mor f), tt);",
+
+  -- "let Comp : {C D E} → Functor D E → Functor C D → Functor C E",
+  -- "  = λ F G. Comp F G;",              -- Functor injectivity!
 
   -- "let m : U → U × U = _;",
   -- "let test = λ x. the (Eq (m x).₁ (m x).₁) refl;",

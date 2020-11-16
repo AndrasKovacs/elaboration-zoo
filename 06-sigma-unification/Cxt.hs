@@ -75,4 +75,4 @@ define (Cxt env l path pr ns pos) x ~t ~vt ~a ~va  =
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
 closeVal :: Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)
+closeVal cxt t = Close (env cxt) (quote (lvl cxt + 1) t)

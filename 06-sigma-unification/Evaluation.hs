@@ -9,7 +9,8 @@ import Value
 
 infixl 8 $$
 ($$) :: Closure -> Val -> Val
-($$) (Closure env t) ~u = eval (env :> u) t
+($$) (Close env t) ~u = eval (env :> u) t
+($$) (Fun t)       ~u = t u
 
 vApp :: Val -> Val -> Icit -> Val
 vApp t ~u i = case t of
@@ -69,13 +70,13 @@ eval :: Env -> Tm -> Val
 eval env = \case
   Var x           -> vVar env x
   App t u i       -> vApp (eval env t) (eval env u) i
-  Lam x i t       -> VLam x i (Closure env t)
-  Pi x i a b      -> VPi x i (eval env a) (Closure env b)
+  Lam x i t       -> VLam x i (Close env t)
+  Pi x i a b      -> VPi x i (eval env a) (Close env b)
   Let _ _ t u     -> eval (env :> eval env t) u
   U               -> VU
   Meta m          -> vMeta m
   AppPruning t pr -> vAppPruning env (eval env t) pr
-  Sg x a b        -> VSg x (eval env a) (Closure env b)
+  Sg x a b        -> VSg x (eval env a) (Close env b)
   Pair t u        -> VPair (eval env t) (eval env u)
   Proj1 t         -> vProj1 (eval env t)
   Proj2 t         -> vProj2 (eval env t)

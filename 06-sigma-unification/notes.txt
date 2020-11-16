@@ -1,0 +1,186 @@
+
+-- topics: elaboration + unification with sigma types + questions about record (native vs. sugar on sigma, generativity)
+-- in elab-zoo : unification with sigma: 80% of unification extensions related to sigma, compared to Agda
+
+------------------------------------------------------------
+
+types: (x : A) × B         (x : A) × (y : B) × ....
+
+pairs: (t, u)              (t, u, v, u, ...)
+
+projections: t.1 or t.2  t.name
+
+   (named projection : sugar on iterated projections)
+
+let Cat = (Obj : U) × (Mor : Obj → Obj → U) × ...
+
+let foo : (C : Cat) → C.Obj → C.Obj → U;
+   = λ C. C.Mor
+
+-- in core syntax: named projection is primitive (because we want to print it back to users)
+-- named projection goes into a *right nested* sigma type
+
+-- C.Obj = C.1
+-- C.Mor = C.2.1
+
+previously: pattern unification
+
+  ?α spine = rhs
+  ?α [x, y, z, ....] = rhs             (only bound vars in spine)
+
+Now: spines also have projections:
+
+   data Spine = SNil | SApp Spine Val Icit | SProj1 Spine | SProj2 | SProjField Spine Name Int
+
+data Val =
+  VFlex  MetaVar Spine
+  VRigid Lvl     Spine
+
+-- what happens if projections are *not* in spines?
+
+data Val =
+  | VProj1 Val
+  | VProj2 Val
+
+-- (unification + forcing)
+-- we want access to the reason why computation is blocked
+-- + beta reduction of projection
+-- forcing : immediate access to blocking meta
+
+------------------------------------------------------------
+
+previously: pattern unification
+
+  ?α spine = rhs
+  ?α [x, y, z, ....] = rhs             (only bound vars in spine)
+
+(some work on extending pattern unif to projections/pairs)
+
+  ?0 (x.1) (y.1) =? (x.1 → y.1)   -- (projection of bound var is like a bound var)
+  ?0 := λ x y. x → y
+
+  ?0 (x, y) =? (x -> y)
+  ?0 := λ ab. ab.1 -> ab.2
+
+(not simpler probably, but possibly more efficient)
+
+
+(our approach : Agda solution, described in "Higher-order unification" (Abel/Pientka))
+
+solution: get rid of sigmas
+
+-- translation/model of core TT : eliminates all sigma types
+
+-- sigma in syntax --> telescope in metatheory
+
+f : A → B × C
+
+f₀ : A → B
+f₁ : A → C
+
+
+-- 1. thing: eta-expansion of metas
+?0 : A → B × C    -- eta-expansion of a meta (along Pi/sg eta)
+                  -- if type is not Pi/Sg : insert a fresh meta (extends the metacontext (meta-theoretic telescope))
+
+?1 : A → B = ?
+?2 : A → C = ?
+?0 : A → B × C := λ a. (?1 a, ?2 a)
+
+-- example in Agda:
+--  f : Top → A
+--  f _            -- no unification involving the _, the meta never gets solved!
+                   -- we use eta-expansion at some point
+                   -- (we can immediately eta-expand on fresh meta creation)
+
+-- when do we eta-expand?
+--   we expand if pattern unification fails on a projection in spine
+
+For example:
+
+  (?0 x y).1 = rhs
+
+After eta-expansion:   ?0 = λ x y. (?1 x y, ?2 x y)
+
+  ?1 x y = rhs
+
+2 new metas, only 1 is solved!
+
+  ?1 = λ x y. rhs
+
+(we can try to eta-expand unsolved metas)
+
+
+-- eta expansion is not the full solution: we can have projections and pairs inside spine
+--  (application in a spine which contains projection/pair)
+--------------------------------------------------------------------------------
+
+   ?0 (x, y)
+   ?0 (x.1.2) y
+
+we also want to get rid of these sigma-related things
+
+-- a bit more formally: 2 equivalences
+
+-- 1. (dependent) currying
+
+   ((x : (a : A) × B) → C) ~ ((a : A)(b : B) → C[x ↦ (a, b)])
+
+-- 2. type-theoretic axiom of choice:
+
+   ((a : A) → (b : B) × C) ~ (b : (a : A) → B) × ((a : A) → C [b ↦ b a])
+
+   (Skolemization : all existentials move to the top)
+   (lambda-lifting)
+
+rewriting left-to-right along these
+
+  A → B × C         --> (A → B) × (A → C)
+
+                   AC                          curry
+  (A → B × C) → D  -->  (A → B) × (A → C) → D   -->  (A → B) → (A → C) → D
+
+
+?0 : A × B → C
+?1 : A → B → C
+
+?0 (x, y)  -->  ?1 x y
+
+?0 : A × B → A → C
+?1 : A → B → A → C
+
+?0 x (x.1)  -->  ?1 x₀ x₁ x₁    (bound vars also get split up)
+
+
+?0 : A
+
+-- 1. transform the type to A' (sigma-eliminated version of A)
+-- 2. create fresh t : A' fully eta-expanded
+-- 3. solve ?0 : A with something
+--     need to convert/transport t : A' back to A
+--    ?0 := transport t
+
+
+-- formally :
+
+-- 1. only convert types, leave context alone
+   (A : Ty Γ) --> (A' : Ty Γ) × (A ~ A')
+
+-- 2. convert everything (add the following: (Γ, x : (a : A) × B) --> (Γ, a : A, b : B))
+-- (Γ : Con)    --> (Γ' : Con) × (iso-Γ : Γ ~ Γ')
+-- (A : Ty Γ)   --> (A' : Ty Γ') × (A ~(iso-Γ) A')
+-- (t : Tm Γ A) --> ....
+
+What I implemented: only convert types, only do currying
+
+   this works:
+   ?0 : A × B → C × D
+   --> (shallow currying)
+   ?1 : A → B → C
+   ?2 : A → B → D
+
+   does not work:
+
+   ?0 : (A → B × C) → D
+   -->
+   ?1 : (A → B) → (A → C) → D

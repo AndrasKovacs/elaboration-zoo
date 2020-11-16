@@ -14,41 +14,61 @@ import Metacontext
 import Syntax
 import Value
 import Cxt
+-- import Pretty
 
--- type Iso   = (Lvl, Lvl, Env, Env)
--- type TyIso = (Val, Val)
+-- Meta currying
+--------------------------------------------------------------------------------
 
--- curryIso :: Iso -> Iso
--- curryIso (l, l', f, g) =
---   ( l + 1
---   , l' + 2
---   , (f :> vProj1 (VVar l) :> vProj2 (VVar l))
---   , (g :> VPair (VVar l') (VVar (l' + 1))))
+-- curry : U -> U
+curry :: VTy -> VTy
+curry (force -> VPi x i (force -> VSg y a b) c) =
+  VPi y i a $ Fun \a -> curry $ VPi (x++"2") i (b $$ a) $ Fun \b -> c $$ VPair a b
 
--- iso1 :: Iso -> Lvl
--- iso1 (l, _, _, _) = l
+  -- homework: implement without Fun
+  -- curry ((x : (a : A) × B a) → C x) = (a : A) → curry ((b : B a) → C (a, b))
+curry (force -> a) =
+  a
 
--- iso2 :: Iso -> Lvl
--- iso2 (_, l', _, _) = l'
+-- What's the problem with AC?
+--   we need matching under a binder (general problem in HOAS)
+-- AC ((a : A) → (b : B a) × C a b) = ((b : (a : A) → B a) × ((a : A) → C a (b a)))
+-- case (b $$ VVar lvl) of
+--   VSg x a b -> .... closeVal ....
 
--- -- curry :: VTy -> VTy
--- -- curry (VPi x i (VSg y a b) c) =
--- --   VPi x i a \a -> curry (VPi y i b \b -> c $$ VPair a b)
--- --      hyp : Π B C → D
--- --           Π A
--- -- curry (VPi x i a b) =
--- --   VPi x i a \a -> curry (b $$ a)
--- -- curry a = a
+-- (related issue: NbE for cubical type theory)
+--    (cubical TT: some computation rules require closeVal)
+--    (Mörtberg et al : cubicallt : uses NbE only for normal values, and uses naive substitution for intervals)
 
--- curry :: Iso -> VTy -> VTy
--- curry iso (force -> VPi x i (force -> VSg y a b) c) =
---   let foo = curry (curryIso iso) (VPi y i (b $$ VVar (iso1 iso)) _)
---   in _
---   -- VPi x i a $ curry _ _
---   -- VPi x i a \a -> curry (curryIso iso) (VPi y i b \b -> c $$ VPair a b)
 
---   -- case curry (curryIso iso) (VPi "b" i (b $$ VVar (iso1 iso)) \b -> c $$ () of
---   --   _ -> _
+
+-- fromCurry : (A : U) → curry A → A
+fromCurry :: VTy -> Val -> Val
+fromCurry (force -> VPi x i (force -> VSg y a b) c) t =
+
+  -- t    : (a : A) → curry ((b : B a) → C (a, b))
+  -- goal : (ab : (a : A) × B a) → C ab
+
+  -- λ ab.
+  --    t ab.1 : curry ((b : B ab.1) → C (ab.1, b))
+  --    fromCurry ((b : B ab.1) → C (ab.1, b)) (t ab.1) : (b : B ab.1) → C (ab.1, b)
+  --    fromCurry ((b : B ab.1) → C (ab.1, b)) (t ab.1) ab.2 : C (ab.1, ab.2)
+
+  -- t ↦ λ ab. fromCurry ((b : B ab.1) → C (ab.1, b)) (t ab.1) ab.2
+
+  VLam x i $ Fun \ab ->
+    vApp (fromCurry (VPi (x++"2") i (b $$ vProj1 ab) $ Fun \b -> c $$ VPair (vProj1 ab) b)
+                    (vApp t (vProj1 ab) i))
+         (vProj2 ab)
+         i
+fromCurry (force -> a) t =
+  t
+
+-- -- test:
+-- vProd a b = VSg "_" a $ Fun \_ -> b
+-- vFun a b = VPi "_" Expl a $ Fun \_ -> b
+
+-- ty1 = VPi "AB" Expl (VSg "A" VU $ Fun \a -> a) $ Fun \ab -> vFun (vProj1 ab) (vProj1 ab)
+-- tm1 = VLam "A" Expl $ Fun \a -> VLam "x" Expl $ Fun \x -> VLam "y" Expl $ Fun \y -> x
 
 
 --------------------------------------------------------------------------------
@@ -78,8 +98,9 @@ etaExpandMeta m = do
   (link, a) <- case lookupMeta m of
     Unsolved link a -> pure (link, a)
     _               -> impossible
-  m' <- freshExpandedMeta (emptyCxt (initialPos "")) a
-  solveWithPRen m (PRen (Just m) 0 0 mempty, Nothing) (eval [] m')
+  let curried = curry a
+  m' <- freshExpandedMeta (emptyCxt (initialPos "")) curried
+  solveWithPRen m (PRen (Just m) 0 0 mempty, Nothing) (fromCurry a $ eval [] m')
 
 --------------------------------------------------------------------------------
 
@@ -112,10 +133,16 @@ invert gamma sp = do
           VVar (Lvl x) -> case IM.member x ren of
             True  -> pure (dom + 1, IM.delete x ren    , Nothing : pr, False   )
             False -> pure (dom + 1, IM.insert x dom ren, Just i  : pr, isLinear)
-          _ -> throwIO UnifyError
-      go SProj1{}     = throwIO SpineProjection
-      go SProj2{}     = throwIO SpineProjection
-      go SProjField{} = throwIO SpineProjection
+
+          VPair{}               -> throwIO NeedExpansion
+          -- VRigid _ SProj1{}     -> throwIO NeedExpansion
+          -- VRigid _ SProj2{}     -> throwIO NeedExpansion
+          -- VRigid _ SProjField{} -> throwIO NeedExpansion
+          _                     -> throwIO UnifyError
+
+      go SProj1{}     = throwIO NeedExpansion
+      go SProj2{}     = throwIO NeedExpansion
+      go SProjField{} = throwIO NeedExpansion
 
   (dom, ren, pr, isLinear) <- go sp
   pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
@@ -241,9 +268,9 @@ lams l a t = go a (0 :: Lvl) where
 -- | Solve (Γ ⊢ m spine =? rhs)
 solve :: Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = try (invert gamma sp) >>= \case
-  Left SpineProjection -> etaExpandMeta m >> unify gamma (VFlex m sp) rhs
-  Left e               -> throwIO e
-  Right pren           -> solveWithPRen m pren rhs
+  Left NeedExpansion -> etaExpandMeta m >> unify gamma (VFlex m sp) rhs
+  Left e             -> throwIO e
+  Right pren         -> solveWithPRen m pren rhs
 
 -- | Solve m given the result of inversion on a spine.
 solveWithPRen :: MetaVar -> (PartialRenaming, Maybe Pruning) -> Val -> IO ()
@@ -323,12 +350,15 @@ unify l t u = case (force t, force u) of
   (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp l sp sp'
   (VFlex m sp , VFlex m' sp'   ) | m == m' -> intersect l m sp sp'
   (VFlex m sp , VFlex m' sp'   )           -> flexFlex l m sp m' sp'
+
   (VLam _ _ t , VLam _ _ t'    ) -> unify (l + 1) (t $$ VVar l) (t' $$ VVar l)
   (t          , VLam _ i t'    ) -> unify (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)
   (VLam _ i t , t'             ) -> unify (l + 1) (t $$ VVar l) (vApp t' (VVar l) i)
+
   (VPair t u  , VPair t' u'    ) -> unify l t t' >> unify l u u'
   (VPair t u  , t'             ) -> unify l t (vProj1 t') >> unify l u (vProj2 t')
   (t          , VPair t' u'    ) -> unify l (vProj1 t) t' >> unify l (vProj2 t) u'
+
   (VFlex m sp , t'             ) -> solve l m sp t'
   (t          , VFlex m' sp'   ) -> solve l m' sp' t
   _                              -> throwIO UnifyError  -- rigid mismatch error

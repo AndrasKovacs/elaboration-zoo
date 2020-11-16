@@ -102,7 +102,7 @@ infer cxt = \case
 
   P.Lam x (Right i) t -> do
     a      <- eval (env cxt) <$> freshMeta cxt VU
-    (t, b) <- insert cxt $ infer (bind cxt x a) t
+    (t, b) <- insert cxt $ infer (bind cxt x a) t   -- t is extended context!  (b : Val)
     pure (Lam x i t, VPi x i a $ closeVal cxt b)
 
   P.Lam x Left{} t ->
@@ -130,7 +130,7 @@ infer cxt = \case
         pure (a, b)
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt VU
-        b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
+        b <- Close (env cxt) <$> freshMeta (bind cxt "x" a) VU
         unifyCatch cxt tty (VPi "x" i a b)
         pure (a, b)
 
@@ -158,44 +158,83 @@ infer cxt = \case
     b <- check (bind cxt x (eval (env cxt) a)) b VU
     pure (Sg x a b, VU)
 
+  -- -- dependent Sg inference only for Var first proj
+  -- P.Pair (P.Var x) u -> do
+  --   (t, a) <- infer cxt t
+  --   b <- Close (env cxt) <$> freshMeta (bind cxt "x" a) VU
+  --   u <- check cxt u (b $$ eval (env cxt) t)
+  --   pure (Pair t u, VSg "x" a b)
+
   -- only infer non-dependent Sg
   P.Pair t u -> do
     (t, a) <- infer cxt t
     (u, b) <- infer cxt u
-    pure (Pair t u, VSg "_" a (Closure (env cxt) (quote (lvl cxt + 1) b)))
+    pure (Pair t u, VSg "_" a $ Fun $ \_ -> b)
+
+  -- -- dependent Sg inference
+  -- P.Pair t u -> do
+  --   (t, a) <- infer cxt t
+  --   b <- Close (env cxt) <$> freshMeta (bind cxt "x" a) VU
+  --   u <- check cxt u (b $$ eval (env cxt) t)
+  --   pure (Pair t u, VSg "x" a b)
+
+  -- rarely works in practice:
+  -- ?0 t = rhs     (t is not a bound var --> pattern problem)
+  -- only way it can work:
+
+  -- (x, u)     where x is a bound var
+  -- b must be applied to a bound var
+
+  -- λ (n : Nat). (n, replicate n true)
+  --   replicate n true : Vec Bool n
+  --   ?β n =? Vec Bool n     (OK)
+
+  -- (with postponing could be sensible)
+
 
   P.Proj1 t -> do
     (t, tty) <- infer cxt t
+
+    -- ensure that t has type (Sg x a b)
     (a, b) <- case force tty of
       VSg x a b ->
         pure (a, b)
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt VU
-        b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
+        b <- Close (env cxt) <$> freshMeta (bind cxt "x" a) VU
         unifyCatch cxt tty (VSg "x" a b)
         pure (a, b)
+
     pure (Proj1 t, a)
 
   P.Proj2 t -> do
     (t, tty) <- infer cxt t
+
+    -- ensure tty = Sg x a b
     (a, b) <- case force tty of
       VSg x a b ->
         pure (a, b)
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt VU
-        b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a) VU
+        b <- Close (env cxt) <$> freshMeta (bind cxt "x" a) VU
         unifyCatch cxt tty (VSg "x" a b)
         pure (a, b)
+
     pure (Proj2 t, b $$ vProj1 (eval (env cxt) t))
 
   P.ProjField t x -> do
     (topT, topSg) <- infer cxt t
     let go :: Val -> VTy -> Int -> IO (Tm, VTy)
         go t sg n = case (force sg) of
+
           VSg x' a b
             | x == x'   -> pure (ProjField topT x n, a)
             | otherwise -> go (vProj2 t) (b $$ vProj1 t) (n + 1)
-          _  -> throwIO $ Error cxt $ NoSuchField x (quote (lvl cxt) topSg)
+
+          -- I don't try anything, because I don't get any to compare my field name to!
+          -- (with postponing: delay inference until type is known)
+          _ ->
+            throwIO $ Error cxt $ NoSuchField x (quote (lvl cxt) topSg)
 
     go (eval (env cxt) topT) topSg 0
 

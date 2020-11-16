@@ -10,7 +10,7 @@ import Syntax
 
 --------------------------------------------------------------------------------
 
-data UnifyError = UnifyError | SpineProjection
+data UnifyError = UnifyError | NeedExpansion
   deriving (Show, Exception)
 
 data ElabError

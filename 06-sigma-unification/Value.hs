@@ -20,8 +20,8 @@ spineLen = go 0 where
   go acc (SProjField sp _ _) = go (acc + 1) sp
 
 type Env     = [Val]
-data Closure = Closure Env Tm
-type VTy     = Val
+data Closure = Close Env Tm | Fun (Val -> Val)     -- first-order closure: Close | HOAS closure: Fun
+type VTy     = Val                                 -- currying convenient + efficient with HOAS
 
 data Val
   = VFlex MetaVar Spine

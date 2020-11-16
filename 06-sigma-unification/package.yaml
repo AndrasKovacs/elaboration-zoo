@@ -12,6 +12,7 @@ description:         "Small implementations of elaborators for type theories, wi
 
 default-extensions:
 - BangPatterns
+- BlockArguments
 - ConstraintKinds
 - DeriveAnyClass
 - DerivingVia

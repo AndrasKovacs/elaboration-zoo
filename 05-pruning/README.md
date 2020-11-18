@@ -85,7 +85,7 @@ We add two extra use-cases of pruning.
 
 - Intersection: when solving `m spine =? m spine'`, if `spine` and `spine'`
   are both renamings, we prune all arguments from `m` which differ in the spines.
-  For example, `m x y z =? m z x x` succeeds with `m := λ x y z. m' y` if the
+  For example, `m x y z =? m z y y` succeeds with `m := λ x y z. m' y` if the
   pruning is well-typed.
 - Non-linear spines. When solving `m spine =? rhs`, if `spine` is non-linear, but
   `rhs` does not depend on non-linear vars, and those vars can be pruned from `m`,

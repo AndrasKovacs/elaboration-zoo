@@ -62,7 +62,10 @@ check cxt t a = case (t, force a) of
     check (cxt {pos = coerce pos}) t a
 
   -- If the icitness of the lambda matches the Pi type, check as usual
-  (P.Lam x i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
+  (P.Lam x ann i t, VPi x' i' a b) | either (\x -> x == x' && i' == Impl) (==i') i -> do
+    case ann of
+      Nothing  -> pure ()
+      Just ann -> do {ann <- check cxt ann VU; unifyCatch cxt (eval (env cxt) ann) a}
     Lam x i' <$> check (bind cxt x a) t (b $$ VVar (lvl cxt))
 
   -- Otherwise if Pi is implicit, insert a new implicit lambda
@@ -100,12 +103,14 @@ infer cxt = \case
       Just (x', a) -> pure (Var (lvl2Ix (lvl cxt) x'), a)
       Nothing      -> throwIO $ Error cxt $ NameNotInScope x
 
-  P.Lam x (Right i) t -> do
-    a      <- eval (env cxt) <$> freshMeta cxt VU
+  P.Lam x ann (Right i) t -> do
+    a <- case ann of
+      Just ann -> eval (env cxt) <$> check cxt ann VU
+      Nothing  -> eval (env cxt) <$> freshMeta cxt VU
     (t, b) <- insert cxt $ infer (bind cxt x a) t   -- t is extended context!  (b : Val)
     pure (Lam x i t, VPi x i a $ closeVal cxt b)
 
-  P.Lam x Left{} t ->
+  P.Lam x ann Left{} t ->
     throwIO $ Error cxt $ InferNamedLam
 
   P.App t u i -> do

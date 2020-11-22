@@ -92,11 +92,12 @@ pSigmaExp = do
       b <- pSigmaExp
       pure $ Sg x a b
 
-pLamBinder :: Parser (Name, Either Name Icit)
+pLamBinder :: Parser (Name, Maybe Tm, Either Name Icit)
 pLamBinder =
-      ((,Right Expl) <$> pBind)
-  <|> try ((,Right Impl) <$> braces pBind)
-  <|> braces (do {x <- pIdent; char '='; y <- pBind; pure (y, Left x)})
+      parens ((,,Right Expl) <$> pBind <*> optional (char ':' *> pTm))
+  <|> ((,Nothing,Right Expl) <$> pBind)
+  <|> try ((,,Right Impl) <$> (char '{' *> pBind) <*> (optional (char ':' *> pTm) <* char '}'))
+  <|> braces (do {x <- pIdent; char '='; y <- pBind; ann <- optional (char ':' *> pTm); pure (y, ann, Left x)})
 
 pLam :: Parser Tm
 pLam = do
@@ -104,7 +105,7 @@ pLam = do
   xs <- some pLamBinder
   char '.'
   t <- pLamLet
-  pure $ foldr (uncurry Lam) t xs
+  pure $ foldr (\(x, ann, ni) u -> Lam x ann ni u) t xs
 
 pPiBinder :: Parser ([Name], Tm, Icit)
 pPiBinder =
@@ -125,7 +126,8 @@ pPiExp = do
       case bs of
         [([x], a, Expl)] ->
               (Pi x Expl a <$> (pArrow *> pPiExp))
-          <|> (Sg x a <$> (pProd *> pSigmaExp))
+          <|> (do dom <- Sg x a <$> (pProd *> pSigmaExp)
+                  (Pi "_" Expl dom <$> (pArrow *> pPiExp)) <|> pure dom)
 
         dom -> do
           pArrow

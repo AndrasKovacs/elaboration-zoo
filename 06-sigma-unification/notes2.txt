@@ -1,0 +1,365 @@
+
+Followup on unification with sigma  (higher-order unification paper (Abel/Pientka))
+
+  Δ ⊢ α : A
+  Γ ⊢ rhs : A[sp]
+  sp : Sub Γ Δ        -- substitution from Γ to Δ
+  Γ ⊢ α[sp] =? rhs
+
+Previously:
+
+  definitional isomorphisms:
+
+    1. Axiom of choice / Skolemization
+       AC : ((a : A) → (b : B a) × C a b) ~ ((b : (a : A) → B a) × ((a : A) → C a (b a)))
+    2. Currying:
+       curry : ((ab : (a : A) → B a) → C ab) ~ ((a : A)(b : B a) → C (a, b))
+    3. Currying in context:
+       (Γ, ab : (a : A) × B a) ~ (Γ, a : A, b : B a)
+
+    (+ flipping : (A → B → C) ~ (B → A → C))
+
+  def. iso:
+     f : A → B
+     g : B → A
+     f ∘ g =(def) id
+     g ∘ f =(def) id
+
+
+  Σ-eliminate A --> A'
+              Γ --> Γ'
+	      Δ --> Δ'
+
+  Γ' ⊢ αᵢ[sp'] =? rhs'      -- Σ removed from everywhere, top-level Σ is converted to multiple αᵢ
+
+In Agda:
+  - 2, 3, AC only for return types of metas, not for arg types
+
+Examples:
+
+1. Context currying
+
+    Γ₀, x : (a : A) × B a, Γ₁ ⊢ x : (a : A) × B a    -- x is a var in Γ
+
+    α (x.1) =? Bool
+
+    -- curried context: Γ₀, x₁ : A, x₂ : B x₁, Γ₁    (+ substitution witnessing currying iso)
+
+    -- η-expansion of x : [x ↦ (x₁, x₂)]
+
+    α x₁ =? Bool        -- pattern problem
+    α := λ x₁. Bool
+
+2. Eta-expansion of α (mix of curry/AC only in the return type of α)
+
+   α : (a : A) × B a     -- top-level Σ type --> expand to pair of metas
+                         -- Σ in metacontext becomes twice-extended metacontext
+   α₁ : A
+   α₂ : B α₁
+
+   α.1 =? Bool
+
+   α₁ =? Bool
+   α₁ := Bool
+
+3. Eta-expansion (2)
+
+   α : A → (b : B) × C b   -- convert α's type with AC  -->  curry metacontext
+
+   (α x).1 =? Bool         -- α ↦ λ a. (α₁ a, α₂ a)
+
+   -- expansion:
+   α₁ : A → B
+   α₂ : (a : A) → C (α₁ a)
+
+   ((λ a. (α₁ a, α₂ a)) x).1 =? Bool
+   α₁ x =? Bool
+   α₁ := λ x. Bool
+
+4. Currying a meta (argument)
+
+   α : A × B → A
+
+   α (x, y) =? x
+
+   α' : A → B → A
+   α ↦ λ ab. α' ab.1 ab.2
+
+   α' x y =? x
+   α' := λ x y. x
+
+5. AC in local context
+
+   Γ ⊢ f : A → B × C
+
+   α (λ x. (f x).1) =? Bool
+
+   in Γ' I have
+     f₁ : A → B
+     f₂ : A → C
+
+   f ↦ λ x. (f₁ x, f₂ x)
+
+   α (λ x. f₁ x) =? Bool     -- eta-reduction
+   α f₁          =? Bool
+   α := λ f₁. Bool
+
+6. AC in meta argument type
+
+   α : (A → B × C) → D
+
+   Γ ⊢ f : A → B
+   Γ ⊢ g : A → C
+
+   α (λ x. (f x, g x)) =? Bool
+
+   -- AC
+   α' : (A → B) × (A → C) → D
+   -- curry
+   α' : (A → B) → (A → C) → D
+
+   α' (λ x. f x) (λ x. g x) =? Bool   -- eta-reduction
+   α' f g =? Bool
+   α' := λ f g. Bool
+
++ Pruning with Σ-elimination
+
+  x, y bound vars in Γ
+
+  α x =? (Bool → β x y)
+
+  -- pruning: removing y dependency from β
+
+  β  : A → B → Set
+  β' : A → Set
+
+  β := λ a b. β' a       -- we have to check pruned solutions are well-typed!
+
+  -- problem becomes:
+
+  α x =? (Bool → β' x)
+  α := λ x. (Bool → β' x)
+
+  -- Σ in pruning?
+  α x =? (Bool → β (x, y))    -- eliminate Σ from β
+
+  α x =? (Bool → β' x y)      -- currying
+
+  α x =? (Bool → β'' x)       -- pruning
+
+
+--------------------------------------------------------------------------------
+
+-- Problems with above solution:
+
+  - performance:
+    - lots of new metas
+    - compute all the new types of new metas
+    - transport everything along isos between old/new meta types
+    - not obvious how to minmize amount of work done
+    - we have to do eta-reduction (not efficient in the presence of Σ types)
+        (t.1, t.2) --> t   (requires conversion checking)
+	(λ x. f x) --> f   (this can be done OK)
+
+  - flipping is not supported ( by multiple flip we can permute arguments of local functions )
+
+     Γ ⊢ f : A → B → C
+     α (λ x y. f y x) =? Bool
+
+     (not solvable: α (λ x y z. f y x) =? Bool)
+
+     f' : B → A → C
+     f ↦ flip f'
+
+     α (λ x y. f' x y) =? Bool
+     α f' =? Bool
+     α := λ f'. Bool
+
+
+-- I have solution for all of above issues (not impl yet, partially formalized using CwF/categorical stuff)
+--    (TODO: pruning using this solution, non-linear spine handling)
+--------------------------------------------------------------------------------
+
+- Duggan : unification with extended patterns (handling product types directly)
+
+  α (x, y) =? x
+  α := λ xy. xy.1
+
+  α x.1 =? x.1           -- Duggan: projected expression become "primitive"
+  α := λ x. x
+
+
+-- idea
+--------------------------------------------------------------------------------
+
+   Δ ⊢ α : A
+
+   (t₁, t₂, ... tᵢ) : Sub Γ Δ     -- (sp : Sub Γ Δ) --> inversion --> Sub Δ Γ
+
+   Γ ⊢ α t₁ t₂ ... tᵢ =? rhs
+
+   -- eventual solution:
+
+   (0, 1, 2, ..., i) : Sub Δ Δ    (identity substitution)
+
+
+          a b c ... _. rhs[sp⁻¹]
+   α := λ 0 1 2 ... i. rhs[sp⁻¹]
+
+   -- illustration: x, y, z, f, g : vars in Γ
+   --               a, b, c, d    : vars in Δ
+
+   α : Δ → A
+   α : (a : A, b : B, c : C, ...) → Result
+
+      a   b  ...
+   α (t₁, t₂ ... tᵢ) =? rhs
+
+   -- "unify" t₁ with a   --> return partial substitution from Δ to Γ
+   -- "unify" t₂ with b   --> return partial substitution from Δ to Γ
+   -- ("unifying" sp with the identity substitution id : Sub Δ Δ)
+   -- (merge all partial substitutions)
+
+Examples:
+
+1. basic pattern
+
+     a b         α := λ a b. ?
+   α x y =? x
+
+   x =? a         [x ↦ a] (maps x, undefined on every other variable)
+   y =? b         [y ↦ b]
+
+   sp⁻¹ = [x ↦ a, y ↦ b]
+
+   rhs[sp⁻¹] = x[x ↦ a, y ↦ b] = a
+
+   α := λ a b. a
+
+2. non-linear spine:
+
+     a b
+   α x x =? x                   -- α := λ x _. x
+                                -- α := λ _ x. x
+
+   x =? a  --> [x ↦ a]
+   x =? b  --> [x ↦ b]
+
+   [x ↦ a] cannot be merged with [x ↦ b]
+       (disagree on the value of x)
+
+      (example for merging partial subs:  )
+
+          [x ↦ true]   : PSub ∙ (x : Bool, y : Bool)
+          [y ↦ false]  : PSub ∙ (x : Bool, y : Bool)
+
+          (categorical product of [x ↦ true] and [y ↦ true]:
+	     [x ↦ true] × [y ↦ true] := [x ↦ true, y ↦ true])
+
+          PSub Γ Δ  :  partially ordered by definedness
+
+3. eta-conversion example
+
+         a
+   α (λ x. f x) =? f
+
+    λ x. f x =? a        (lhs in Γ,  rhs in Δ)
+    ∀ x. f x =? a x
+      f x =? a x
+      f ↦ λ x. a x
+
+       [f ↦ λ x. a x]
+
+   α := λ a. λ x. a x   OK
+
+5. currying example
+
+       a
+   α (x, y) =? x
+
+    (x, y) =? a
+       x =? a.1
+         [x ↦ a.1]
+       y =? a.2
+         [y ↦ a. 2]
+       merge: [x ↦ a.1, y ↦ a.2]
+
+   α := λ a. a.1
+
+  (solution didn't create any new types/metas, didn't use currying)
+
+6. currying in local scope
+
+   Γ ⊢ x : A × B
+
+      a
+   α x.1 =? x.1
+
+    x.1 =? a          -- I also have to use currying
+                      -- (only thing I have do to is eta-expansion for metas + local variables)
+		      -- we don't only return (sp⁻¹ : PSub Δ Γ') but also "expanding substitution" (exp : Sub Γ' Γ)
+		      --    after we finish processing the spine: exp ∘ sp⁻¹ : PSub Δ Γ
+		                                              rhs[exp ∘ sp⁻¹] in solution
+
+   (we maintain the sp⁻¹, and also exp substitution)
+
+     - add [x ↦ (x₁, x₂)] to exp
+
+    x₁ =? a
+
+     - add [x₁ ↦ a] to sp⁻¹
+
+   exp ∘ sp⁻¹ = [x ↦ (x₁, x₂)] ∘ [x₁ ↦ a] = [x ↦ (a, x₂)]
+
+   rhs[exp ∘ sp⁻¹] = a
+
+   α := λ a. a
+
+   -- direct solution without computing any extra type
+
+
+7. flipping
+
+          a
+  α (λ x y. f y x) =? f
+
+    λ x y. f y x =? a
+       f y x =? a x y
+       [f ↦ λ y x. a x y]
+
+  α := λ f. flip f
+
+
+8. More involved example
+
+   Γ ⊢ f : A → B × C
+
+           a
+   α (λ x. (f x).1) =? ((λ x. (f x).1), true)
+
+    λ x. (f x).1 =? a
+         (f x).1 =? a x         -- eta-expand f (does not require computing types)
+
+       add [f ↦ λ x. (f₁ x, f₂ x)] to exp
+
+         f₁ x =? a x
+	 [f₁ ↦ λ x. a x]
+
+  [f ↦ λ x. (f₁ x, f₂ x)] ∘ [f₁ ↦ λ x. a x] = [f ↦ λ x. (a x, f₂ x)]
+
+  ((λ x. (f x).1), true)[f ↦ λ x. (a x, f₂ x)] = ((λ x. a x), true)
+
+  α := λ a. ((λ x. a x), true)   OK
+
+
+(usual unification already handles η for Σ and Π efficiently (purely syntax-directed way))
+
+  (flipping is not a directed iso, no canonical direction!)
+
+  (formalization of unification in CwF-s)
+     - substitutions, renaming, embeddings,
+     - epi, mono, iso, factorizations
+     - cospans, pushouts of embeddings, partial substitutions := cospan (composition := pushout)
+     -  definedness of PSub (poset-enriched category)
+     -  partial inverses of terms
+     -  (nice "recursive" pattern unification)

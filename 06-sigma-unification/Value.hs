@@ -11,6 +11,14 @@ data Spine
   | SProj2 Spine
   | SProjField Spine Name Int
 
+reverseSpine :: Spine -> Spine
+reverseSpine = go SNil where
+  go acc SNil                = acc
+  go acc (SApp sp t i)       = go (SApp acc t i) sp
+  go acc (SProj1 sp)         = go (SProj1 acc) sp
+  go acc (SProj2 sp)         = go (SProj2 acc) sp
+  go acc (SProjField sp x n) = go (SProjField acc x n) sp
+
 spineLen :: Spine -> Int
 spineLen = go 0 where
   go acc SNil                = acc

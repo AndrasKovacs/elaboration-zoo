@@ -126,7 +126,7 @@ ex2 = main' "elab" $ unlines [
   -- f C.Obj C.Obj  ~ f (C.Obj) (C.Obj)
   -- f x.1 y.1.2    ~ f (x.1) (y.1.2)
 
-  ?0 C (Obj i) (Obj j) =? C.Mor (Obj i) (Obj j)
+  -- ?0 C (Obj i) (Obj j) =? C.Mor (Obj i) (Obj j)
 
   "let Id : {C} → Functor C C",
   "  = λ {C}. (λ x. x, λ f. f, tt) ;",
@@ -184,7 +184,36 @@ ex3 = main' "elab" $ unlines [
   "-- inline type annotation",
   "let the : (A : U) → A → A = λ _ x. x;",
 
-  "let m : U -> U * U = _;",
-  "λ A. the (Eq (m A).₁ A) (refl {_}{A})"
+  "let flip : {A B : U}{C : A → B → U} → ((a : A)(b : B) → C a b) → (b : B)(a : A) → C a b",
+  "  = λ f x y. f y x;",
+
+  "let curry : {A : U}{B : A → U}{C : (a : A) * B a → U}",
+  "            → ((ab : (a : A) * B a) → C ab) → (a : A)(b : B a) → C (a, b)",
+  "  = λ f a b. f (a, b);",
+
+  "let uncurry : {A : U}{B : A → U}{C : (a : A) * B a → U}",
+  "              → ((a : A)(b : B a) → C (a, b)) → (ab : (a : A) * B a) → C ab",
+  "  = λ f ab. f ab.1 ab.2;",
+
+  -- "let m : U → U → (U → U → U) → U = _;",
+  -- "λ A B (C : U → U → U). the (Eq (m A B (flip C)) (C A B)) refl"
+
+  -- "let m : U * U * U → U * U * U = _;",
+  -- "λ A B C. the (Eq (m (A, B, C)) (A, B, C)) refl"
+
+
+  -- "let m : (U → U → U) → (U → U → U) → U = _;",
+  -- "λ (F : U * U → U)(G : U * U → U). the (Eq (m (flip (curry F)) (curry G)) (F (U, U → U))) refl",
+
+
+  -- "let m : ((U → U → U) → U) → U = _;",
+  -- "λ (F : (U * U → U) → U). the (Eq (m (λ f. F (λ xy. f xy.1 xy.2))) U) refl"
+
+  -- "let m : (U → U → U) → U = _;",
+  -- "λ (f : U * U → U). the (Eq (m (curry f)) (f (U, U → U))) refl"
+
+  "let m : ((U * U → U) → U) → U = _;",
+  "λ (f : (U → U → U) → U). the (Eq (m (λ g. f (flip (curry g)))) (f (λ A B. A))) refl"
+
 
   ]

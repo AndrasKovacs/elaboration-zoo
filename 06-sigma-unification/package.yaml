@@ -18,14 +18,19 @@ default-extensions:
 - DerivingVia
 - EmptyCase
 - FlexibleContexts
+- FlexibleInstances
 - GeneralizedNewtypeDeriving
 - LambdaCase
 - OverloadedStrings
 - PatternSynonyms
 - ScopedTypeVariables
 - StandaloneDeriving
+- MultiParamTypeClasses
+- ScopedTypeVariables
 - Strict
 - TypeApplications
+- TemplateHaskell
+- FunctionalDependencies
 - TupleSections
 - ViewPatterns
 
@@ -40,6 +45,7 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - megaparsec
+- microlens-platform
 
 source-dirs: .
 

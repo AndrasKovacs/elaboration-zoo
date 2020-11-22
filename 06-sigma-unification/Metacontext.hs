@@ -70,6 +70,11 @@ readMeta m = do
 lookupMeta :: MetaVar -> MetaEntry
 lookupMeta = unsafeDupablePerformIO . readMeta
 
+lookupUnsolved :: MetaVar -> IO (Link, VTy)
+lookupUnsolved m = readMeta m >>= \case
+  Unsolved l a -> pure (l, a)
+  _            -> impossible
+
 -- It is sensible to compare solved metas as well, but in unification we only need comparison
 -- for unsolved metas, so we throw error as a sanity check otherwise.
 compareMetas :: MetaVar -> MetaVar -> Ordering

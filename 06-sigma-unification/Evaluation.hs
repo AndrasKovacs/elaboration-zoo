@@ -61,12 +61,12 @@ vAppPruning env ~v pr = case (env, pr) of
   (env :> t , pr :> Nothing) -> vAppPruning env v pr
   _                          -> impossible
 
-vVar :: Env -> Ix -> Val
+vVar :: Dbg => Env -> Ix -> Val
 vVar env x | unIx x < length env = env !! unIx x
 vVar env x = error $ "index out of env: "
                   ++ show ("env len"::String, length env, "ix"::String, x)
 
-eval :: Env -> Tm -> Val
+eval :: Dbg => Env -> Tm -> Val
 eval env = \case
   Var x           -> vVar env x
   App t u i       -> vApp (eval env t) (eval env u) i
@@ -82,7 +82,7 @@ eval env = \case
   Proj2 t         -> vProj2 (eval env t)
   ProjField t x n -> vProjField (eval env t) x n
 
-force :: Val -> Val
+force :: Dbg => Val -> Val
 force = \case
   VFlex m sp | Solved _ t _ <- lookupMeta m -> force (vAppSp t sp)
   t -> t

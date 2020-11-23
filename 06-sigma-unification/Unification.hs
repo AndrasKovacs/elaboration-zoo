@@ -2,12 +2,13 @@
 
 module Unification (unify, freshMeta) where
 
-import Prelude hiding (curry)
-import Control.Monad
 import Control.Exception
+import Control.Monad
+import Control.Monad.State.Strict hiding (lift)
 import Data.IORef
-import qualified Data.IntMap as IM
 import Lens.Micro.Platform
+import Prelude hiding (exp)
+import qualified Data.IntMap as IM
 
 import Common
 import Errors
@@ -20,30 +21,61 @@ import Pretty
 
 import Debug.Trace
 
--- | Partial substitution from Γ to Δ.
+-- | Partial substitution from Γ to Δ. It is factored into a total substitution
+--   from Δ' to Δ, and a partial substitution from Γ to Δ'. The total
+--   substitution is an *eta expansion* of zero or more variables in Δ. In Δ',
+--   the extra variables compared to Δ are *negative* levels. This allows us to
+--   use fresh variable convention to insert new expansions
+--   efficiently. However, these variables remain an internal implementation
+--   detail, externally, a PartialSub from Γ to Δ still uses strict de Bruijn
+--   convention.
 data PartialSub = PSub {
-    partialSubOcc :: Maybe MetaVar  -- optional meta for occurs check
-  , partialSubDom :: Lvl
-  , partialSubCod :: Lvl
-  , partialSubSub :: IM.IntMap Val}
+    partialSubOcc    :: Maybe MetaVar  -- optional meta for occurs check
+  , partialSubDom    :: Lvl            -- Γ
+  , partialSubCod    :: Lvl            -- Δ
+  , partialSubSub    :: IM.IntMap Val  -- Γ ~> Δ'
+  , partialSubFresh  :: Lvl            -- fresh (negative) level for expansion insertion
+  , partialSubExp    :: IM.IntMap Val  -- Δ' ~> Δ, eta expansion
+  }
+makeFields ''PartialSub
 
 lift :: PartialSub -> PartialSub
-lift (PSub occ dom cod sub) =
-  PSub occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) (VVar dom) sub)
+lift (PSub occ dom cod sub fresh exp) =
+  PSub occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) (VVar dom) sub) fresh exp
 
 skip :: PartialSub -> PartialSub
-skip (PSub occ dom cod sub) = PSub occ dom (cod + 1) sub
+skip (PSub occ dom cod sub fresh exp) = PSub occ dom (cod + 1) sub fresh exp
 
--- | Sparse substitution from Γ to Δ. If something is not in the IntMap, it's
---   assumed to be mapped to itself.
-data SparseSub = SparseSub {
-    sparseSubDom :: Lvl
-  , sparseSubCod :: Lvl
-  , sparseSubSub :: IM.IntMap Val
-  }
+forceWithExpansion :: PartialSub -> Val -> Val
+forceWithExpansion psub t = case force t of
+  VRigid x sp | Just v <- IM.lookup (coerce x) (psub^.exp) ->
+    forceWithExpansion psub (vAppSp v sp)
+  t -> t
 
-makeFields ''PartialSub
-makeFields ''SparseSub
+idEnv :: Lvl -> Env
+idEnv 0 = []
+idEnv l = idEnv (l - 1) :> VVar (l - 1)
+
+-- | Eta expand a codomain variable in a PartialSub.
+etaExpandVar :: Lvl -> Lvl -> Spine -> PartialSub -> PartialSub
+etaExpandVar gamma x sp psub = let
+
+  freshVar :: Pruning -> State PartialSub Tm
+  freshVar pr = do
+    x <- fresh <<%= subtract 1
+    pure $ AppPruning (Var (coerce x)) pr
+
+  go :: Pruning -> Spine -> State PartialSub Tm
+  go pr = \case
+    SNil              -> freshVar pr
+    SApp sp t i       -> Lam  "x" i <$> go (pr :> Just i) sp
+    SProj1 sp         -> Pair <$> go pr sp <*> freshVar pr
+    SProj2 sp         -> Pair <$> freshVar pr <*> go pr sp
+    SProjField sp _ 0 -> Pair <$> freshVar pr <*> go pr sp
+    SProjField sp x n -> Pair <$> go pr (SProjField sp x (n - 1)) <*> freshVar pr
+
+  in case runState (go (replicate (coerce gamma) Nothing) (reverseSpine sp)) psub of
+       (t, psub) -> psub & exp %~ IM.insert (coerce x) (eval (idEnv gamma) t)
 
 --------------------------------------------------------------------------------
 
@@ -75,7 +107,7 @@ etaExpandMeta m sp = do
         _                                -> impossible
 
   m' <- go (emptyCxt (initialPos "")) (reverseSpine sp) a
-  solveWithSub m (PSub (Just m) 0 0 mempty) (eval [] m')
+  solve' m (PSub (Just m) 0 0 mempty (-1) mempty) (eval [] m')
 
 solve :: Dbg => Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = do
@@ -83,11 +115,12 @@ solve gamma m sp rhs = do
   try @UnifyError (invertSp 0 gamma gamma 0 sp) >>= \case
     Left NeedExpansion -> etaExpandMeta m sp >> unify gamma (VFlex m sp) rhs
     Left e             -> throwIO e
-    Right psub         -> solveWithSub m psub rhs
+    Right psub         -> solve' m psub rhs
 
 -- | Solve m given the result of inversion on a spine.
-solveWithSub :: Dbg => MetaVar -> PartialSub -> Val -> IO ()
-solveWithSub m psub rhs = do
+solve' :: Dbg => MetaVar -> PartialSub -> Val -> IO ()
+solve' m psub rhs = do
+  traceShowM ("solve'"::String, m, IM.keys (psub^.sub), IM.keys (psub^.exp), (forceWithExpansion psub rhs))
   (mlink, mty) <- lookupUnsolved m
   rhs <- psubst (psub & occ .~ Just m) rhs
   let solution = eval [] $ lams (psub^.dom) mty rhs
@@ -102,7 +135,7 @@ psubstSp psub t = \case
   SProjField sp x n -> ProjField <$> psubstSp psub t sp <*> pure x <*> pure n
 
 psubst :: Dbg => PartialSub -> Val -> IO Tm
-psubst psub t = case force t of
+psubst psub t = case forceWithExpansion psub t of
   VFlex m' sp -> do
     case psub^.occ of
       Nothing ->
@@ -111,7 +144,7 @@ psubst psub t = case force t of
         EQ -> throwIO UnifyError
         LT -> do
           mty' <- case lookupMeta m' of Unsolved _ a -> pure a; _ -> impossible
-          mty' <- psubst (PSub (Just m) 0 0 mempty) mty'
+          mty' <- psubst (PSub (Just m) 0 0 mempty (-1) mempty) mty'
           strengthenMeta m m' (eval [] mty')
           psubstSp psub (Meta m') sp
         GT -> do
@@ -128,11 +161,7 @@ psubst psub t = case force t of
   VU          -> pure U
 
 invertVal :: Dbg => Lvl -> Lvl -> Lvl -> Val -> Spine -> PartialSub -> IO PartialSub
-invertVal gamma gammas gammap t rhsSp psub = go gammap t rhsSp psub where
-
-  idEnv :: Lvl -> Env
-  idEnv 0 = []
-  idEnv l = idEnv (l - 1) :> VVar (l - 1)
+invertVal gammau gammas gammap t rhsSp psub = go gammap t rhsSp psub where
 
   lams :: Spine -> Tm -> Tm
   lams SNil          t = t
@@ -140,33 +169,46 @@ invertVal gamma gammas gammap t rhsSp psub = go gammap t rhsSp psub where
   lams _             _ = impossible
 
   go :: Dbg => Lvl -> Val -> Spine -> PartialSub -> IO PartialSub
-  go gammap t rhsSp psub = case force t of
-    VRigid x sp | gamma <= x && x < gammas -> do
-      when (IM.member (coerce x) (psub^.sub)) $ throwIO UnifyError
-      spInv <- invertSp gammas gammap gammap (psub^.dom) sp `catch` \case
-                 NeedExpansion -> throwIO UnifyError
-                 e             -> throwIO e
-      rhs <- psubstSp spInv (Var (Ix (spineLen sp))) rhsSp
-      traceShowM ("invert param", x, psub^.dom, lams sp rhs)
-      pure $ psub & sub %~ IM.insert (coerce x) (eval (idEnv (psub^.dom)) (lams sp rhs))
-    VRigid x sp ->
-      throwIO UnifyError
+  go gammap t rhsSp psub = case forceWithExpansion psub t of
+
+    VRigid x sp -> do
+      -- x is not solvable
+      when ((0 <= x && x < gammau) || (gammas <= x && x < gammap)) $ throwIO UnifyError
+      -- x is nonlinear
+      when (IM.member (coerce x) (psub^.sub))                      $ throwIO UnifyError
+
+      try @UnifyError (invertSp gammas gammap gammap (psub^.dom) sp) >>= \case
+        Right spInv -> do
+          rhs <- psubstSp spInv (Var (Ix (spineLen sp))) rhsSp
+          traceShowM ("invert param", x, psub^.dom, lams sp rhs)
+          pure $ psub & sub %~ IM.insert (coerce x) (eval (idEnv (psub^.dom)) (lams sp rhs))
+        Left NeedExpansion -> do
+          traceShowM ("var expansion needed", quote gammap (VRigid x sp))
+          psub <- pure $ etaExpandVar gammap x sp psub
+          traceShowM ("var expanded", x, quote gammap $ forceWithExpansion psub (VRigid x SNil),
+                     quote gammap $ forceWithExpansion psub (VRigid x sp))
+          go gammap (VRigid x sp) rhsSp psub
+        Left e ->
+          throwIO e
+
     VPair t u -> do
       psub <- go gammap t (SProj1 rhsSp) psub
       go gammap u (SProj2 rhsSp) psub
+
     VLam x i t ->
       go (gammap + 1) (t $$ VVar gammap) (SApp rhsSp (VVar gammap) i) psub
+
     _ ->
       throwIO UnifyError
 
 invertSp :: Dbg => Lvl -> Lvl -> Lvl -> Lvl -> Spine -> IO PartialSub
-invertSp gamma gammas gammap delta sp = go sp where
+invertSp gammau gammas gammap delta sp = go sp where
   go :: Spine -> IO PartialSub
   go SNil =
-    pure (PSub Nothing delta gammas mempty)
+    pure (PSub Nothing delta gammas mempty (-1) mempty)
   go (SApp sp t i) = do
     spInv <- (dom +~ 1) <$> go sp
-    invertVal gamma gammas gammap t SNil spInv
+    invertVal gammau gammas gammap t SNil spInv
   go _ =
     throwIO NeedExpansion
 
@@ -209,9 +251,9 @@ flexFlex gamma m sp m' sp' =
       try @UnifyError (invertSp 0 gamma gamma 0 sp') >>= \case
         Left NeedExpansion -> etaExpandMeta m' sp' >> unify gamma (VFlex m sp) (VFlex m' sp')
         Left e             -> throwIO e
-        Right psub         -> solveWithSub m' psub (VFlex m sp)
+        Right psub         -> solve' m' psub (VFlex m sp)
     Right psub -> do
-      solveWithSub m psub (VFlex m' sp')
+      solve' m psub (VFlex m' sp')
 
 unify :: Dbg => Lvl -> Val -> Val -> IO ()
 unify l t u = case (force t, force u) of
@@ -220,7 +262,7 @@ unify l t u = case (force t, force u) of
   (VSg x a b  , VSg x' a' b'   )           -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)
   (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp l sp sp'
   (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp l sp sp' -- intersection
-  (VFlex m sp , VFlex m' sp'   )           -> flexFlex l m sp m' sp'
+  -- (VFlex m sp , VFlex m' sp'   )           -> flexFlex l m sp m' sp'
 
   (VLam _ _ t , VLam _ _ t'    ) -> unify (l + 1) (t $$ VVar l) (t' $$ VVar l)
   (t          , VLam _ i t'    ) -> unify (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)

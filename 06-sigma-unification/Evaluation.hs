@@ -62,6 +62,7 @@ vAppPruning env ~v pr = case (env, pr) of
   _                          -> impossible
 
 vVar :: Dbg => Env -> Ix -> Val
+vVar env x | unIx x < 0          = VVar (coerce x)  -- temporary fresh variable!
 vVar env x | unIx x < length env = env !! unIx x
 vVar env x = error $ "index out of env: "
                   ++ show ("env len"::String, length env, "ix"::String, x)
@@ -90,6 +91,10 @@ force = \case
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 
+quoteLvl :: Lvl -> Lvl -> Ix
+quoteLvl l x | x < 0 = coerce x
+quoteLvl l x = lvl2Ix l x
+
 quoteSp :: Lvl -> Tm -> Spine -> Tm
 quoteSp l t = \case
   SNil              -> t
@@ -101,7 +106,7 @@ quoteSp l t = \case
 quote :: Lvl -> Val -> Tm
 quote l t = case force t of
   VFlex m sp  -> quoteSp l (Meta m) sp
-  VRigid x sp -> quoteSp l (Var (lvl2Ix l x)) sp
+  VRigid x sp -> quoteSp l (Var (quoteLvl l x)) sp
   VLam x i t  -> Lam x i (quote (l + 1) (t $$ VVar l))
   VPi x i a b -> Pi x i (quote l a) (quote (l + 1) (b $$ VVar l))
   VSg x a b   -> Sg x (quote l a) (quote (l + 1) (b $$ VVar l))

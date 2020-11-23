@@ -212,8 +212,12 @@ ex3 = main' "elab" $ unlines [
   -- "let m : (U → U → U) → U = _;",
   -- "λ (f : U * U → U). the (Eq (m (curry f)) (f (U, U → U))) refl"
 
-  "let m : ((U * U → U) → U) → U = _;",
-  "λ (f : (U → U → U) → U). the (Eq (m (λ g. f (flip (curry g)))) (f (λ A B. A))) refl"
+  -- "let m : ((U * U → U) → U) → U = _;",
+  -- "λ (f : (U → U → U) → U). the (Eq (m (λ g. f (flip (curry g)))) (f (λ A B. A))) refl"
 
+  -- "let m : U → U * U = _;",
+  -- "λ (x : U * U). the (Eq {U*U} (m x.1) (x.1, x.1)) (refl {U*U} {x.1, x.1})"
 
+  "let m : (U → U → U) → U = _;",
+  "λ (f : U → U → U * U). the (Eq {U} (m (λ x y. (f y x).1)) (f U (U → U)).1) (refl {U} {(f U (U → U)).1})"
   ]

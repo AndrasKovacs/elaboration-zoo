@@ -36,7 +36,7 @@ instance Show Icit where
   show Expl = "explicit"
 
 -- | De Bruijn index.
-newtype Ix  = Ix {unIx :: Int} deriving (Eq, Show, Num) via Int
+newtype Ix  = Ix {unIx :: Int} deriving (Eq, Ord, Show, Num) via Int
 
 -- | De Bruijn level.
 newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int

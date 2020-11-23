@@ -107,6 +107,8 @@ displayMetas :: IO ()
 displayMetas = do
   ms <- readIORef mcxt
   forM_ (sortBy (comparing (weight . link . snd)) $ IM.toList ms) $ \(m, e) -> case e of
+    -- Unsolved _ a -> printf "let ?%s = ?;\n"  (show m)
+    -- Solved _ v a -> printf "let ?%s = %s;\n" (show m) (showTm0 $ quote 0 v)
     Unsolved _ a -> printf "let ?%s : %s = ?;\n"  (show m) (showTm0 $ quote 0 a)
     Solved _ v a -> printf "let ?%s : %s = %s;\n" (show m) (showTm0 $ quote 0 a) (showTm0 $ quote 0 v)
   putStrLn ""

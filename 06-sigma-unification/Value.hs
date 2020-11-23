@@ -10,6 +10,7 @@ data Spine
   | SProj1 Spine
   | SProj2 Spine
   | SProjField Spine Name Int
+  deriving Show
 
 reverseSpine :: Spine -> Spine
 reverseSpine = go SNil where
@@ -31,6 +32,9 @@ type Env     = [Val]
 data Closure = Close Env Tm | Fun (Val -> Val)     -- first-order closure: Close | HOAS closure: Fun
 type VTy     = Val                                 -- currying convenient + efficient with HOAS
 
+instance Show Closure where
+  show _ = "<cl>"
+
 data Val
   = VFlex MetaVar Spine
   | VRigid Lvl Spine
@@ -39,6 +43,7 @@ data Val
   | VSg Name ~VTy {-# unpack #-} Closure
   | VPair ~Val ~Val
   | VU
+  deriving Show
 
 pattern VVar :: Lvl -> Val
 pattern VVar x = VRigid x SNil

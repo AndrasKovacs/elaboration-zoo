@@ -46,6 +46,7 @@ dependencies:
 - containers
 - megaparsec
 - microlens-platform
+- mtl
 
 source-dirs: .
 

@@ -7,7 +7,7 @@ import Control.Monad
 import Control.Monad.State.Strict hiding (lift)
 import Data.IORef
 import Lens.Micro.Platform
-import Prelude hiding (exp)
+import Prelude hiding (exp, curry)
 import qualified Data.IntMap as IM
 
 import Common
@@ -21,6 +21,8 @@ import Pretty
 
 import Debug.Trace
 
+--------------------------------------------------------------------------------
+
 -- | Partial substitution from Γ to Δ. It is factored into a total substitution
 --   from Δ' to Δ, and a partial substitution from Γ to Δ'. The total
 --   substitution is an *eta expansion* of zero or more variables in Δ. In Δ',
@@ -30,21 +32,29 @@ import Debug.Trace
 --   detail, externally, a PartialSub from Γ to Δ still uses strict de Bruijn
 --   convention.
 data PartialSub = PSub {
-    partialSubOcc    :: Maybe MetaVar  -- optional meta for occurs check
-  , partialSubDom    :: Lvl            -- Γ
-  , partialSubCod    :: Lvl            -- Δ
-  , partialSubSub    :: IM.IntMap Val  -- Γ ~> Δ'
-  , partialSubFresh  :: Lvl            -- fresh (negative) level for expansion insertion
-  , partialSubExp    :: IM.IntMap Val  -- Δ' ~> Δ, eta expansion
-  }
+    partialSubOcc      :: Maybe MetaVar  -- optional meta for occurs check
+  , partialSubDom      :: Lvl            -- Γ
+  , partialSubCod      :: Lvl            -- Δ
+  , partialSubSub      :: IM.IntMap Val  -- Γ ~> Δ'
+  , partialSubFresh    :: Lvl            -- fresh (negative) level for expansion insertion (Δ')
+  , partialSubExp      :: IM.IntMap Val  -- Δ' ~> Δ, eta expansion
+  , partialSubIsLinear :: Bool           -- is the partial substitution linear? If not,
+  }                                      -- we have to check that the rhs type is valid
+                                         -- after substitution
 makeFields ''PartialSub
 
+--     f      η-exp
+-- Γ   →   Δ'  →    Δ
+
+emptyPSub :: PartialSub
+emptyPSub = PSub Nothing 0 0 mempty (-1) mempty True
+
 lift :: PartialSub -> PartialSub
-lift (PSub occ dom cod sub fresh exp) =
-  PSub occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) (VVar dom) sub) fresh exp
+lift (PSub occ dom cod sub fresh exp lin) =
+  PSub occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) (VVar dom) sub) fresh exp lin
 
 skip :: PartialSub -> PartialSub
-skip (PSub occ dom cod sub fresh exp) = PSub occ dom (cod + 1) sub fresh exp
+skip = cod +~ 1
 
 forceWithExpansion :: PartialSub -> Val -> Val
 forceWithExpansion psub t = case force t of
@@ -86,9 +96,10 @@ freshMeta cxt a = do
   m <- pushMeta closed
   pure $ AppPruning (Meta m) (pruning cxt)
 
--- | Eta expand a meta enough so that all projections disappear from the given spine.
-etaExpandMeta :: MetaVar -> Spine -> IO ()
-etaExpandMeta m sp = do
+-- | Create a fresh eta-expanded value for a meta such that applying it to the spine returns
+--   a VFlex without projections.
+metaExpansion :: MetaVar -> Spine -> IO Val
+metaExpansion m sp = do
   a <- snd <$> lookupUnsolved m
 
   let go :: Cxt -> Spine -> VTy -> IO Tm
@@ -106,22 +117,195 @@ etaExpandMeta m sp = do
                                                Pair t <$> go cxt sp (b $$ eval (env cxt) t)
         _                                -> impossible
 
-  m' <- go (emptyCxt (initialPos "")) (reverseSpine sp) a
-  solve' m (PSub (Just m) 0 0 mempty (-1) mempty) (eval [] m')
+  eval [] <$> go (emptyCxt (initialPos "")) (reverseSpine sp) a
+
+-- | Expand a meta, eliminating projections from the spine. Also update the meta with the expansion.
+expandMeta :: MetaVar -> Spine -> IO Val
+expandMeta m sp = do
+  m' <- metaExpansion m sp
+  solve' m SNil emptyPSub m'
+  pure $! vAppSp m' sp
+
+p2name :: Name -> Name
+p2name "_" = "_"
+p2name x = x ++ "2"
+
+-- | Curry a type enough so that all nested pairs disappear from the given spine.
+curry :: PartialSub -> Spine -> VTy -> VTy
+curry psub sp a = go (reverseSpine sp) a where
+  go :: Spine -> VTy -> VTy
+  go (SApp sp t i) a = case (forceWithExpansion psub t, force a) of
+    (VPair t u, VPi x i (VSg y a b) c) ->
+      go (SApp (SApp sp u i) t i)
+         (VPi y i a $ Fun \a -> VPi (p2name x) i (b $$ a) $ Fun \b -> c $$ VPair a b)
+    (t , VPi x i a b) ->
+      VPi x i a $ Fun \x -> go sp (b $$ x)
+    _ ->
+      impossible
+  go _ a = a
+
+-- | Transport a value from (Curry A) to A.
+fromCurry :: PartialSub -> Spine -> Val -> Val
+fromCurry psub sp t = go (reverseSpine sp) t where
+  go :: Spine -> Val -> Val
+  go (SApp sp t i) v = case forceWithExpansion psub t of
+    VPair t u ->
+      VLam "x" i $ Fun \x ->
+        vApp (vApp (go (SApp (SApp sp u i) t i) v) (vProj1 x) i) (vProj2 x) i
+    _ ->
+      VLam "x" i $ Fun \x -> go sp (vApp v x i)
+  go _ v = v
+
+-- spToCurry :: PartialSub -> Spine -> Spine
+-- spToCurry psub = go where
+--   go :: Spine -> Spine
+--   go (SApp sp t i) = case forceWithExpansion psub t of
+--     VPair t u -> go (SApp (SApp sp t i) u i)
+--     _         -> SApp (go sp) t i
+--   go sp = sp
+
+-- | Try to eliminate pairs and projections from spine.
+prunePrep :: PartialSub -> MetaVar -> Spine -> IO (MetaVar, Spine)
+prunePrep psub m sp = do
+
+  -- prep
+  let (needsCurry, needsExpansion) = go (False, False) sp where
+        go (!curry, !exp) = \case
+          SNil              -> (curry, exp)
+          SApp sp t _       -> case forceWithExpansion psub t of
+                                 VPair{} -> go (True , exp) sp
+                                 _       -> go (curry, exp) sp
+          SProj1 sp         -> go (curry, True) sp
+          SProj2 sp         -> go (curry, True) sp
+          SProjField sp _ _ -> go (curry, True) sp
+
+  (m, sp) <- if needsExpansion then do
+               VFlex m sp <- expandMeta m sp
+               pure (m, sp)
+             else
+               pure (m, sp)
+
+  if needsCurry then do
+    a <- snd <$> lookupUnsolved m
+    let ca = curry psub sp a
+    m' <- fromCurry psub sp . VMeta <$> pushMeta ca
+    solve' m SNil emptyPSub m'
+    case vAppSp m' sp of
+      VFlex m sp -> pure (m, sp)
+      _          -> impossible
+
+  else do
+    pure (m, sp)
+
+-- | Remove some arguments from a closed iterated Pi type.
+pruneTy :: RevPruning -> VTy -> IO Ty
+pruneTy (RevPruning pr) a = go pr emptyPSub a where
+  go :: Pruning -> PartialSub -> VTy -> IO Ty
+  go pr psub a = case (pr, force a) of
+    ([]          , a          ) -> psubst psub a
+    (Just{}  : pr, VPi x i a b) -> Pi x i <$> psubst psub a
+                                          <*> go pr (lift psub) (b $$ VVar (psub^.cod))
+    (Nothing : pr, VPi x i a b) -> go pr (skip psub) (b $$ VVar (psub^.cod))
+    _                           -> impossible
+
+-- | Prune arguments from a meta, return new meta + pruned type.
+pruneMeta :: Pruning -> MetaVar -> IO (MetaVar, VTy)
+pruneMeta pruning m = do
+
+  (mlink, mty) <- lookupUnsolved m
+
+  prunedty <- eval [] <$> pruneTy (revPruning pruning) mty
+
+  m' <- pushMeta prunedty
+  strengthenMeta m m' prunedty
+
+  let solution = eval [] $ lams (Lvl $ length pruning) mty $ AppPruning (Meta m') pruning
+  modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
+  pure (m', prunedty)
+
+
+data SpinePruneStatus
+  = OKRenaming    -- ^ Valid spine which is a renaming
+  | OKNonRenaming -- ^ Valid spine but not a renaming (has a non-var entry)
+  | NeedsPruning  -- ^ A spine which is a renaming and has out-of-scope var entries
+
+-- | Prune illegal var occurrences from a meta + spine.
+--   Returns: renamed + pruned term, head meta after pruning, type of the head meta after pruning.
+pruneVFlex :: PartialSub -> MetaVar -> Spine -> IO Tm
+pruneVFlex psub m sp = do
+  -- traceShowM ("try pruning", m, sp)
+
+  (sp :: [(Maybe Tm, Icit)], status :: SpinePruneStatus) <- let
+    go SNil          = pure ([], OKRenaming)
+    go (SApp sp t i) = do
+      (sp, status) <- go sp
+      case forceWithExpansion psub t of
+        VVar x -> case (IM.lookup (coerce x) (psub^.sub), status) of
+                    (Just x , _            ) -> pure ((Just (quote (psub^.dom) x), i) : sp, status)
+                    (Nothing, OKNonRenaming) -> throwIO UnifyError
+                    (Nothing, _            ) -> pure ((Nothing, i):sp, NeedsPruning)
+        t      -> case status of
+                    NeedsPruning -> throwIO UnifyError
+                    _            -> do {t <- psubst psub t; pure ((Just t, i):sp, OKNonRenaming)}
+    go _ = throwIO UnifyError
+
+    in go sp
+
+  (m', mty') <- case status of
+    OKRenaming    -> do {a <- snd <$> lookupUnsolved m; pure (m, a)}
+    OKNonRenaming -> do {a <- snd <$> lookupUnsolved m; pure (m, a)}
+    NeedsPruning  -> pruneMeta (map (\(mt, i) -> i <$ mt) sp) m
+
+  pure $! foldr (\(mu, i) t -> maybe t (\u -> App t u i) mu) (Meta m') sp
+
+--------------------------------------------------------------------------------
+
+-- curry0 = curry emptyPSub
+-- fromCurry0 = fromCurry emptyPSub
+-- shew = putStrLn . showTm0 . quote 0
+
+vProd a b = VSg "_" a $ Fun \_ -> b
+vFun a b = VPi "_" Expl a $ Fun \_ -> b
+
+-- ty1 = VPi "AB" Expl (VSg "A" VU $ Fun \a -> a) $ Fun \ab -> vFun (vProj1 ab) (vProj1 ab)
+-- ty2 = vFun (vProd (vProd VU VU) (vProd (vProd VU VU) VU)) VU
+-- tm1 = VLam "A" Expl $ Fun \a -> VLam "x" Expl $ Fun \x -> VLam "y" Expl $ Fun \y -> x
+-- tm2 = VLam "a" Expl $ Fun \a -> VLam "b" Expl $ Fun \b -> VLam "c" Expl $ Fun \c ->
+--       VLam "d" Expl $ Fun \d ->  VPair a $ VPair b $ VPair c d
+
+--------------------------------------------------------------------------------
+
 
 solve :: Dbg => Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = do
-  traceShowM ("solve"::String, quote gamma (VFlex m sp), quote gamma rhs)
+  -- traceShowM ("solve"::String, quote gamma (VFlex m sp), quote gamma rhs)
   try @UnifyError (invertSp 0 gamma gamma 0 sp) >>= \case
-    Left NeedExpansion -> etaExpandMeta m sp >> unify gamma (VFlex m sp) rhs
+    Left NeedExpansion -> do msp <- expandMeta m sp
+                             unify gamma msp rhs
     Left e             -> throwIO e
-    Right psub         -> solve' m psub rhs
+    Right psub         -> solve' m sp psub rhs
+
+validateRhsType :: VTy -> Spine -> PartialSub -> IO ()
+validateRhsType mty sp psub = do
+  let getTy :: VTy -> Spine -> VTy
+      getTy a             SNil          = a
+      getTy (VPi x i a b) (SApp sp t _) = getTy (b $$ t) sp
+      getTy _             _             = impossible
+  let rhsTy = getTy mty (reverseSpine sp)
+  -- traceShowM ("rhsTy", rhsTy, psub^.sub&IM.keys, psub^.exp&IM.keys, sp)
+  rhsTy <- psubst psub rhsTy
+  pure ()
 
 -- | Solve m given the result of inversion on a spine.
-solve' :: Dbg => MetaVar -> PartialSub -> Val -> IO ()
-solve' m psub rhs = do
-  traceShowM ("solve'"::String, m, IM.keys (psub^.sub), IM.keys (psub^.exp), (forceWithExpansion psub rhs))
+solve' :: Dbg => MetaVar -> Spine -> PartialSub -> Val -> IO ()
+solve' m sp psub rhs = do
+
+  -- traceShowM ("solve'"::String, m, IM.keys (psub^.sub), IM.keys (psub^.exp), (forceWithExpansion psub rhs))
   (mlink, mty) <- lookupUnsolved m
+
+  when (not $ psub^.isLinear) $ do
+    validateRhsType mty sp psub
+
   rhs <- psubst (psub & occ .~ Just m) rhs
   let solution = eval [] $ lams (psub^.dom) mty rhs
   modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
@@ -134,21 +318,39 @@ psubstSp psub t = \case
   SProj2 sp         -> Proj2 <$> psubstSp psub t sp
   SProjField sp x n -> ProjField <$> psubstSp psub t sp <*> pure x <*> pure n
 
+psubstSpWithPruning :: PartialSub -> MetaVar -> Spine -> IO Tm
+psubstSpWithPruning psub m sp = do
+  ms <- readIORef mcxt
+  -- traceShowM ("prunesp", m, sp)
+  try (psubstSp psub (Meta m) sp) >>= \case
+    Left NeedExpansion -> impossible
+    Left UnifyError -> do
+      -- traceShowM ("try to prune", m, sp)
+      (m, sp) <- prunePrep psub m sp
+      -- traceShowM ("prepped", m, sp)
+      t <- pruneVFlex psub m sp
+      -- traceShowM ("pruned", t)
+      pure t
+    Right t -> do
+      pure t
+
 psubst :: Dbg => PartialSub -> Val -> IO Tm
 psubst psub t = case forceWithExpansion psub t of
   VFlex m' sp -> do
+    -- traceShowM ("psubstmeta", m', sp)
     case psub^.occ of
-      Nothing ->
-        psubstSp psub (Meta m') sp
+      Nothing -> do
+        psubstSpWithPruning psub m' sp
       Just m -> case compareMetas m m' of
         EQ -> throwIO UnifyError
         LT -> do
-          mty' <- case lookupMeta m' of Unsolved _ a -> pure a; _ -> impossible
-          mty' <- psubst (PSub (Just m) 0 0 mempty (-1) mempty) mty'
-          strengthenMeta m m' (eval [] mty')
-          psubstSp psub (Meta m') sp
+          -- mty' <- case lookupMeta m' of Unsolved _ a -> pure a; _ -> impossible
+          -- mty' <- psubst (PSub (Just m) 0 0 mempty (-1) mempty) mty'
+          -- strengthenMeta m m' (eval [] mty')
+          -- traceM "foobar"
+          psubstSpWithPruning psub m' sp
         GT -> do
-          psubstSp psub (Meta m') sp
+          psubstSpWithPruning psub m' sp
 
   VRigid (Lvl x) sp -> case IM.lookup x (psub^.sub) of
     Nothing -> throwIO UnifyError
@@ -174,22 +376,28 @@ invertVal gammau gammas gammap t rhsSp psub = go gammap t rhsSp psub where
     VRigid x sp -> do
       -- x is not solvable
       when ((0 <= x && x < gammau) || (gammas <= x && x < gammap)) $ throwIO UnifyError
-      -- x is nonlinear
-      when (IM.member (coerce x) (psub^.sub))                      $ throwIO UnifyError
 
-      try @UnifyError (invertSp gammas gammap gammap (psub^.dom) sp) >>= \case
-        Right spInv -> do
-          rhs <- psubstSp spInv (Var (Ix (spineLen sp))) rhsSp
-          traceShowM ("invert param", x, psub^.dom, lams sp rhs)
-          pure $ psub & sub %~ IM.insert (coerce x) (eval (idEnv (psub^.dom)) (lams sp rhs))
-        Left NeedExpansion -> do
-          traceShowM ("var expansion needed", quote gammap (VRigid x sp))
-          psub <- pure $ etaExpandVar gammap x sp psub
-          traceShowM ("var expanded", x, quote gammap $ forceWithExpansion psub (VRigid x SNil),
-                     quote gammap $ forceWithExpansion psub (VRigid x sp))
-          go gammap (VRigid x sp) rhsSp psub
-        Left e ->
-          throwIO e
+      -- x is non-linear
+      if IM.member (coerce x) (psub^.sub) then do
+        pure $ psub
+          & isLinear .~ False
+          & sub      %~ IM.delete (coerce x)
+
+      -- x is linear
+      else do
+        try @UnifyError (invertSp gammas gammap gammap (psub^.dom) sp) >>= \case
+          Right spInv -> do
+            rhs <- psubstSp spInv (Var (Ix (spineLen sp))) rhsSp
+            -- traceShowM ("invert param", x, psub^.dom, lams sp rhs)
+            pure $ psub & sub %~ IM.insert (coerce x) (eval (idEnv (psub^.dom)) (lams sp rhs))
+          Left NeedExpansion -> do
+            -- traceShowM ("var expansion needed", quote gammap (VRigid x sp))
+            psub <- pure $ etaExpandVar gammap x sp psub
+            -- traceShowM ("var expanded", x, quote gammap $ forceWithExpansion psub (VRigid x SNil),
+            --            quote gammap $ forceWithExpansion psub (VRigid x sp))
+            go gammap (VRigid x sp) rhsSp psub
+          Left e ->
+            throwIO e
 
     VPair t u -> do
       psub <- go gammap t (SProj1 rhsSp) psub
@@ -205,7 +413,7 @@ invertSp :: Dbg => Lvl -> Lvl -> Lvl -> Lvl -> Spine -> IO PartialSub
 invertSp gammau gammas gammap delta sp = go sp where
   go :: Spine -> IO PartialSub
   go SNil =
-    pure (PSub Nothing delta gammas mempty (-1) mempty)
+    pure (PSub Nothing delta gammas mempty (-1) mempty True)
   go (SApp sp t i) = do
     spInv <- (dom +~ 1) <$> go sp
     invertVal gammau gammas gammap t SNil spInv
@@ -245,15 +453,16 @@ flexFlex gamma m sp m' sp'
 flexFlex gamma m sp m' sp' =
   try @UnifyError (invertSp 0 gamma gamma 0 sp) >>= \case
     Left NeedExpansion -> do
-      etaExpandMeta m sp
-      unify gamma (VFlex m sp) (VFlex m' sp')
+      msp <- expandMeta m sp
+      unify gamma msp (VFlex m' sp')
     Left _ -> do
       try @UnifyError (invertSp 0 gamma gamma 0 sp') >>= \case
-        Left NeedExpansion -> etaExpandMeta m' sp' >> unify gamma (VFlex m sp) (VFlex m' sp')
+        Left NeedExpansion -> do msp' <- expandMeta m' sp'
+                                 unify gamma (VFlex m sp) msp'
         Left e             -> throwIO e
-        Right psub         -> solve' m' psub (VFlex m sp)
+        Right psub         -> solve' m' sp' psub (VFlex m sp)
     Right psub -> do
-      solve' m psub (VFlex m' sp')
+      solve' m sp psub (VFlex m' sp')
 
 unify :: Dbg => Lvl -> Val -> Val -> IO ()
 unify l t u = case (force t, force u) of
@@ -262,7 +471,7 @@ unify l t u = case (force t, force u) of
   (VSg x a b  , VSg x' a' b'   )           -> unify l a a' >> unify (l + 1) (b $$ VVar l) (b' $$ VVar l)
   (VRigid x sp, VRigid x' sp'  ) | x == x' -> unifySp l sp sp'
   (VFlex m sp , VFlex m' sp'   ) | m == m' -> unifySp l sp sp' -- intersection
-  -- (VFlex m sp , VFlex m' sp'   )           -> flexFlex l m sp m' sp'
+  (VFlex m sp , VFlex m' sp'   )           -> flexFlex l m sp m' sp'
 
   (VLam _ _ t , VLam _ _ t'    ) -> unify (l + 1) (t $$ VVar l) (t' $$ VVar l)
   (t          , VLam _ i t'    ) -> unify (l + 1) (vApp t (VVar l) i) (t' $$ VVar l)

@@ -332,7 +332,123 @@ Examples:
 
 8. More involved example
 
-   Γ ⊢ f : A → B × C
+   Γ ⊢ f : A → B × C        -- (A -> B) × (A -> C)
+                            -- Γ₀, f : A → B × C, Γ₁
+                            -- Γ₀, f₀ : A → B, f₁ : A → C, Γ₁
+
+           a
+   α (λ x. (f x).1) =? ((λ x. (f x).1), true)
+
+      pattern unification should know about definitional isomorphism:
+         - currying
+	 - Axiom of Choice / Skolemization (swapping Π and Σ)
+	 - flipping
+
+      "old algorithm" : apply currying + AC to everything, Σ disappears from unification problem
+         - α (t, u)  -->  α t u
+	 - α (x.1)   -->  α x₁
+	 - (α x y).1 -->  α₁ x y
+
+       problem: - creates new metas with new types, we have to transport along currying + AC
+                - flipping does not work! (not directed) (we can only figure out direction of flipping
+		  if we look into the spine)
+
+   α := λ a b c ... . ....
+
+           inverted spine gives us: [x ↦ ... , y ↦ ... , f ↦ ...]
+
+     a b c
+   α x y z =? (x → x → y)      -- α does not depend on Γ!
+
+     [x ↦ a, y ↦ b, z ↦ c]
+
+
+         a      b
+   α (λ x. f x) y =? (f y → y)
+
+     λ x. f x ↦ a
+
+            0
+     ∀ x. f x ↦ a x            -- f is in an arbitrary local Γ
+        [x ↦ 0]
+	(a x)[x ↦ 0] = a 0
+	[f ↦ λ 0. a 0]
+
+     y ↦ b
+
+     result: [f ↦ λ 0. a 0, y ↦ b]
+
+   α := λ a b. a b → b OK
+
+
+   -- flipping + currying + some AC is completely automatic
+   --   (we only have to eliminate projections as extra step)
+
+   α.1 =? U            α := (α₁, α₂)
+   α₁ =? U
+   α₁ := U
+
+
+   Γ ⊢ x : A × B
+   Γ₀, x₁ : A, x₂ : B, Γ₁ ⊢ x₁ : A
+
+   α (x.1) =? x.1
+   α x₁ =? x₁
+
+   -- issue with Γ-currying of local vars (efficiently!)
+   -- insertion into Γ is not efficient in de Bruijn discipline! (everything has to be shifted!)
+   --   (solution: fresh variable discipline locally)
+   --   (Val : not only bd levels, but also fresh vars)
+   --         (fresh vars are local to a particular spine inversion problem)
+
+   -- generalize partial substitution
+
+
+   -- two kind of problems:
+   -- α sp =? rhs
+   -- x sp ↦ rhs
+
+   -- I only want one kind of sp inversion!
+
+   -- I have to split Γ into three parts:
+
+      Γ = Γᵢ,Γₛ,Γₚ      Γ  ("irrelevant") : contains vars which are irrelevant/cannot be used in a spine inversion problem
+                        Γₛ ("solvable")   : contains vars which we want to map to something (things-to-invert up in the call stack)
+			Γₚ ("parameter")  : contains vars which are "parameters" to an inversion problem
+
+   Δ ⊢ α : A
+   Γ ⊢ α x y =? x
+
+      Γᵢ = ∙
+      Γₛ = Γ
+      Γₚ = ∙
+
+    (x, y)         : Γ → Δ
+    goal: (x, y)⁻¹ : Δ → Γ    (mapping from Γ vars to Δ terms)
+
+
+   Δ ⊢ α : A
+
+
+   ∙,Γ,∙ ⊢ α (λ x. f y) y =? x
+
+             a      b
+   ∙,Γ,∙ ⊢ α (λ x. f x) y =? x
+
+      (λ x. f x) ↦ a
+
+      ∙,Γ,x ⊢ f x ↦ a x
+
+          0
+        f y ↦ a x
+	  [y ↦ 0]
+
+        -- now I want to map the things which are the parameters!
+
+        -- new splitting for recursive inversion:
+        Γᵢ := Γₛ
+        Γₛ := Γₚ
+	Γₚ := ∙
 
            a
    α (λ x. (f x).1) =? ((λ x. (f x).1), true)
@@ -363,3 +479,59 @@ Examples:
      -  definedness of PSub (poset-enriched category)
      -  partial inverses of terms
      -  (nice "recursive" pattern unification)
+
+
+-- Upgrade for pattern unif OK
+-- Upgrade for pruning?
+
+    α (x, y) (x, x)          -- prune y from α ?
+
+    Old solution:  curry & eta-expand α : pairs/projections disappear, then do pruning as usual
+
+       α (x sp1) (y sp2)    -- prune x from α
+                            -- α := λ a b. α' b    (α' does not depend on the first arg anymore)
+
+    Prune projections of args of a meta?
+
+    α (x, y)             -- prune x
+
+    α := λ a. α' (a.2)   -- α' does not depend on first projection of first arg
+
+    α (λ x. (f x, g x))  -- prune f from the spine
+
+    α : (A → B × C) → D
+
+    α' : (A → C) → D
+
+    α := λ f. α' (λ x. (f x).2)
+
+    -- what's the problem? This requires not only partial subst but also partial values/terms!
+
+    (A × (B × C))      prune the first projection:    B × C
+
+      (in usual pruning: Γ context,  Γ' pruned context,  total f : Γ → Γ',  partial f⁻¹ : Γ' → Γ)
+
+      ∙, x : A × (B × C) ⊢ t   : B × C          t   := x.2                      (total term)
+      ∙, x : B × C       ⊢ t⁻¹ : A × (B × C)    t⁻¹ := (undefined, x)           (partial term)
+
+    With partial terms: partial subst is just a total subst containing partial terms
+        [x ↦ ..., y ↦ undefined]
+
+      compute the action of such partial subst
+
+        f : Map Var PartialVal
+
+        subst : PartialSubst Γ Δ → Val Δ → Tm Γ    (generalized of usual partial renaming for rhs)
+
+            x  : bound var in Δ
+	    sp : Spine in Δ
+
+	    x[f]  : PTm Γ
+            sp[f] : Spine Γ
+
+            spineApp (x[f]) (sp[f]) : PTm Γ         (undefined is not propagated!)
+            quote (eval (spineApp (x[f]) (sp[f])))  (normalize the thing all over in order to propagate undefined!)
+
+            (undefined, t).1  --> undefined
+
+          subst f (x sp)  = ?

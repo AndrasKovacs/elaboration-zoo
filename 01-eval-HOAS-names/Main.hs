@@ -117,13 +117,18 @@ char c     = lexeme (C.char c)
 parens p   = char '(' *> p <* char ')'
 
 keyword :: String -> Bool
-keyword x = x == "λ" || x == "in"
+keyword x = x == "λ" || x == "in" || x == "let"
 
 pIdent :: Parser Name
 pIdent = try $ do
   x <- takeWhile1P Nothing isAlphaNum
   guard (not (keyword x))
   x <$ ws
+
+pKeyword :: String -> Parser ()
+pKeyword kw = do
+  C.string kw
+  (takeWhile1P Nothing isAlphaNum *> empty) <|> ws
 
 pBind  = pIdent <|> symbol "_"
 pAtom  = (Var <$> pIdent) <|> parens pTm
@@ -137,11 +142,11 @@ pLam = do
   pure (foldr Lam t xs)
 
 pLet = do
-  symbol "let"
+  pKeyword "let"
   x <- pBind
   symbol "="
   t <- pTm
-  symbol "in"
+  pKeyword "in"
   u <- pTm
   pure $ Let x t u
 

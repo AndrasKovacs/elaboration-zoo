@@ -39,7 +39,7 @@ pProd      = char '*' <|> char '×'
 pBind      = pIdent <|> symbol "_"
 
 keyword :: String -> Bool
-keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
+keyword x = x == "let" || x == "λ" || x == "U"
 
 pIdent :: Parser Name
 pIdent = try $ do
@@ -47,6 +47,11 @@ pIdent = try $ do
   xs <- takeWhileP Nothing (\c -> isAlphaNum c || c == '\'')
   guard (not (keyword (x:xs)))
   (x:xs) <$ ws
+
+pKeyword :: String -> Parser ()
+pKeyword kw = do
+  C.string kw
+  (takeWhileP Nothing (\c -> isAlphaNum c || c == '\'') *> empty) <|> ws
 
 pAtom :: Parser Tm
 pAtom  =
@@ -136,7 +141,7 @@ pPiExp = do
 
 pLet :: Parser Tm
 pLet = do
-  symbol "let"
+  pKeyword "let"
   x <- pIdent
   ann <- optional (char ':' *> pTm)
   char '='

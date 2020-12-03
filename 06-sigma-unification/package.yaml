@@ -33,6 +33,7 @@ default-extensions:
 - FunctionalDependencies
 - TupleSections
 - ViewPatterns
+- MagicHash
 
 ghc-options:
 - -Wall

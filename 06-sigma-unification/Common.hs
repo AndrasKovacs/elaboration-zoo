@@ -12,6 +12,10 @@ import Text.Megaparsec
 import GHC.Stack
 import Debug.Trace
 import Data.Coerce
+import GHC.Exts
+
+ptrEq :: a -> a -> Bool
+ptrEq x y = isTrue# (reallyUnsafePtrEquality# x y)
 
 type Dbg = HasCallStack
 

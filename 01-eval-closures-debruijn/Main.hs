@@ -7,6 +7,7 @@ import Data.Void
 import System.Environment
 import System.Exit
 import Text.Megaparsec
+import Data.Char
 
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -98,6 +99,11 @@ symbol s   = lexeme (C.string s)
 char c     = lexeme (C.char c)
 parens p   = char '(' *> p <* char ')'
 
+pKeyword :: String -> Parser ()
+pKeyword kw = do
+  C.string kw
+  (takeWhile1P Nothing isDigit *> empty) <|> ws
+
 pIx    = lexeme L.decimal
 pAtom  = (Var <$> pIx) <|> parens pTm
 pSpine = foldl1 App <$> some pAtom
@@ -107,9 +113,9 @@ pLam = do
   Lam <$> pTm
 
 pLet = do
-  symbol "let"
+  pKeyword "let"
   t <- pTm
-  symbol "in"
+  pKeyword "in"
   u <- pTm
   pure $ Let t u
 

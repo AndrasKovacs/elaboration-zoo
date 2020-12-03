@@ -17,7 +17,7 @@ vApp t ~u i = case t of
   VLam _ _ t  -> t $$ u
   VFlex  m sp -> VFlex m  (SApp sp u i)
   VRigid x sp -> VRigid x (SApp sp u i)
-  _           -> impossible
+  t           -> error $ "vApp: " ++ show t
 
 vProj1 :: Val -> Val
 vProj1 = \case

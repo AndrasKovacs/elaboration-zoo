@@ -33,13 +33,18 @@ pArrow     = symbol "→" <|> symbol "->"
 pBind      = pIdent <|> symbol "_"
 
 keyword :: String -> Bool
-keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
+keyword x = x == "let" || x == "λ" || x == "U"
 
 pIdent :: Parser Name
 pIdent = try $ do
   x <- takeWhile1P Nothing isAlphaNum
   guard (not (keyword x))
   x <$ ws
+
+pKeyword :: String -> Parser ()
+pKeyword kw = do
+  C.string kw
+  (takeWhile1P Nothing isAlphaNum *> empty) <|> ws
 
 pAtom :: Parser Tm
 pAtom  =
@@ -95,7 +100,7 @@ pFunOrSpine = do
 
 pLet :: Parser Tm
 pLet = do
-  symbol "let"
+  pKeyword "let"
   x <- pIdent
   ann <- optional (char ':' *> pTm)
   char '='

@@ -131,7 +131,8 @@ ex2 = main' "elab" $ unlines [
   "let Id : {C} → Functor C C",
   "  = λ {C}. (λ x. x, λ f. f, tt) ;",
 
-  "let Id : {C} → Functor C C = Id;",  -- Functor injectivity!
+  -- "let Id : {C} → Functor C C = Id;",
+                                       -- Functor injectivity!
                                        -- Functor : Cat → Cat → U
                                        --   is *not* injective up to definitional equality!
                                        --  Functor C D = Functor C' D'  -->   C = C' ∧ D = D'
@@ -163,7 +164,7 @@ ex2 = main' "elab" $ unlines [
 
   -- test for eta-expansion:
   "let m : U → U × U = _;",
-  "let test = λ x. the (Eq ((m x).₁) x) (refl {_}{x});",
+  "let test = λ x. the (Eq ((m x).₁) x) refl;",
 
   -- test for currying:
   "let m : U × U → U = _;",
@@ -171,6 +172,11 @@ ex2 = main' "elab" $ unlines [
 
   "U"
 
+  ]
+
+ex4 :: IO ()
+ex4 = main' "elab" $ unlines [
+  "λ f x. f x"
   ]
 
 
@@ -195,16 +201,21 @@ ex3 = main' "elab" $ unlines [
   "              → ((a : A)(b : B a) → C (a, b)) → (ab : (a : A) * B a) → C ab",
   "  = λ f ab. f ab.1 ab.2;",
 
+  -- "let m : (U * U → U) → U = _;",
+  -- "λ (f : U → U → U). the (Eq (m (λ x. f x.2 x.1 )) (f U (U → U))) refl"
+
+
   -- "let m : U → U → (U → U → U) → U = _;",
   -- "λ A B (C : U → U → U). the (Eq (m A B (flip C)) (C A B)) refl"
+
+  -- "let m : U * U → U = _;",
+  -- "λ (A : U * U). the (Eq A.1 (m (A.1, A.2))) refl"
 
   -- "let m : U * U * U → U * U * U = _;",
   -- "λ A B C. the (Eq (m (A, B, C)) (A, B, C)) refl"
 
-
   -- "let m : (U → U → U) → (U → U → U) → U = _;",
-  -- "λ (F : U * U → U)(G : U * U → U). the (Eq (m (flip (curry F)) (curry G)) (F (U, U → U))) refl",
-
+  -- "λ (F : U * U → U)(G : U * U → U). the (Eq (m (flip (curry F)) (curry G)) (F (U, U → U))) refl"
 
   -- "let m : ((U → U → U) → U) → U = _;",
   -- "λ (F : (U * U → U) → U). the (Eq (m (λ f. F (λ xy. f xy.1 xy.2))) U) refl"
@@ -215,9 +226,20 @@ ex3 = main' "elab" $ unlines [
   -- "let m : ((U * U → U) → U) → U = _;",
   -- "λ (f : (U → U → U) → U). the (Eq (m (λ g. f (flip (curry g)))) (f (λ A B. A))) refl"
 
-  -- "let m : U → U * U = _;",
-  -- "λ (x : U * U). the (Eq {U*U} (m x.1) (x.1, x.1)) (refl {U*U} {x.1, x.1})"
+  -- "let m : (U → U → U * U) → U = _;",
+  --  "λ (f : U * U → U)(g : U * U → U). the (Eq (m (λ x y. (f (x, y), g (y, x)))) (g (f (U, U), U))) refl"
 
-  "let m : (U → U → U) → U = _;",
-  "λ (f : U → U → U * U). the (Eq {U} (m (λ x y. (f y x).1)) (f U (U → U)).1) (refl {U} {(f U (U → U)).1})"
+  -- "let m : U → U = _;",
+  -- "λ (x : U * U). the (Eq (m x.1) (x.1 → x.1)) refl"
+
+  -- "let m : (U → U → U) → U = _;",
+  -- "λ (f : U → U → U * U). the (Eq {U} (m (λ x y. (f y x).1)) (f U (U → U)).1) (refl {U} )"
+
+  -- "let m : U → U → U → U = _;",
+  -- "λ A B. the (Eq (m A B A) B) refl"
+
+  "λ (A : U) (B : A → U).",
+  "let m : (a : A) → B a → (a' : A) → B a = _;",
+  "λ (a : A)(b : B a). the (Eq (m a b a) b) (refl {_}{b})"
+
   ]

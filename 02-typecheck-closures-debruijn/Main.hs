@@ -362,6 +362,11 @@ pIdent = try $ do
   guard (not (keyword x))
   x <$ ws
 
+pKeyword :: String -> Parser ()
+pKeyword kw = do
+  C.string kw
+  (takeWhile1P Nothing isAlphaNum *> empty) <|> ws
+
 pAtom :: Parser Raw
 pAtom =
       withPos ((RVar <$> pIdent) <|> (RU <$ symbol "U"))
@@ -390,13 +395,13 @@ funOrSpine = do
     Just _  -> RPi "_" sp <$> pRaw
 
 pLet = do
-  symbol "let"
+  pKeyword "let"
   x <- pBinder
   symbol ":"
   a <- pRaw
   symbol "="
   t <- pRaw
-  symbol "in"
+  pKeyword "in"
   u <- pRaw
   pure $ RLet x a t u
 

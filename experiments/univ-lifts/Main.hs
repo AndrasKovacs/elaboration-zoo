@@ -50,10 +50,12 @@ Features:
 
 Coercive cumulative subtyping:
 
-  - whenever a < b and t : A, then coe a b t : b
+  - whenever A ≤ B and t : A, then coe A B t : B
   - coe is not an internal function, it's used during elaboration
-  - U i < U j  if  i < j
-  - ((x : A) → B x) < ((x : A') → B' x) if A' < A and ∀ x. B (coe A' A x) < B x
+  - U i ≤ U j  if  i ≤ j
+  - ((x : A) → B x) ≤ ((x : A') → B' x) if A' ≤ A and ∀ x. B (coe A' A x) ≤ B x
+  - A ≤ ^A
+  - ^A ≤ A
 
 Non-dependent Pi inference:
   For (_ : A) → B, we independently infer levels for A and B, and
@@ -68,7 +70,7 @@ Non-dependent Pi inference:
 
 
 -- see also "elab-no-delift" option
-ex0 = main' "elab-no-delift" $ unlines [
+ex0 = main' "elab" $ unlines [
 
   "let f : U 0 -> U 0 = \\A. A;",
   "let g : U 0 -> U 1 = f;",
@@ -428,7 +430,7 @@ infer cxt = \case
   -- Trick for non-dependent functions: we lift the lower type to match the higher.
   RPi "_" a b -> do
     (a, i) <- inferU cxt a
-    (b, j) <- inferU (bind "_" (eval (env cxt) a) cxt) b
+    (b, j) <- inferU (bind "_" undefined cxt) b
     case compare i j of
       EQ -> pure (Pi "_" a b, VU i)
       LT -> do

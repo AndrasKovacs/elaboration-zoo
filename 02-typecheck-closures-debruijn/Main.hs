@@ -318,18 +318,22 @@ prettyTm prec = go prec where
     App t u                   -> par p appp $ go appp ns t . (' ':) . go atomp ns u
 
     Lam (fresh ns -> x) t     -> par p letp $ ("λ "++) . (x++) . goLam (x:ns) t where
-                                   goLam ns (Lam x t) = (' ':) . (x++) . goLam (x:ns) t
-                                   goLam ns t         = (". "++) . go letp ns t
+                                   goLam ns (Lam (fresh ns -> x) t) =
+                                     (' ':) . (x++) . goLam (x:ns) t
+                                   goLam ns t =
+                                     (". "++) . go letp ns t
 
     U                         -> ("U"++)
 
     Pi "_" a b                -> par p pip $ go appp ns a . (" → "++) . go pip ("_":ns) b
 
     Pi (fresh ns -> x) a b    -> par p pip $ piBind ns x a . goPi (x:ns) b where
-                                   goPi ns (Pi "_" a b) = (" → "++) . go appp ns a
-                                                          . (" → "++) . go pip ("_":ns) b
-                                   goPi ns (Pi x a b)   = piBind ns x a . goPi (x:ns) b
-                                   goPi ns b            = (" → "++) . go pip ns b
+                                   goPi ns (Pi "_" a b) =
+                                     (" → "++) . go appp ns a . (" → "++) . go pip ("_":ns) b
+                                   goPi ns (Pi (fresh ns -> x) a b) =
+                                     piBind ns x a . goPi (x:ns) b
+                                   goPi ns b =
+                                     (" → "++) . go pip ns b
 
     Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
                                  . ("\n    = "++) . go letp ns t . ("\nin\n"++) . go letp (x:ns) u

@@ -107,7 +107,5 @@ let Eq : {A} -> A -> A -> U
 let refl : {A}{x : A} -> Eq x x
     = \_ px. px;
 
-let sym : {A x y} → Eq {A} x y → Eq y x
-  = λ {A}{x}{y} p. p (λ y. Eq y x) refl;
 
 the (Eq (mul ten ten) hundred) refl

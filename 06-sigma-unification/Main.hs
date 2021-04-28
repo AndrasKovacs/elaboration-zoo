@@ -238,8 +238,8 @@ ex3 = main' "elab" $ unlines [
   -- "let m : U → U → U → U = _;",
   -- "λ A B. the (Eq (m A B A) B) refl"
 
-  "λ (A : U) (B : A → U).",
-  "let m : (a : A) → B a → (a' : A) → B a = _;",
-  "λ (a : A)(b : B a). the (Eq (m a b a) b) (refl {_}{b})"
+  -- "λ (A : U) (B : A → U).",
+  -- "let m : (a : A) → B a → (a' : A) → B a = _;",
+  -- "λ (a : A)(b : B a). the (Eq (m a b a) b) (refl {_}{b})"
 
   ]

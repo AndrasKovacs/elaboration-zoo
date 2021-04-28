@@ -19,6 +19,14 @@ import qualified Presyntax as P
 
 --------------------------------------------------------------------------------
 
+coe :: Cxt -> VTy -> VTy -> Tm -> IO Tm
+coe cxt a b t = case (force a, force b) of
+  (a, VPi x Impl b c) -> Lam x Impl <$> coe (bind cxt x b) a (c $$ VVar (lvl cxt)) (Wk t)
+  (a, VEx x b c     ) -> do {α <- freshMeta cxt b; coe cxt a (c $$ eval (env cxt) α) t}
+  (VPi x Impl a b, c) -> do {α <- freshMeta cxt a; coe cxt (b $$ eval (env cxt) α) c (App t α Impl)}
+  (VEx x a b     , c) -> coe cxt (b $$ eval (env cxt) (Proj1 t)) c (Proj2 t)
+
+
 freshMeta :: Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
   let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
@@ -62,6 +70,8 @@ insertUntilName cxt name act = go =<< act where
         m <- freshMeta cxt a
         let mv = eval (env cxt) m
         go (App t m Impl, b $$ mv)
+    VEx x a b -> do
+      go (Proj2 t, b $$ eval (env cxt) (Proj1 t))
     _ ->
       throwIO $ Error cxt $ NoNamedImplicitArg name
 

@@ -98,10 +98,10 @@ type VTy = Val
 
 data Val
   = VVar Lvl
-  | VApp Val ~Val                          -- (what is a practical use case ~Val? Conversion checking) (see: smalltt Nat benchmark)
+  | VApp Val ~Val
   | VLam Name {-# unpack #-} Closure
-  | VPi Name ~VTy {-# unpack #-} Closure   -- check (\a -> ...) ((x : A) -> B)
-  | VU                                     -- Doesn't compute A: infer (\(a : A) -> a)
+  | VPi Name ~VTy {-# unpack #-} Closure
+  | VU
 
 --------------------------------------------------------------------------------
 
@@ -109,10 +109,9 @@ infixl 8 $$
 ($$) :: Closure -> Val -> Val
 ($$) (Closure env t) ~u = eval (u:env) t
 
--- Precondition : Tm is well-typed & Env is well-typed)
 eval :: Env -> Tm -> Val
 eval env = \case
-  Var (Ix x)  -> env !! x         -- list indexing function (Tm is assumed to be well-typed!) ("impossible"/panic)
+  Var (Ix x)  -> env !! x
   App t u     -> case (eval env t, eval env u) of
                    (VLam _ t, u) -> t $$ u
                    (t       , u) -> VApp t u
@@ -143,39 +142,23 @@ nf env t = quote (Lvl (length env)) (eval env t)
 --   Precondition: both values have the same type
 conv :: Lvl -> Val -> Val -> Bool
 conv l t u = case (t, u) of
-
-  -- canonical cases
   (VU, VU) -> True
 
   (VPi _ a b, VPi _ a' b') ->
        conv l a a'
-    && conv (l + 1) (b $$ VVar l) (b' $$ VVar l)  -- go under the binder
+    && conv (l + 1) (b $$ VVar l) (b' $$ VVar l)
 
   (VLam _ t, VLam _ t') ->
     conv (l + 1) (t $$ VVar l) (t' $$ VVar l)
 
-  -- function eta conversion (complete decision algorithm for function eta)
-  -- (nice: purely syntax-directed algorithm)
   (VLam _ t, u) ->
     conv (l + 1) (t $$ VVar l) (VApp u (VVar l))
   (u, VLam _ t) ->
     conv (l + 1) (VApp u (VVar l)) (t $$ VVar l)
 
-  -- eta-equality for unit type
-  -- conv Tt <neutral>        OK
-  -- conv <neutral> Tt        OK
-  -- conv <neutral> <neutral> (we need the type)
-
-  -- (elaborator annotates terms with unit type + conversion is still purely syntax-directed)
-  -- conv box box     OK
-
-  -- setoid TT impl: conversion checking is universe-directed but not type-directed
-
-  -- neutral values
   (VVar x  , VVar x'   ) -> x == x'
   (VApp t u, VApp t' u') -> conv l t t' && conv l u u'
 
-  -- rigid mismatch
   _ -> False
 
 

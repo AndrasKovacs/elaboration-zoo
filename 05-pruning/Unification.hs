@@ -60,21 +60,19 @@ pruneTy (RevPruning pr) a = go pr (PRen Nothing 0 0 mempty) a where
     _                           -> impossible
 
 -- | Prune arguments from a meta, return new meta + pruned type.
-pruneMeta :: Pruning -> MetaVar -> IO (MetaVar, VTy)
+pruneMeta :: Pruning -> MetaVar -> IO MetaVar
 pruneMeta pruning m = do
 
-  (mlink, mty) <- readMeta m >>= \case
-    Unsolved mlink a -> pure (mlink, a)
-    _                -> impossible
+  mty <- readMeta m >>= \case
+    Unsolved a -> pure a
+    _          -> impossible
 
   prunedty <- eval [] <$> pruneTy (revPruning pruning) mty
-
-  m' <- pushMeta prunedty
-  strengthenMeta m m' prunedty
+  m' <- newMeta prunedty
 
   let solution = eval [] $ lams (Lvl $ length pruning) mty $ AppPruning (Meta m') pruning
-  modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
-  pure (m', prunedty)
+  modifyIORef' mcxt $ IM.insert (coerce m) (Solved solution mty)
+  pure m'
 
 
 data SpinePruneStatus
@@ -83,8 +81,8 @@ data SpinePruneStatus
   | NeedsPruning  -- ^ A spine which is a renaming and has out-of-scope var entries
 
 -- | Prune illegal var occurrences from a meta + spine.
---   Returns: renamed + pruned term, head meta after pruning, type of the head meta after pruning.
-pruneVFlex :: PartialRenaming -> MetaVar -> Spine -> IO (Tm, MetaVar, VTy)
+--   Returns: renamed + pruned term.
+pruneVFlex :: PartialRenaming -> MetaVar -> Spine -> IO Tm
 pruneVFlex pren m sp = do
 
   (sp :: [(Maybe Tm, Icit)], status :: SpinePruneStatus) <- let
@@ -101,14 +99,13 @@ pruneVFlex pren m sp = do
                     _            -> do {t <- rename pren t; pure ((Just t, i):sp, OKNonRenaming)}
     in go sp
 
-  (m', mty') <- case status of
-    OKRenaming    -> readMeta m >>= \case Unsolved _ a -> pure (m, a); _ -> impossible
-    OKNonRenaming -> readMeta m >>= \case Unsolved _ a -> pure (m, a); _ -> impossible
+  m' <- case status of
+    OKRenaming    -> readMeta m >>= \case Unsolved _ -> pure m; _ -> impossible
+    OKNonRenaming -> readMeta m >>= \case Unsolved _ -> pure m; _ -> impossible
     NeedsPruning  -> pruneMeta (map (\(mt, i) -> i <$ mt) sp) m
 
   let t = foldr (\(mu, i) t -> maybe t (\u -> App t u i) mu) (Meta m') sp
-  pure (t, m', mty')
-
+  pure t
 
 renameSp :: PartialRenaming -> Tm -> Spine -> IO Tm
 renameSp pren t = \case
@@ -118,31 +115,9 @@ renameSp pren t = \case
 rename :: PartialRenaming -> Val -> IO Tm
 rename pren t = case force t of
 
-
-  VFlex m' sp -> do
-
-    case occ pren of
-
-      -- no occurs check
-      Nothing -> do
-        (t, _, _) <- pruneVFlex pren m' sp
-        pure t
-
-      -- occurs check
-      Just m  -> case compareMetas m m' of
-
-        EQ ->
-          throwIO UnifyError -- occurs check
-
-        LT -> do            -- m' is out of scope, we have to strengthen it
-          (t, m', mty') <- pruneVFlex pren m' sp
-          mty' <- rename (PRen (Just m) 0 0 mempty) mty'
-          strengthenMeta m m' (eval [] mty')
-          pure t
-
-        GT -> do            -- m' is in scope
-          (t, _, _) <- pruneVFlex pren m' sp
-          pure t
+  VFlex m' sp -> case occ pren of
+    Just m | m == m' -> throwIO UnifyError -- occurs check
+    _                -> pruneVFlex pren m' sp
 
   VRigid (Lvl x) sp -> case IM.lookup x (ren pren) of
     Nothing -> throwIO UnifyError  -- scope error ("escaping variable" error)
@@ -172,9 +147,9 @@ solve gamma m sp rhs = do
 solveWithPRen :: MetaVar -> (PartialRenaming, Maybe Pruning) -> Val -> IO ()
 solveWithPRen m (pren, pruneNonlinear) rhs = do
 
-  (mlink, mty) <- readMeta m >>= \case
-    Unsolved mlink a -> pure (mlink, a)
-    _                -> impossible
+  mty <- readMeta m >>= \case
+    Unsolved a -> pure a
+    _          -> impossible
 
   -- if the spine was non-linear, we check that the non-linear arguments
   -- can be pruned from the meta type (i.e. that the pruned solution will
@@ -185,7 +160,7 @@ solveWithPRen m (pren, pruneNonlinear) rhs = do
 
   rhs <- rename (pren {occ = Just m}) rhs
   let solution = eval [] $ lams (dom pren) mty rhs
-  modifyIORef' mcxt $ IM.insert (coerce m) (Solved mlink solution mty)
+  modifyIORef' mcxt $ IM.insert (coerce m) (Solved solution mty)
 
 unifySp :: Lvl -> Spine -> Spine -> IO ()
 unifySp l sp sp' = case (sp, sp') of

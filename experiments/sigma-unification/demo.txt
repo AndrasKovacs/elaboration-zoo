@@ -1,0 +1,512 @@
+
+{-
+- Contextual metavariables
+- Pattern unification
+- extension (in Agda)
+- enhanced version
+- efficiency (substitutions / renaming)
+-}
+
+let id : (A : U) → A → A = λ A x. x;
+
+let id2 : (A : U) → A → A = λ A x. id _ x;
+
+-- complication : metas are functions
+--   unification problems inbvolve functions
+
+-- ?0 A x =? A
+-- ?0 = λ A x. A
+
+-- decidable fragment of higher-order unification: "pattern" unification
+
+-- pattern unification:
+
+-- m : Δ → A
+
+-- σ : Sub Γ Δ      (is a way of specifying all arguments using vars from Γ)
+-- Γ ⊢ m σ =? rhs
+
+-- pattern conditions:
+--    1. σ consists only of distinct bound variables (in Γ)
+--    2. rhs only depends on vars present in σ
+--    3. "m" itself does not occur in rhs freely ("occurs" check)
+
+-- the actual solution:   m = λ σ. rhs  (it is *unique* solution)
+
+{-
+examples:
+
+OK
+  m A x =? A       m = λ A x. A
+  m =? Bool        m = Bool
+
+BAD
+  m =? Bool → m      (occurs check)
+  m x x =? x         two distinct solutions: m = λ x _. x    m = λ _ x. x
+
+     (no solution: red error in Agda)
+     (non-unique solution: yellow)
+
+  m x y =? z      (where z is a bound var in Γ)
+     λ x y. z   (ill-scoped, z is not bound anywhere)
+
+More categorically:
+
+   t[σ] = u    has unique solution (t = ...) if
+
+   σ = σⁱ ∘ σᵉ     (σⁱ iso) (σᵉ epi)
+   u = u'[σᵉ]
+
+   t[σⁱ∘σᵉ] = u'[σᵉ]
+   t[σⁱ] = u'
+   t     = u'[σⁱ⁻¹]
+
+      (every order-preserving embedding is epi)
+      (every σ can be uniquely split to  order-preserving embedding + monomorphism)
+
+Extensions & complications:
+
+  Σ-types:
+
+    m (x, y) =? x   (not in pattern fragment!)
+    m.2 =? Bool     (not pattern)
+    m (x.1) =? x.1  (not pattern)
+
+  Even without Σ:
+
+    assuming: f : Bool → Bool → Bool in Γ
+    m (λ x y. f y x) =? f True False
+       m = λ g. g False True
+
+    m (flip f) =? f
+       m = flip
+
+  In general: unification should know about definitional isomorphisms
+      - if f is any def. iso
+         (f ∘ f⁻¹) =(def) id
+	 (f⁻¹ ∘ f) =(def) id
+
+    m (f x) =? x
+      m = f⁻¹
+
+  Abel & Pientka : Higher-order unification
+     approach: get rid of all Σ-s from problems
+
+        two def. isos:
+	   - currying:       ((A × B) → C) ~ (A → B → C)
+	   - axiom of choice (Skolemization) :
+	       (A → B × C) ~ (A → B) × (A → C)
+	       (by Skolemization, every Σ can be moved to Γ context)
+	           or to the metacontext)
+
+   m : Bool × Bool → Bool
+
+   m (x, y) =? x
+
+   fresh m' : Bool → Bool → Bool
+   m = λ (x, y). m' x y
+
+   m' x y =? x
+     m' = λ x y. x
+
+   m : Set → Set × Set
+       (Set → Set) × (Set → Set)
+       convert × to two metavars
+
+       (Δ₀, m : Set × Set, Δ₁) ~ (Δ₀, m₁, m₂, Δ₁[m ↦ (m₁, m₂)]
+
+   m.1 =? Bool
+
+   fresh m₁ : Set
+         m₂ : Set
+
+   m = (m₁, m₂)
+
+   m₁ =? Bool
+   m₁ = Bool
+
+   -- Σ elimination is not really used in Agda
+   ------------------------------------------------------------
+
+    -- general Skolemization (not very efficient, complicated)
+
+     Γ, f : (A → B × C) → B  ⊢ m σ =? rhs
+
+        -- slow: (Currying is supported by env machines)
+	         (Skolemization is not really)
+		 (looking under binders)
+		 (related problem: cubical evaluation must pattern match under
+		    binders)
+
+New solution:
+
+General idea:
+
+  Γ ⊢ m t₁ t₂ ... tᵢ =? rhs
+
+    - partial inversion of (t₁ t₂ ... tᵢ)
+    -
+
+     a   b   c
+  m  t₁  t₂  t₃ =? rhs
+
+    [t₁ ↦ a, t₂ ↦ b, t₂ ↦ c]
+
+  m  x   y   z =? rhs
+
+    [x ↦ a, y ↦ b, z ↦ c]
+
+  m = λ a b c. rhs[x ↦ a, y ↦ b, z ↦ c]   (this can fail)
+
+  already in Agda:
+
+       a
+  m (x, y) =? rhs
+
+    (x, y) ↦ a
+      x ↦ a.1
+      y ↦ a.2
+
+       a
+  m (x, x) =? rhs
+
+    x ↦ a.1   (incompatible partial substitutions)
+    x ↦ a.2      (more formally: there is no least upper bound)
+
+
+  assume: f : Bool → Bool
+
+        a
+  Γ ⊢ m (λ x. f x) ↦ f True
+
+    Γ    ⊢ (λ x. f x) ↦ a
+    Γ, x ⊢ f x ↦ a x           (pattern unification problem again!)
+
+               a'
+      Γ, x ⊢ f x  ↦  a x
+
+         Γ, x ⊢ x ↦ a'   --> return [x ↦ a']
+	 solve f ↦ λ a'. a a'
+
+    return [f ↦ λ a'. a a']
+
+  m = λ a. (f True)[f ↦ λ a'. a a']
+      λ a. a True
+
+          a
+  m (λ f x. f x) ↦ rhs
+
+   Γ ⊢ (λ f x. f x) ↦ a
+   Γ, f, x ⊢ f x ↦ a f x
+
+  Actual rules:  Γᵤ|Γₛ|Γₚ ⊢ t ↦ rhs
+     Γᵤ : "unsolvable" (irrelvant to to problem)
+     Γₛ : "solvable"   (variables to be mapped)
+     Γₚ : "parameter"  (variables which solvable vars can be applied to)
+
+                a
+  |Γ| ⊢ m (λ f x. f x) ↦ rhs
+     |Γ|f, x ⊢ f x ↦ a f x  error f is not solvable
+
+
+  |every meta|f m (λ x. f x) ↦ rhs
+
+                      a      b  c  d
+  every meta|f| ⊢ (λ x. f x) .  .  .
+
+                         a
+  every meta|f| ⊢ m (λ x. f x) ↦ rhs
+
+              a'
+     |f|x ⊢ f x ↦ a x
+
+        f|x| ⊢ x ↦ a'       -- OK (x is solvable)
+
+
+Still not covered:
+
+   m (λ x. (f x).1) ↦ rhs
+
+       (f x).1 ↦ a x
+
+Extra thing:
+   eliminate projections by eta expansion (recursively)
+
+   algorithm = recursive (pattern unification + projection elimination)
+-}
+
+
+-- Leibniz equality
+let Eq : {A : U} → A → A → U
+    = λ {A} x y. (P : A → U) → P x → P y;
+let refl : {A : U}{x : A} → Eq {A} x x
+    = λ _ px. px;
+
+-- inline type annotation
+let the : (A : U) → A → A = λ _ x. x;
+
+let flip : {A B : U}{C : A → B → U} → ((a : A)(b : B) → C a b) → (b : B)(a : A) → C a b
+  = λ f x y. f y x;
+
+let curry : {A : U}{B : A → U}{C : (a : A) × B a → U}
+            → ((ab : (a : A) × B a) → C ab) → (a : A)(b : B a) → C (a, b)
+  = λ f a b. f (a, b);
+
+let uncurry : {A : U}{B : A → U}{C : (a : A) × B a → U}
+              → ((a : A)(b : B a) → C (a, b)) → (ab : (a : A) × B a) → C ab
+  = λ f ab. f ab.1 ab.2;
+
+let skolem : {A : U}{B : A → U}{C : (a : A) → B a → U}
+             → ((a : A) → (b : B a) × C a b)
+             → ((b : (a : A) → B a) × ((a : A) → C a (b a)))
+  = λ f. (λ a. (f a).1, λ a. (f a).2);
+
+let unskolem : {A : U}{B : A → U}{C : (a : A) → B a → U}
+             → ((b : (a : A) → B a) × ((a : A) → C a (b a)))
+             → ((a : A) → (b : B a) × C a b)
+  = λ f a. (f.1 a, f.2 a);
+
+
+-- let m : (U → U → U) → U = _;
+-- let p = λ (f : U → U → U). the (Eq (m (flip f)) (f U (U → U))) refl;
+
+let m : (U × U → U) → U = _;
+let p = λ (f : U → U → U). the (Eq (m (λ x. f x.2 x.1)) (f U (U → U))) refl;
+
+U
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- let comp :
+--   {A}{B : A → U}{C : (a : _) → B a → U}
+--   → (f : {a}(b : B a) → C a b)
+--   → (g : (a : A) → B a)
+--   → (a : A) → C a (g a)
+--   = λ f g x. f {x}(g x);
+
+-- let m : (U × U → U) → U = _;
+-- let p = λ (f : U → U → U). the (Eq (m (uncurry f)) (f U (U → U))) refl;
+
+-- let m : (U × U → U) → U = _;
+-- let p = λ (f : U → U → U). the (Eq (m (λ x. f x.2 x.1)) (f U (U → U))) refl;
+
+-- let m : (U → U → U) → U = _;
+-- let p = λ (f : U → U → U). the (Eq (m (flip f)) (f U (U → U))) refl;
+
+{-
+
+                  a
+    |f| ⊢ m (λ x y. f y x) ↦ f U (U → U)
+
+
+    |f| ⊢ (λ x y. f y x) ↦ a
+    |f| ⊢ (λ x y. f y x) ↦ a
+    |f|x ⊢  λ y. f y x ↦ a x
+    |f|x, y ⊢ f y x ↦ a x y
+
+                  a' b'
+      f|x, y| ⊢ f y  x ↦ a x y
+
+        f|x, y| ⊢ y ↦ a'   [y ↦ a']
+	f|x, y| ⊢ x ↦ b'   [x ↦ b']
+        [f ↦ λ a' b'. a b' a']
+
+
+    m ↦ λ a. (λ a' b'. a b' a') U (U → U)
+    m ↦ λ a. a (U → U) U
+
+-}
+
+-- -- eta-contraction
+-- let m : (U → U × U) → U = _;
+-- let p = λ (f : U → U × U). the (Eq (m (λ x. ((f x).1, (f x).2))) ((f U).1)) refl;
+
+-- -- eta + flip
+-- let m : (U → U × U) → U = _;
+-- let p = λ (f : U → U × U). the (Eq (m (λ x. ((f x).2, (f x).1))) ((f U).1)) refl;
+
+-- -- non-linearity + currying
+
+-- let m : U × U × U → U = _;
+-- let p = λ (A : U)(B : U). the (Eq (m (A, B, B)) A) refl;
+
+
+-- let m : U → U → (U → U → U) → U = _;
+-- let p = λ A B (C : U → U → U). the (Eq (m A B (flip C)) (C A B)) refl;
+
+-- let m : U × U → U = _;
+-- let p = λ A. the (Eq A.1 (m (A.1, A.2))) refl;
+
+-- let m : (U → U) → U = _;
+-- let p = λ (f : U → U × U). the (Eq (m (λ A. (f A).1)) ((f U).1)) (refl {_}{(f U).1});
+
+-- recursive (inversion + projection elimination)
+
+{-
+
+     m σ =? rhs
+
+     σ   : Γ → Δ
+     σ⁻¹ : Δ ~> Γ
+
+     Γ is split to 3 parts:
+
+     Γᵤ;Γₛ;Γₚ        unsolvable;solvable;parameter
+
+       Γᵤ;Γₛ;Γₚ ⊢ x σ =? rhs
+
+             a
+     m (λ A. (f A).1) ↦ (f U).1
+
+                                          partial sub                expansion
+       |f|      ⊢ λ A. (f A).1 ↦ a A
+       |f|A     ⊢ (f A).1      ↦ a A                           [f ↦ λ x. (f₁ x, f₂ x)]
+       |f₁,f₂|A ⊢ f₁ A         ↦ a A    [f₁ ↦ λ x. a x]
+-}
+
+
+
+{-
+          a
+    m (A.1, A.2) =? A.1
+
+                        partial map       expansion
+     (A.1, A.2) =? a
+       A.1 =? a.1                      [A ↦ (A₁, A₂)]
+       A₁  =? a.1        [A₁ ↦ a.1]
+       A.2 =? a.2
+       A₂  =? a.2        [A₂ ↦ a.2]
+
+
+
+   rhs : A.1[A ↦ (A₁, A₂)] = A₁
+         A₁[A₁ ↦ a.1] = a.1
+   solution : m ↦ λ a. a.1
+
+-}
+
+
+
+-- let m : U × U × U → U × U × U = _;
+-- λ A B C. the (Eq (m (A, B, C)) (A, B, C)) refl
+
+-- let m : (U → U → U) → (U → U → U) → U = _;
+-- λ (F : U × U → U)(G : U × U → U). the (Eq (m (flip (curry F)) (curry G)) (F (U, U → U))) refl
+
+-- let m : ((U → U → U) → U) → U = _;
+-- λ (F : (U × U → U) → U). the (Eq (m (λ f. F (λ xy. f xy.1 xy.2))) U) refl
+
+-- let m : (U → U → U) → U = _;
+-- λ (f : U × U → U). the (Eq (m (curry f)) (f (U, U → U))) refl
+
+-- let m : ((U × U → U) → U) → U = _;
+-- λ (f : (U → U → U) → U). the (Eq (m (λ g. f (flip (curry g)))) (f (λ A B. A))) refl
+
+-- let m : (U → U → U × U) → U = _;
+-- λ (f : U × U → U)(g : U × U → U). the (Eq (m (λ x y. (f (x, y), g (y, x)))) (g (f (U, U), U))) refl
+
+-- let m : U → U = _;
+-- λ (x : U × U). the (Eq (m x.1) (x.1 → x.1)) refl
+
+-- let m : (U → U → U) → U = _;
+-- λ (f : U → U → U × U). the (Eq {U} (m (λ x y. (f y x).1)) (f U (U → U)).1) (refl {U} )
+
+-- let m : U → U → U → U = _;
+-- let p = λ A B. the (Eq (m A B A) B) refl;
+
+-- λ (A : U) (B : A → U).
+-- let m : (a : A) → B a → (a' : A) → B a = _;
+-- λ (a : A)(b : B a). the (Eq (m a b a) b) (refl {_}{b})"
+
+-- U
+
+
+
+{-
+
+NOTES
+
+- Contextual metavariables
+- Pattern unification
+  cat: (α[σⁱ∘σᵉ] = rhs[σᵉ]) iff (α = rhs[σⁱ⁻¹])
+
+  - efficiency:
+    - quote         : Val → Tm
+    - rename        : Val Δ → Ren Γ Δ → Tm Γ
+    - partialRename : Val Δ → PartialRen Γ Δ → Tm Γ
+
+- Sigmas + definitional isos
+  - convert to pattern: eliminate sigma (Abel & Pientka), eta-reduce
+    - eta expansion: efficient
+    - Skolemization: slow, complicated
+  - invert directly:
+    - Agda: nested currying, projected vars
+
+- Algo:
+  - split context to unsolvable|solvable|parameter
+  - invert values
+  - return a factored partial substitution:
+
+       Γ ~> Δ' → Δ
+         σ     δ
+
+       σ is partial + neutral
+       δ is total + disjoint  (in a moment about disjointness)
+
+- Efficiency:
+  - rename     : Val Δ → Ren Γ Δ → Tm Γ
+  - neutralSub : Val Δ → NeutralSub Γ Δ → Tm Γ
+  - force      : Val Δ → DisjointSub Γ Δ → Val Γ
+
+- Pruning:
+ - ideally similarly "strong" as pattern unif
+ - requires partial terms?
+
+  - prune "x" from "α (x, y)"
+  - prune "y" from "m (λ x. (f x, y))"
+
+   m    : Δ  → A
+   pr   : Δ' → Δ
+   pr⁻¹ : Δ ~> Δ'      -- partial inverse!
+   m'   : Δ' → A[pr]
+
+   m ↦ λ δ. m'[pr⁻¹]
+
+   pr   : A × B → A
+   pr⁻¹ : A → A × B
+
+-}

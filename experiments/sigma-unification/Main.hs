@@ -201,9 +201,27 @@ ex3 = main' "elab" $ unlines [
   "              → ((a : A)(b : B a) → C (a, b)) → (ab : (a : A) * B a) → C ab",
   "  = λ f ab. f ab.1 ab.2;",
 
+  "let skolem : {A : U}{B : A → U}{C : (a : A) → B a → U}",
+  "             → ((a : A) → (b : B a) * C a b)",
+  "             → ((b : (a : A) → B a) * ((a : A) → C a (b a)))",
+  "  = λ f. (λ a. (f a).1, λ a. (f a).2);",
+
+  "let unskolem : {A : U}{B : A → U}{C : (a : A) → B a → U}",
+  "             → ((b : (a : A) → B a) * ((a : A) → C a (b a)))",
+  "             → ((a : A) → (b : B a) * C a b)",
+  "  = λ f a. (f.1 a, f.2 a);",
+
+  "let comp : {A B C} → (B → C) → (A → B) → A → C",
+  "  = λ f g x. f (g x);",
+
+  "let m : (U * U → U) → U = _;",
+  "λ (f : U → U → U). the (Eq (m (uncurry f)) (f U (U → U))) refl"
+
   -- "let m : (U * U → U) → U = _;",
   -- "λ (f : U → U → U). the (Eq (m (λ x. f x.2 x.1 )) (f U (U → U))) refl"
 
+  -- "let m : (U → U → U) → (U → U → U) = _;",
+  -- "λ (f : U → U → U). the (Eq (m (flip f)) f) refl"
 
   -- "let m : U → U → (U → U → U) → U = _;",
   -- "λ A B (C : U → U → U). the (Eq (m A B (flip C)) (C A B)) refl"

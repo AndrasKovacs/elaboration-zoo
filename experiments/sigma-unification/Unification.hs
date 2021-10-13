@@ -156,14 +156,6 @@ fromCurry psub sp t = go (reverseSpine sp) t where
       VLam "x" i $ Fun \x -> go sp (vApp v x i)
   go _ v = v
 
--- spToCurry :: PartialSub -> Spine -> Spine
--- spToCurry psub = go where
---   go :: Spine -> Spine
---   go (SApp sp t i) = case forceWithExpansion psub t of
---     VPair t u -> go (SApp (SApp sp t i) u i)
---     _         -> SApp (go sp) t i
---   go sp = sp
-
 -- | Try to eliminate pairs and projections from spine.
 prunePrep :: PartialSub -> MetaVar -> Spine -> IO (MetaVar, Spine)
 prunePrep psub m sp = do
@@ -319,41 +311,29 @@ psubstSp psub t = \case
   SProjField sp x n -> ProjField <$> psubstSp psub t sp <*> pure x <*> pure n
 
 psubstSpWithPruning :: PartialSub -> MetaVar -> Spine -> IO Tm
-psubstSpWithPruning psub m sp = do
-  ms <- readIORef mcxt
-  -- traceShowM ("prunesp", m, sp)
+psubstSpWithPruning psub m sp =
   try (psubstSp psub (Meta m) sp) >>= \case
-    Left NeedExpansion -> impossible
+    Left NeedExpansion ->
+      impossible
     Left UnifyError -> do
-      -- traceShowM ("try to prune", m, sp)
       (m, sp) <- prunePrep psub m sp
-      -- traceShowM ("prepped", m, sp)
       t <- pruneVFlex psub m sp
-      -- traceShowM ("pruned", t)
       pure t
     Right t -> do
       pure t
 
 psubst :: Dbg => PartialSub -> Val -> IO Tm
 psubst psub t = case forceWithExpansion psub t of
+
   VFlex m' sp -> do
-    -- traceShowM ("psubstmeta", m', sp)
     case psub^.occ of
       Nothing -> do
         psubstSpWithPruning psub m' sp
-      Just m -> case compareMetas m m' of
-        EQ -> throwIO UnifyError
-        LT -> do
-          -- mty' <- case lookupMeta m' of Unsolved _ a -> pure a; _ -> impossible
-          -- mty' <- psubst (PSub (Just m) 0 0 mempty (-1) mempty) mty'
-          -- strengthenMeta m m' (eval [] mty')
-          -- traceM "foobar"
-          psubstSpWithPruning psub m' sp
-        GT -> do
-          psubstSpWithPruning psub m' sp
+      Just m | m == m'   -> throwIO UnifyError -- occurs check
+             | otherwise -> psubstSpWithPruning psub m' sp
 
   VRigid (Lvl x) sp -> case IM.lookup x (psub^.sub) of
-    Nothing -> throwIO UnifyError
+    Nothing -> throwIO UnifyError -- scope error
     Just x' -> psubstSp psub (quote (psub^.dom) x') sp
 
   VLam x i t  -> Lam x i <$> psubst (lift psub) (t $$ VVar (psub^.cod))
@@ -388,13 +368,9 @@ invertVal gammau gammas gammap t rhsSp psub = go gammap t rhsSp psub where
         try @UnifyError (invertSp gammas gammap gammap (psub^.dom) sp) >>= \case
           Right spInv -> do
             rhs <- psubstSp spInv (Var (Ix (spineLen sp))) rhsSp
-            -- traceShowM ("invert param", x, psub^.dom, lams sp rhs)
             pure $ psub & sub %~ IM.insert (coerce x) (eval (idEnv (psub^.dom)) (lams sp rhs))
           Left NeedExpansion -> do
-            -- traceShowM ("var expansion needed", quote gammap (VRigid x sp))
             psub <- pure $ etaExpandVar gammap x sp psub
-            -- traceShowM ("var expanded", x, quote gammap $ forceWithExpansion psub (VRigid x SNil),
-            --            quote gammap $ forceWithExpansion psub (VRigid x sp))
             go gammap (VRigid x sp) rhsSp psub
           Left e ->
             throwIO e

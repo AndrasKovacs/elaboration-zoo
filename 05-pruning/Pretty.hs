@@ -4,8 +4,6 @@ module Pretty (prettyTm, showTm0, displayMetas) where
 import Control.Monad
 import Data.IORef
 import Text.Printf
-import Data.List (sortBy)
-import Data.Ord (comparing)
 
 import qualified Data.IntMap.Strict as IM
 
@@ -95,7 +93,7 @@ showTm0 t = prettyTm 0 [] t []
 displayMetas :: IO ()
 displayMetas = do
   ms <- readIORef mcxt
-  forM_ (sortBy (comparing (weight . link . snd)) $ IM.toList ms) $ \(m, e) -> case e of
-    Unsolved _ a -> printf "let ?%s : %s = ?;\n"  (show m) (showTm0 $ quote 0 a)
-    Solved _ v a -> printf "let ?%s : %s = %s;\n" (show m) (showTm0 $ quote 0 a) (showTm0 $ quote 0 v)
+  forM_ (IM.toList ms) $ \(m, e) -> case e of
+    Unsolved a -> printf "let ?%s : %s = ?;\n"  (show m) (showTm0 $ quote 0 a)
+    Solved v a -> printf "let ?%s : %s = %s;\n" (show m) (showTm0 $ quote 0 a) (showTm0 $ quote 0 v)
   putStrLn ""

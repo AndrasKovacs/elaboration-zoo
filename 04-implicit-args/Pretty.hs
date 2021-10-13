@@ -57,15 +57,18 @@ prettyTm prec = go prec where
     App t u Impl              -> par p appp $ go appp ns t . (' ':) . bracket (go letp ns u)
 
     Lam (fresh ns -> x) i t   -> par p letp $ ("λ "++) . lamBind x i . goLam (ns:>x) t where
-                                   goLam ns (Lam x i t) = (' ':) . lamBind x i . goLam (ns:>x) t
-                                   goLam ns t           = (". "++) . go letp ns t
+                                   goLam ns (Lam (fresh ns -> x) i t) =
+                                     (' ':) . lamBind x i . goLam (ns:>x) t
+                                   goLam ns t =
+                                     (". "++) . go letp ns t
 
     U                         -> ("U"++)
 
     Pi "_" Expl a b           -> par p pip $ go appp ns a . (" → "++) . go pip (ns:>"_") b
 
     Pi (fresh ns -> x) i a b  -> par p pip $ piBind ns x i a . goPi (ns:>x) b where
-                                   goPi ns (Pi x i a b) | x /= "_" = piBind ns x i a . goPi (ns:>x) b
+                                   goPi ns (Pi (fresh ns -> x) i a b)
+                                     | x /= "_" = piBind ns x i a . goPi (ns:>x) b
                                    goPi ns b = (" → "++) . go pip ns b
 
     Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a

@@ -24,8 +24,8 @@ vAppSp t = \case
 
 vMeta :: MetaVar -> Val
 vMeta m = case lookupMeta m of
-  Solved _ v _ -> v
-  Unsolved{}   -> VMeta m
+  Solved v _ -> v
+  Unsolved{} -> VMeta m
 
 vAppPruning :: Env -> Val -> Pruning -> Val
 vAppPruning env ~v pr = case (env, pr) of
@@ -52,7 +52,7 @@ eval env = \case
 
 force :: Val -> Val
 force = \case
-  VFlex m sp | Solved _ t _ <- lookupMeta m -> force (vAppSp t sp)
+  VFlex m sp | Solved t _ <- lookupMeta m -> force (vAppSp t sp)
   t -> t
 
 lvl2Ix :: Lvl -> Lvl -> Ix

@@ -1,48 +1,10 @@
 ## elabzoo-pruning
 
 New features:
-- ordered metacontext
 - typed metas
 - pruning
 
 You can look at [example.txt](example.txt) for examples which can be elaborated thanks to new features.
-
-#### Typed & ordered metacontext
-
-Previously, the metacontext was conceptually an untyped mutual block of definitions.
-
-Now it's typed and ordered by dependency. Hence, it can be viewed as an ordinary
-sequence of let-definitions.
-
-When every meta solution is in normal form, the ordering is not relevant in the
-elaboration output, since no meta solution refers to any other meta solutions (everything is unfolded in normal forms).
-
-However, it is a crucial optimization to allow meta solution in non-normal form.
-We don't support it in this package, but later we will. In this case, meta solutions
-can refer to other metas:
-
-    let ?0 : A = .........
-    let ?1 : B = ..... ?0 ......
-
-This prevents size blowups of solutions. At the same time, we want the solutions
-to form an ordinary non-mutual sequence of let-definitions, so that the
-elaboration output is a legal core expression, and can be validated by type
-checking. Additionally, we can use the dependency information to avoid unfolding
-metas during occurs/scope checking in some situations.
-
-**Implementation.** We use an *order-maintenance structure*. The metacontext is extended
-with additional data. Now, entries form a doubly-linked list (linked by metavar indices),
-which is in dependency-order at all times. Every meta entry has a floating point *weight*,
-such that weights are in increasing order in the linked list of entries.
-
-- We compare metas for dependency ordering by simply comparing the weights.
-- Whenever we add a new meta, or move an existing meta, we have to update links and
-  weights to maintain invariants.
-- When a new entry is inserted between existing entries, we take the *average*
-  of the weights of neighboring entries, as the new weight. This averaging may
-  fail if we run out of floating point precision. In that case, we reassign
-  every weight in the metacontext to get more precision headroom.
-
 
 #### Pruning
 

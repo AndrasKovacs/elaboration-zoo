@@ -22,7 +22,7 @@ import qualified Presyntax as P
 freshMeta :: Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
   let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
-  m <- pushMeta closed
+  m <- newMeta closed
   pure $ AppPruning (Meta m) (pruning cxt)
 
 unifyCatch :: Cxt -> Val -> Val -> IO ()

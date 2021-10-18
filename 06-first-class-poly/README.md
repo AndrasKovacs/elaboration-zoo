@@ -224,7 +224,7 @@ QL is strictly worse than DOE in terms of performance, complexity and power.
   memoization (as in the actual GHC implementation), this can be quadratic.  The
   QL pass can be viewed as a poorly informed eager approximation of DOE: it
   *always* tries to do a pre-processing pass, even if we later learn that there
-  is no point it. DOE on the other hand is *exact*: we do a postponing (which
+  is no point doing so. DOE on the other hand is *exact*: we do a postponing (which
   has some constant computational overhead) precisely at the point of insertion
   ambiguity.
 - The QL pass duplicates elaboration logic. In GHC, the QL pass is intentionally

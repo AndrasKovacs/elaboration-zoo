@@ -3,7 +3,6 @@
 *.o
 /dist
 *#
-TAgGS
+TAGS
 .stack-work/
-*.cabal
 *.lock

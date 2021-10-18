@@ -1,0 +1,49 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: d82ab7968ef1ab405830e527e8b216e9ba968a737d0b6a92021ad2605e433ec5
+
+name:           elabzoo-super-mega-poly
+version:        0.1.0.0
+description:    Small implementations of elaborators for type theories, with varying complexity and feature set
+category:       Language
+homepage:       https://github.com/AndrasKovacs/elaboration-zoo#readme
+bug-reports:    https://github.com/AndrasKovacs/elaboration-zoo/issues
+author:         András Kovács
+maintainer:     puttamalac@gmail.com
+copyright:      2019 András Kovács
+license:        BSD3
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/AndrasKovacs/elaboration-zoo
+
+executable elabzoo-super-mega-poly
+  main-is: Main.hs
+  other-modules:
+      Common
+      Cxt
+      Elaboration
+      Errors
+      Evaluation
+      Metacontext
+      Parser
+      Presyntax
+      Pretty
+      Syntax
+      Unification
+      Value
+      Paths_elabzoo_super_mega_poly
+  hs-source-dirs:
+      ./.
+  default-extensions: DerivingVia DeriveAnyClass ConstraintKinds EmptyCase FlexibleContexts GeneralizedNewtypeDeriving LambdaCase OverloadedStrings PatternSynonyms StandaloneDeriving ScopedTypeVariables Strict TupleSections ViewPatterns
+  ghc-options: -Wall -Wno-name-shadowing -Wno-missing-signatures -Wno-unused-do-bind -Wno-unused-matches -O
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+  default-language: Haskell2010

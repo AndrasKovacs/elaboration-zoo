@@ -1,0 +1,37 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.33.0.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 6e3542288d5db17383430be188e6620ad82ef9dbe372e2cd30c4b70ae73ef83e
+
+name:           elabzoo-univ-lifts
+version:        0.1.0.0
+description:    Small implementations of elaborators for type theories, with varying complexity and feature set
+category:       Language
+homepage:       https://github.com/AndrasKovacs/elaboration-zoo#readme
+bug-reports:    https://github.com/AndrasKovacs/elaboration-zoo/issues
+author:         András Kovács
+maintainer:     puttamalac@gmail.com
+copyright:      2019 András Kovács
+license:        BSD3
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/AndrasKovacs/elaboration-zoo
+
+executable elabzoo-univ-lifts
+  main-is: Main.hs
+  other-modules:
+      Paths_elabzoo_univ_lifts
+  hs-source-dirs:
+      ./.
+  default-extensions: BlockArguments DerivingVia LambdaCase NoMonomorphismRestriction OverloadedStrings PatternSynonyms RecordWildCards StandaloneDeriving Strict TupleSections ViewPatterns
+  ghc-options: -Wall -Wno-name-shadowing -Wno-missing-signatures -Wno-unused-do-bind -Wno-unused-matches -O
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+  default-language: Haskell2010

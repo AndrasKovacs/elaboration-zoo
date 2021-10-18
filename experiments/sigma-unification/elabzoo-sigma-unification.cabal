@@ -1,0 +1,75 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.34.4.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 364f1eeb7892349886df7559ca56f30400e9ef818c7911ddbffe8236b6fa0564
+
+name:           elabzoo-sigma-unification
+version:        0.1.0.0
+description:    Small implementations of elaborators for type theories, with varying complexity and feature set
+category:       Language
+homepage:       https://github.com/AndrasKovacs/elaboration-zoo#readme
+bug-reports:    https://github.com/AndrasKovacs/elaboration-zoo/issues
+author:         András Kovács
+maintainer:     puttamalac@gmail.com
+copyright:      2019 András Kovács
+license:        BSD3
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/AndrasKovacs/elaboration-zoo
+
+executable elabzoo-sigma-unification
+  main-is: Main.hs
+  other-modules:
+      Common
+      Cxt
+      Elaboration
+      Errors
+      Evaluation
+      Metacontext
+      Parser
+      Presyntax
+      Pretty
+      Syntax
+      Unification
+      UnificationBackup
+      Value
+      Paths_elabzoo_sigma_unification
+  hs-source-dirs:
+      ./
+  default-extensions:
+      BangPatterns
+      BlockArguments
+      ConstraintKinds
+      DeriveAnyClass
+      DerivingVia
+      EmptyCase
+      FlexibleContexts
+      FlexibleInstances
+      GeneralizedNewtypeDeriving
+      LambdaCase
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StandaloneDeriving
+      MultiParamTypeClasses
+      ScopedTypeVariables
+      Strict
+      TypeApplications
+      TemplateHaskell
+      FunctionalDependencies
+      TupleSections
+      ViewPatterns
+      MagicHash
+  ghc-options: -Wall -Wno-name-shadowing -Wno-missing-signatures -Wno-unused-do-bind -Wno-unused-matches -O
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+    , microlens-platform
+    , mtl
+  default-language: Haskell2010

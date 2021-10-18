@@ -1,6 +1,0 @@
-
-λ (List : U → U)
-  (f    : {A : U} → A → List A → A)
-  (g    : U → {A : U} → A → A)
-  (xs   : List ({A : U} → U → A → A)).
-  f (λ x. g x) xs

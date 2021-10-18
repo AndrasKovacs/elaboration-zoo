@@ -30,7 +30,7 @@ mainWith getOpt getRaw = do
 
   let elab = do
         (t, file) <- getRaw
-        res <- infer (emptyCxt (initialPos file)) t <* checkEverything
+        res <- (infer (emptyCxt (initialPos file)) t <* checkEverything)
                `catch` \e -> displayError file e >> exitSuccess
         putStrLn ("\n" ++ replicate 80 '-' ++ "\n")
         pure res
@@ -60,21 +60,13 @@ main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
 
+-- this one doesn't work - see README
 test :: IO ()
 test = main' "elab" $ unlines [
-  "-- we use Eq to test unification",
-  "let Eq : {A : U} → A → A → U",
-  "    = λ {A} x y. (P : A → U) → P x → P y;",
-  "let refl : {A : U}{x : A} → Eq {A} x x",
-  "    = λ _ px. px;",
-  "let the : (A : U) → A → A = λ _ x. x;",
-  "let m : (A : U)(B : U) → U → U → U = _;",
-
-  "let test = λ a b. the (Eq (m a a) (λ x y. y)) refl;",
-  "U"
+  "\\f x y. f x y"
   ]
 
-
+-- pruning examples
 ex1 :: IO ()
 ex1 = main' "elab" $ unlines [
 
@@ -105,7 +97,6 @@ ex1 = main' "elab" $ unlines [
 
   "-- 4. Examples requiring pruning",
   "let pr1 = λ f x. f x;",
-  -- "let pr2 = λ f x y. f x y;",  -- requires non-pattern problem postponing
   "let pr3 = λ f. f U;",
   "U"
   ]

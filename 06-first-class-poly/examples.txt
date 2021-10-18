@@ -1,5 +1,10 @@
 
--- preliminary types and definitions
+-- Examples for elaborating first-class polymorphism from
+--   https://www.microsoft.com/en-us/research/uploads/prod/2017/07/impredicative-pldi18.pdf
+-- the same examples are also found in
+--   https://www.microsoft.com/en-us/research/publication/a-quick-look-at-impredicativity/
+
+-- assumed constants
 ------------------------------------------------------------
 
 λ (List   : U → U)
@@ -35,27 +40,19 @@ let choose : {A} → A → A → A         = const;
 let auto   : IdTy → IdTy             = id;
 let auto2  : {B} → IdTy → B → B      = λ _ b. b;
 
-
--- Table
---------------------------------------------------------------------------------
-
 -- A: polymorphic instantiation
 --------------------------------------------------------------------------------
 
--- No generalization
 let A1 = λ x y. y;
 
--- No generalization
 let A2 : IdTy → IdTy = choose id;
 
 let A3 = choose nil ids;
 
--- No generalization
 let A4 : IdTy → IdTy = λ (x : IdTy). x x;
 
 let A5 = id auto;
 
--- No generalization
 let A6 : {B} → IdTy → B → B = id auto2;
 
 let A7 = choose id auto;
@@ -65,7 +62,6 @@ let A7 = choose id auto;
 --   do *not* reorder or float out implicit args, intentionally, since we
 --   support mixing implicit and explicit args in arbitrary order.
 
--- No generalization
 let A9 : ({A} → (A → A) → List A → A) → IdTy
     = λ f. f (choose id) ids;
 
@@ -93,10 +89,8 @@ let C1 = length ids;
 
 let C2 = tail ids;
 
--- No generalization
 let C3 : IdTy = head ids;
 
--- No generalization
 let C4 : List IdTy = single id;
 
 let C5 = cons id ids;
@@ -105,15 +99,14 @@ let C6 = cons (λ x. x) ids;
 
 let C7 = append (single inc) (single id);
 
--- No generalization
 let C8 : _ → IdTy = λ (g : {A} → List A → List A → A). g (single id) ids;
 
 let C9 = map poly (single id);
 
 let C10 = map head (single ids);
 
--- -- D: application functions
--- --------------------------------------------------------------------------------
+-- D: application functions
+--------------------------------------------------------------------------------
 
 let D1 = app poly id;
 
@@ -133,7 +126,6 @@ let D5 = revapp argST runST;
 --   k h lst;
 --   -- fails again because of mismatched implicit/explicit arguments
 
--- No generalization
 let E2 =
   λ (h : Int → {A} → A → A)(k : {A} → A → List A → A)(lst : List ({A} → Int → A → A)).
   k (λ x. h x) lst;

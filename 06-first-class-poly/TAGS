@@ -1,0 +1,234 @@
+
+./Syntax.hs,424
+module Syntax Syntax1,2
+type Ty Ty5,6
+type Pruning Pruning10,11
+newtype RevPruning RevPruning14,15
+revPruning revPruning16,17
+data PathPath20,21
+  = HereHere21,22
+  | Define Define22,23
+  | Bind Bind23,24
+closeTy closeTy30,31
+data TmTm36,37
+  = Var Var37,38
+  | Lam Lam38,39
+  | App App39,40
+  | AppPruning AppPruning40,41
+  | UU41,42
+  | Pi Pi42,43
+  | Let Let43,44
+  | Meta Meta44,45
+
+./Pretty.hs,209
+module Pretty Pretty1,2
+fresh fresh16,17
+atomp atomp22,23
+appp appp23,24
+pip pip24,25
+letp letp25,26
+par par29,30
+prettyTm prettyTm32,33
+showTm0 showTm088,89
+displayMetas displayMetas92,93
+
+./Parser.hs,567
+type Parser Parser18,19
+ws ws20,21
+withPos withPos23,24
+lexeme lexeme26,27
+symbol symbol27,28
+char char28,29
+parens parens29,30
+braces braces30,31
+pArrow pArrow31,32
+pBind pBind32,33
+keyword keyword34,35
+pIdent pIdent37,38
+pKeyword pKeyword43,44
+pAtom pAtom48,49
+pArg pArg55,56
+pSpine pSpine60,61
+pLamBinder pLamBinder66,67
+pLam pLam72,73
+pPiBinder pPiBinder80,81
+pPi pPi86,87
+pFunOrSpine pFunOrSpine93,94
+pLet pLet100,101
+pTm pTm111,112
+pSrc pSrc114,115
+parseString parseString117,118
+parseStdin parseStdin126,127
+
+./Common.hs,517
+module Common Common1,2
+type Dbg Dbg15,16
+impossible impossible17,18
+type Name Name20,21
+data Icit Icit22,23
+data Icit = Impl Impl22,23
+data Icit = Impl | Expl Expl22,23
+icit icit24,25
+instance Show Show Icit28,29
+  show show29,30
+newtype Ix Ix33,34
+newtype Ix  = Ix {unIx unIx33,34
+newtype Lvl Lvl36,37
+newtype Lvl = Lvl {unLvl unLvl36,37
+newtype MetaVar MetaVar38,39
+newtype MetaVar = MetaVar {unMetaVar unMetaVar38,39
+pattern (:(46,47
+pattern xs xs47,48
+pattern xs :> :>47,48
+
+./Unification.hs,713
+module Unification Unification1,2
+data PartialRenaming PartialRenaming18,19
+data PartialRenaming = PRen PRen18,19
+    occ occ19,20
+  , dom dom20,21
+  , cod cod21,22
+  , ren ren22,23
+lift lift25,26
+skip skip29,30
+invert invert34,35
+pruneTy pruneTy52,53
+pruneMeta pruneMeta62,63
+data SpinePruneStatusSpinePruneStatus77,78
+  = OKRenaming OKRenaming78,79
+  | OKNonRenaming OKNonRenaming79,80
+  | NeedsPruning NeedsPruning80,81
+pruneVFlex pruneVFlex84,85
+renameSp renameSp109,110
+rename rename114,115
+lams lams131,132
+solve solve140,141
+solveWithPRen solveWithPRen146,147
+unifySp unifySp164,165
+flexFlex flexFlex175,176
+intersect intersect195,196
+unify unify210,211
+
+./Errors.hs,422
+module Errors Errors1,2
+data UnifyError UnifyError12,13
+data UnifyError = UnifyErrorUnifyError12,13
+data ElabErrorElabError15,16
+  = NameNotInScope NameNotInScope16,17
+  | CantUnify CantUnify17,18
+  | InferNamedLamInferNamedLam18,19
+  | NoNamedImplicitArg NoNamedImplicitArg19,20
+  | IcitMismatch IcitMismatch20,21
+data Error Error23,24
+data Error = Error Error23,24
+displayError displayError26,27
+
+./Evaluation.hs,264
+module Evaluation Evaluation1,2
+($($$)9,10
+vApp vApp12,13
+vAppSp vAppSp19,20
+vMeta vMeta24,25
+vAppPruning vAppPruning29,30
+vVar vVar36,37
+eval eval41,42
+force force52,53
+lvl2Ix lvl2Ix57,58
+quoteSp quoteSp60,61
+quote quote65,66
+nf nf73,74
+
+./Elaboration.hs,213
+module Elaboration Elaboration1,2
+freshMeta freshMeta21,22
+unifyCatch unifyCatch27,28
+insert' insert'34,35
+insert insert45,46
+insertUntilName insertUntilName52,53
+check check65,66
+infer infer94,95
+
+./Metacontext.hs,375
+module Metacontext Metacontext1,2
+type Blocking Blocking13,14
+data MetaEntryMetaEntry15,16
+  = Unsolved Unsolved17,18
+  | Solved Solved20,21
+  | Unchecked Unchecked27,28
+  | Checked Checked30,31
+nextMetaVar nextMetaVar32,33
+newMeta newMeta36,37
+type MCxt MCxt43,44
+mcxt mcxt45,46
+readMeta readMeta49,50
+lookupMeta lookupMeta56,57
+reset reset60,61
+
+./Presyntax.hs,194
+module Presyntax Presyntax1,2
+data TmTm5,6
+  = Var Var6,7
+  | Lam Lam7,8
+  | App App8,9
+  | U U9,10
+  | Pi Pi10,11
+  | Let Let11,12
+  | SrcPos SrcPos12,13
+  | Hole Hole13,14
+
+./Value.hs,369
+module Value Value1,2
+type Env Env6,7
+type Spine Spine7,8
+data Closure Closure8,9
+data Closure = Closure Closure8,9
+type VTy VTy9,10
+data ValVal11,12
+  = VFlex VFlex12,13
+  | VRigid VRigid13,14
+  | VLam VLam14,15
+  | VPi VPi15,16
+  | VUVU16,17
+pattern VVar VVar18,19
+pattern VVar x x19,20
+pattern VMeta VMeta21,22
+pattern VMeta m m22,23
+
+./Main.hs,121
+module Main Main1,2
+helpMsg helpMsg20,21
+mainWith mainWith27,28
+main main52,53
+main' main'56,57
+ex1 ex160,61
+
+./Cxt/Type.hs,201
+module Cxt.Type Cxt.Type1,2
+data Cxt Cxt6,7
+data Cxt = Cxt Cxt6,7
+    env env7,8
+  , lvl lvl8,9
+  , path path9,10
+  , pruning pruning10,11
+  , srcNames srcNames11,12
+  , pos pos12,13
+
+./Cxt.hs,407
+data Cxt Cxt14,15
+data Cxt = Cxt Cxt14,15
+    env env15,16
+  , lvl lvl16,17
+  , path path17,18
+  , pruning pruning18,19
+  , srcNames srcNames19,20
+  , pos pos20,21
+names names23,24
+showVal showVal29,30
+showTm showTm33,34
+instance Show Show Cxt36,37
+  show show37,38
+emptyCxt emptyCxt39,40
+bind bind43,44
+newBinder newBinder54,55
+define define66,67
+closeVal closeVal76,77

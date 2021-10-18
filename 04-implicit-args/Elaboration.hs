@@ -111,8 +111,9 @@ infer cxt = \case
     go 0 (types cxt)
 
   P.Lam x (Right i) t -> do
-    a      <- eval (env cxt) <$> freshMeta cxt
-    (t, b) <- insert cxt $ infer (bind cxt x a) t
+    a <- eval (env cxt) <$> freshMeta cxt
+    let cxt' = bind cxt x a
+    (t, b) <- insert cxt' $ infer cxt' t
     pure (Lam x i t, VPi x i a $ closeVal cxt b)
 
   P.Lam x Left{} t ->

@@ -173,19 +173,19 @@ unifySp l sp sp' = case (sp, sp') of
 
 
 -- | Solve (Γ ⊢ m spine =? m' spine').
-flexFlex :: Lvl -> MetaVar -> Spine -> MetaVar -> Spine -> IO ()
-flexFlex gamma m sp m' sp'
+flexFlex :: Dbg => Lvl -> MetaVar -> Spine -> MetaVar -> Spine -> IO ()
+flexFlex gamma m sp m' sp' = let
+
+  -- It may be that only one of the two spines is invertible
+  go :: Dbg => MetaVar -> Spine -> MetaVar -> Spine -> IO ()
+  go m sp m' sp' = try (invert gamma sp) >>= \case
+    Left UnifyError -> solve gamma m' sp' (VFlex m sp)
+    Right pren      -> solveWithPRen m pren (VFlex m' sp')
 
   -- usually, a longer spine indicates that the meta is in an inner scope. If we solve
   -- inner metas with outer metas, that means that we have to do less pruning.
-  | length sp < length sp' = flexFlex gamma m' sp' m sp
-
-flexFlex gamma m sp m' sp' =
-
-  -- It may be that only one of the two spines is invertible
-  try (invert gamma sp) >>= \case
-    Left UnifyError -> do {pren <- invert gamma sp'; solveWithPRen m' pren (VFlex m sp)}
-    Right pren      -> solveWithPRen m pren (VFlex m' sp')
+  in if length sp < length sp' then go m' sp' m sp
+                               else go m sp m' sp'
 
 
 -- | Try to solve the problem (Γ ⊢ m spine =? m spine') by intersection.
@@ -204,8 +204,9 @@ intersect l m sp sp' = do
       go _ _ = impossible
 
   case go sp sp' of
-    Nothing -> unifySp l sp sp'
-    Just pr -> () <$ pruneMeta pr m
+    Nothing                      -> unifySp l sp sp'
+    Just pr | any (==Nothing) pr -> () <$ pruneMeta pr m
+            | otherwise          -> pure ()
 
 
 unify :: Lvl -> Val -> Val -> IO ()

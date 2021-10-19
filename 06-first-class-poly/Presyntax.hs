@@ -6,7 +6,7 @@ import Common
 data Tm
   = Var Name                                  -- x
   | Lam Name (Either Name Icit) (Maybe Tm) Tm -- \x. t | \{x}. t | \{x = y}. t |
-                                              -- \(x : A). t | \{x : A}. t | \{x = y}. t
+                                              -- \(x : A). t | \{x : A}. t
   | App Tm Tm (Either Name Icit)              -- t u  | t {u} | t {x = u}
   | U                                         -- U
   | Pi Name Icit Tm Tm                        -- (x : A) -> B | {x : A} -> B

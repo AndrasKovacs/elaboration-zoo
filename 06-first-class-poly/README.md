@@ -46,7 +46,7 @@ The problem in summary:
   point it's too late, as we've already elaborated a term without performing the
   insertion.
 
-## Insertion problems, terminology
+### Insertion problems, terminology
 
 We may call this the **lambda insertion problem**. In the literature, solutions
 to this are called "first-class polymorphism" or "impredicative polymorphism". I
@@ -75,8 +75,8 @@ polymorphism" instead.
 
 There is dually an **application insertion problem**. When we infer type for a
 term, if the type is `{x : A} → B`, apply the term to a fresh meta with type
-`A`. This is the basic insertion behavior that we know from Agda, which lets us
-elaborate `id true` to `id {Bool} true`. But if the inferred type is
+`A`. This is the basic insertion behavior that we know from Agda and GHC, which
+lets us elaborate `id true` to `id {Bool} true`. But if the inferred type is
 meta-headed, we again don't know for sure whether we should insert an
 application. Consider:
 
@@ -86,12 +86,12 @@ This may be typed as `({A} → A → A) → Pair Bool Nat`, but no existing syst
 will succeed at inferring this. At `g true`, they assume that `g` does *not*
 have an implicit function type, and refine its type to `Bool → ...`.
 
-The application insertion problem is general far more difficult than the lambda
-insertion problem, because we would need to invent implicit function types out
-of thin air, and try to somehow refine them. In contrast, lambda insertion does
-not invent anything; at the end of the day it is only allowed to work with
-implicit function types which originate from source annotations. The problem
-with inventing implicit functions is that there are infinite elaboration
+The application insertion problem is in general far more difficult than the
+lambda insertion problem, because we would need to invent implicit function
+types out of thin air, and try to somehow refine them. In contrast, lambda
+insertion does not invent anything; at the end of the day it is only allowed to
+work with implicit function types which originate from source annotations. The
+problem with inventing implicit functions is that there are infinite elaboration
 choices, and there isn't necessarily a minimal or obvious choice. In the above
 example, we could also have as type
 
@@ -110,7 +110,7 @@ MLF system has some support for enhanced application insertion:
 But it also does not handle the exact above case.
 
 
-## Lambda insertion solutions
+### Lambda insertion solutions
 
 There are two ways to solve the lambda insertion problem. I give a short summary
 here, and will give more details about pros and cons later.
@@ -141,7 +141,7 @@ that postponing is generally less precise than solution 1. But I will argue that
 it's practically more favorable, because it's a lot simpler and still very strong
 for practical purposes.
 
-## Dynamic order elaboration
+### Dynamic order elaboration
 
 I call the solution in this package **dynamic order elaboration**, or **DOE**
 for short. It works the following way:
@@ -162,7 +162,8 @@ for short. It works the following way:
   recursively spawn more checking problems but we just perform them until there
   is no more.
 
-That's it. In this project, this is around 150 extra lines.
+That's it. In this project, this is around 150 extra lines compared to
+elabzoo-05.
 
 - This is by a fair margin the simplest solution for first-class polymorphism
   that I know of.
@@ -188,9 +189,9 @@ language, called sixty:
 
 - https://github.com/ollef/sixty
 
-## Comparison
+### Comparison
 
-### 1. Quick Look
+#### 1. Quick Look
 
 Quick Look (QL) is notable as the algorithm implemented in GHC 9.2:
 
@@ -222,7 +223,7 @@ QL is strictly worse than DOE in terms of performance, complexity and power.
 
 - QL traverses the presyntax multiple times. If we don't use additional
   memoization (as in the actual GHC implementation), this can be quadratic.  The
-  QL pass can be viewed as a poorly informed eager approximation of DOE: it
+  QL pass can be viewed as an under-informed eager approximation of DOE: it
   *always* tries to do a pre-processing pass, even if we later learn that there
   is no point doing so. DOE on the other hand is *exact*: we do a postponing (which
   has some constant computational overhead) precisely at the point of insertion
@@ -234,7 +235,7 @@ QL is strictly worse than DOE in terms of performance, complexity and power.
   elaboration pass, which means that DOE can effectively "quick look" into
   arbitrary expressions.
 
-### 2. FCIF
+#### 2. FCIF
 
 Let's give a bit more detail about FCIF as well. FCIF is the algorithm that I
 first developed to address the lambda insertion problem.
@@ -315,13 +316,13 @@ The reason is that when DOE checks `x` in `f x`, the checking type is unknown,
 so it postpones the checking and creates a placeholder meta. But when DOE tries
 to refine the type of `f x` to a function type, the placeholder meta clogs up
 pattern unification. The bound variable `x` in a meta spine is fine, but a
-placeholder meta is not in the pattern fragment!
+placeholder meta is not in the pattern fragment! So we can see that postponing
+does have some ability to clog up unification.
 
 This particular example would be OK with more sophisticated postponing, such as
-the one in Agda. There, we can simply postpone this problem too, and it would be
-shortly unblocked anyway. So we can see that postponing does have some ability
-to clog up unification. FCIF has no issue here, it just marches on and inserts
-telescope binders around `x` and `y`.
+the one in Agda. There, we can simply postpone the unification problem too, and
+it would be shortly unblocked anyway. FCIF has no issue here, it just marches on
+and inserts telescope binders around `x` and `y`.
 
 FCIF fails in the following case, and DOE succeeds:
 

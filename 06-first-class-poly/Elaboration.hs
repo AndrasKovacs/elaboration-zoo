@@ -27,22 +27,17 @@ import qualified Presyntax as P
 unifyPlaceholder :: Dbg => Cxt -> Tm -> MetaVar -> IO ()
 unifyPlaceholder cxt t m = case lookupMeta m of
 
-  -- If the placeholder meta is unsolved and blocks nothing, solving it cannot fail.
-  Unsolved bs a | IS.null bs -> do
+  -- If the placeholder meta is unsolved, we can solve it efficiently here,
+  -- without any possibility of failure.
+  Unsolved bs a -> do
     debug ["solve unconstrained placeholder", show m, showTm0 (closeTm (path cxt) t)]
 
     -- we can simply close the checked term, to get the solution
     let solution = closeTm (path cxt) t
     writeMeta m (Solved (eval [] solution) a)
+    forM_ (IS.toList bs) (retryCheck . CheckVar)
 
-  Unsolved _ _ -> do
-    debug ["unify unsolved placeholder", showTm cxt t, show m]
-
-    unifyCatch cxt
-      (eval (env cxt) t)
-      (vAppPruning (env cxt) (VMeta m) (pruning cxt))
-      Placeholder
-
+  -- otherwise we have to do full unification
   Solved v _ -> do
     debug ["unify solved placeholder", showTm cxt t, show m, showVal cxt v]
 

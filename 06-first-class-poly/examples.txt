@@ -1,44 +1,48 @@
 
--- Examples for elaborating first-class polymorphism from
+-- Examples for elaborating first-class polymorphism, based on
 --   https://www.microsoft.com/en-us/research/uploads/prod/2017/07/impredicative-pldi18.pdf
 -- the same examples are also found in
 --   https://www.microsoft.com/en-us/research/publication/a-quick-look-at-impredicativity/
 
--- assumed constants
+-- We make some inessential changes, to avoid having to define partial functions
+-- (head, tail).
+
+-- Preliminary defs
 ------------------------------------------------------------
 
-λ (List   : U → U)
-  (Bool   : U)
-  (ST     : U → U → U)
-  (Pair   : U → U → U)
-  (pair   : {A B} → A → B → Pair A B)
-  (true   : Bool)
-  (Int    : U)
-  (zero   : Int)
-  (inc    : Int → Int)
-  (head   : {A} → List A → A)
-  (tail   : {A} → List A → List A)
-  (nil    : {A} → List A)
-  (cons   : {A} → A → List A → List A)
-  (append : {A} → List A → List A → List A)
-  (length : {A} → List A → Int)
-  (map    : {A B} → (A → B) → List A → List B)
-  (runST  : {A} → ({S} → ST S A) → A)
-  (argST  : {S} → ST S Int).
+let List   : U → U                             = λ A. (L : U) → L → (A → L → L) → L;
+let nil    : {A} → List A                      = λ L n c. n;
+let cons   : {A} → A → List A → List A         = λ a as L n c. c a (as L n c);
+let Bool   : U                                 = (B : U) → B → B → B;
+let true   : Bool                              = λ b t f. t;
+let Pair   : U → U → U                         = λ A B. (P : U) → (A → B → P) → P;
+let pair   : {A B} → A → B → Pair A B          = λ a b P p. p a b;
+let Nat    : U                                 = (N : U) → (N → N) → N → N;
+let zero   : Nat                               = λ N s z. z;
+let suc    : Nat → Nat                         = λ n N s z. s (n N s z);
+let append : {A} → List A → List A → List A    = λ xs ys L n c. xs L (ys L n c) c;
+let length : {A} → List A → Nat                = λ as N s z. as N z (λ x. s);
+let map    : {A B} → (A → B) → List A → List B = λ f as L n c. as L n (λ a. c (f a));
+let ST     : U → U → U                         = λ S A. S → A;
+let runST  : {A} → ({S} → ST S A) → A          = λ f. f {Bool} true;
+let argST  : {S} → ST S Nat                    = λ _. zero;
+let Id     : U → U                             = λ A. (I : U) → (A → I) → I;
+let mkId   : {A} → A → Id A                    = λ a I f. f a;
+let unId   : {A} → Id A → A                    = λ i. i _ (λ x. x);
+let the    : (A : U) → A → A                   = λ A a. a;
+let const  : {A B} → A → B → A                 = λ x y. x;
+let IdTy   : U                                 = {A} → A → A;
+let single : {A} → A → List A                  = λ a. cons a nil;
+let id     : {A} → A → A                       = λ a. a;
+let ids    : List IdTy                         = nil;
+let oneId  : Id IdTy                           = mkId id;
+let app    : {A B} → (A → B) → A → B           = id;
+let revapp : {A B} → A → (A → B) → B           = λ x f. f x;
+let poly   : IdTy → Pair Nat Bool              = λ f. pair (f zero) (f true);
+let choose : {A} → A → A → A                   = const;
+let auto   : IdTy → IdTy                       = id;
+let auto2  : {B} → IdTy → B → B                = λ _ b. b;
 
-
-let the    : (A : U) → A → A         = λ A a. a;
-let const  : {A B} → A → B → A       = λ x y. x;
-let IdTy   : U                       = {A} → A → A;
-let single : {A} → A → List A        = λ a. cons a nil;
-let id     : {A} → A → A             = λ a. a;
-let ids    : List IdTy               = nil;
-let app    : {A B} → (A → B) → A → B = id;
-let revapp : {A B} → A → (A → B) → B = λ x f. f x;
-let poly   : IdTy → Pair Int Bool    = λ f. pair (f zero) (f true);
-let choose : {A} → A → A → A         = const;
-let auto   : IdTy → IdTy             = id;
-let auto2  : {B} → IdTy → B → B      = λ _ b. b;
 
 -- A: polymorphic instantiation
 --------------------------------------------------------------------------------
@@ -78,18 +82,16 @@ let A12 = id poly (λ x. x);
 -- let B1 = λ f. pair (f zero) (f true);
 
 -- FAILS
--- let B2 = λ xs. poly (head xs);
-  -- however, it could possibly work with telescope application insertion + postponing
-
+-- let B2 = λ x. poly (unId x);
 
 -- C: functions on polymorphic lists
 --------------------------------------------------------------------------------
 
 let C1 = length ids;
 
-let C2 = tail ids;
+let C2 = id ids;
 
-let C3 : IdTy = head ids;
+let C3 : IdTy = unId oneId;
 
 let C4 : List IdTy = single id;
 
@@ -97,13 +99,13 @@ let C5 = cons id ids;
 
 let C6 = cons (λ x. x) ids;
 
-let C7 = append (single inc) (single id);
+let C7 = append (single suc) (single id);
 
 let C8 : _ → IdTy = λ (g : {A} → List A → List A → A). g (single id) ids;
 
 let C9 = map poly (single id);
 
-let C10 = map head (single ids);
+let C10 = map unId (single oneId);
 
 -- D: application functions
 --------------------------------------------------------------------------------
@@ -118,19 +120,19 @@ let D4 = app runST argST;
 
 let D5 = revapp argST runST;
 
--- E: η-expansion
---------------------------------------------------------------------------------
+-- -- E: η-expansion
+-- --------------------------------------------------------------------------------
 
 -- let E1 =   -- FAILS
---   λ (h : Int → {A} → A → A)(k : {A} → A → List A → A)(lst : List ({A} → Int → A → A)).
+--   λ (h : Nat → {A} → A → A)(k : {A} → A → List A → A)(lst : List ({A} → Nat → A → A)).
 --   k h lst;
 --   -- fails again because of mismatched implicit/explicit arguments
 
 let E2 =
-  λ (h : Int → {A} → A → A)(k : {A} → A → List A → A)(lst : List ({A} → Int → A → A)).
+  λ (h : Nat → {A} → A → A)(k : {A} → A → List A → A)(lst : List ({A} → Nat → A → A)).
   k (λ x. h x) lst;
 
 let E3 =
-  λ (r : ({A} → A → {B} → B → B) → Int). r (λ x y. y);
+  λ (r : ({A} → A → {B} → B → B) → Nat). r (λ x y. y);
 
 U

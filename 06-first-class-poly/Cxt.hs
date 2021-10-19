@@ -57,6 +57,6 @@ define (Cxt env l path pr ns pos) x ~t ~vt ~a ~va  =
       (M.insert x (l, va) ns)
       pos
 
--- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
-closeVal :: Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)
+-- | valToClosure : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
+valToClosure :: Cxt -> Val -> Closure
+valToClosure cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)

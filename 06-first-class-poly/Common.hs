@@ -15,11 +15,17 @@ import Data.Coerce
 import Text.Printf
 import Data.List
 
+--------------------------------------------------------------------------------
+-- We use a more custom debugging function here. We can comment out one
+-- definition to toggle debug printing.
+
 -- debug :: (Applicative f) => [String] -> f ()
 -- debug strs = traceM (intercalate " | " strs ++ " END")
 
 debug :: (Applicative f) => [String] -> f ()
 debug strs = pure ()
+
+--------------------------------------------------------------------------------
 
 type Dbg = HasCallStack
 

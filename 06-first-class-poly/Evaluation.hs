@@ -30,7 +30,11 @@ vMeta m = case lookupMeta m of
 
 vCheck :: Env -> CheckVar -> Val
 vCheck env c = case lookupCheck c of
+
+  -- We know from the saved "cxt" which variables the placeholder "m" abstracts
+  -- over.
   Unchecked cxt t a m -> vAppPruning env (vMeta m) (pruning cxt)
+
   Checked t           -> eval env t
 
 vAppPruning :: Dbg => Env -> Val -> Pruning -> Val

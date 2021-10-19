@@ -26,7 +26,7 @@ data Path
   | Bind Path Name ~Ty
   deriving Show
 
--- | Convert type in context to a closed iterated Pi type.  Note: we need `Tm`
+-- | Convert a type in a context to a closed iterated Pi type. Note: we need `Tm`
 --   and `Ty` in path in order to make this operation efficient. With this, we
 --   can simply move things over from `Path` without having to rename or quote
 --   anything.
@@ -36,6 +36,8 @@ closeTy mcl b = case mcl of
   Bind mcl x a     -> closeTy mcl (Pi x Expl a b)
   Define mcl x a t -> closeTy mcl (Let x a t b)
 
+-- | Convert a term in context to a closed term by wrapping it in lambdas and
+--   let-definitions. The type of the result is given by `closeTy`.
 closeTm :: Path -> Tm -> Tm
 closeTm mcl t = case mcl of
   Here             -> t

@@ -16,19 +16,19 @@ import Value
 -- Unification
 --------------------------------------------------------------------------------
 
--- partial renaming from Γ to Δ
+-- | partial renaming from Γ to Δ
 data PartialRenaming = PRen {
-    dom :: Lvl             -- size of Γ
-  , cod :: Lvl             -- size of Δ
-  , ren :: IM.IntMap Lvl}  -- mapping from Δ vars to Γ vars
+    dom :: Lvl             -- ^ size of Γ
+  , cod :: Lvl             -- ^ size of Δ
+  , ren :: IM.IntMap Lvl}  -- ^ mapping from Δ vars to Γ vars
 
--- Lifting a partial renaming over an extra bound variable.
--- Given (σ : PRen Γ Δ), (lift σ : PRen (Γ, x : A[σ]) (Δ, x : A))
+-- | Lifting a partial renaming over an extra bound variable.
+--   Given (σ : PRen Γ Δ), (lift σ : PRen (Γ, x : A[σ]) (Δ, x : A))
 lift :: PartialRenaming -> PartialRenaming
 lift (PRen dom cod ren) =
   PRen (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
 
--- invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
+-- | @invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ@
 invert :: Lvl -> Spine -> IO PartialRenaming
 invert gamma sp = do
 
@@ -43,7 +43,7 @@ invert gamma sp = do
   (dom, ren) <- go sp
   pure $ PRen dom gamma ren
 
--- perform the partial renaming on rhs, while also checking for "m" occurrences.
+-- | Perform the partial renaming on rhs, while also checking for "m" occurrences.
 rename :: MetaVar -> PartialRenaming -> Val -> IO Tm
 rename m pren v = go pren v where
 
@@ -64,8 +64,8 @@ rename m pren v = go pren v where
     VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) (b $$ VVar (cod pren))
     VU          -> pure U
 
--- Wrap a term in lambdas. We need an extra list of Icit-s to
--- match the type of the to-be-solved meta.
+-- | Wrap a term in lambdas. We need an extra list of Icit-s to
+--   match the type of the to-be-solved meta.
 lams :: [Icit] -> Tm -> Tm
 lams = go (0 :: Int) where
   go x []     t = t

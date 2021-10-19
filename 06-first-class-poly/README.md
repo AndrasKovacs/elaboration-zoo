@@ -9,9 +9,6 @@ We merge `Unification.hs` into `Elaboration.hs` in this project, because the two
 have a bit more mutual dependencies now, and it would be annoying to try to split
 them or use `hs-boot` files.
 
-I have a high-level overview below, but I plan to add more informative comments
-in the source code as well.
-
 ### Motivation & Introduction
 
 Consider the following definition:

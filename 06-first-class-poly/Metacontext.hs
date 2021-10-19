@@ -14,6 +14,11 @@ import Syntax
 
 --------------------------------------------------------------------------------
 
+-- The context for checking problems is mostly just a duplication of the code
+-- for the plain metacontext. It would be possible to merge them into a single
+-- data structure, but that would be somewhat less "well-typed", and would make
+-- it less efficient to iterate over only metas or only checking problems.
+
 data CheckEntry
   -- ^ In (Unchecked Γ t A m), we postpone checking t with A in Γ and create m
   --   as a fresh meta, which is a "placedholder" for the eventual checking

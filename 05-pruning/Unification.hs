@@ -31,7 +31,7 @@ skip :: PartialRenaming -> PartialRenaming
 skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
 -- | invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
---   Optionally returns a pruning of nonlinear spine entries, is there's any.
+--   Optionally returns a pruning of nonlinear spine entries, if there's any.
 invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
@@ -127,8 +127,8 @@ rename pren t = case force t of
   VPi x i a b -> Pi x i <$> rename pren a <*> rename (lift pren) (b $$ VVar (cod pren))
   VU          -> pure U
 
--- | Wrap a term in Lvl number of metas. We get the domain info from the
---   VTy argument.
+-- | Wrap a term in Lvl number of lambdas. We get the domain info from the VTy
+--   argument.
 lams :: Lvl -> VTy -> Tm -> Tm
 lams l a t = go a (0 :: Lvl) where
   go a l' | l' == l = t

@@ -14,14 +14,13 @@ import Cxt
 import Errors
 import Evaluation
 import Metacontext
+import Pretty
 import Syntax
 import Value
-import Pretty
 
 import qualified Presyntax as P
 
-
--- UNIFICATION
+-- Postponed checking
 --------------------------------------------------------------------------------
 
 -- | Unify the result of a postponed checking with its placeholder metavariable.
@@ -68,7 +67,6 @@ retryCheck c = case lookupCheck c of
   _ ->
     pure ()
 
-
 -- | Unblock and perform all remaining checking problems, assuming each time
 --   that no implicit insertion should occur.
 checkEverything :: Dbg => IO ()
@@ -90,25 +88,26 @@ checkEverything = go 0 where
           pure ()
       go (c + 1)
 
+-- Unification
 --------------------------------------------------------------------------------
 
--- partial renaming from Γ to Δ
+-- | A partial renaming from Γ to Δ.
 data PartialRenaming = PRen {
-    occ :: Maybe MetaVar   -- optional occurs check
-  , dom :: Lvl             -- size of Γ
-  , cod :: Lvl             -- size of Δ
-  , ren :: IM.IntMap Lvl}  -- mapping from Δ vars to Γ vars
+    occ :: Maybe MetaVar   -- ^ Optional occurs check.
+  , dom :: Lvl             -- ^ Size of Γ.
+  , cod :: Lvl             -- ^ Size of Δ.
+  , ren :: IM.IntMap Lvl}  -- ^ Mapping from Δ vars to Γ vars.
 
--- lift : (σ : PRen Γ Δ) → PRen (Γ, x : A[σ]) (Δ, x : A)
+-- | @lift : (σ : PRen Γ Δ) → PRen (Γ, x : A[σ]) (Δ, x : A)@
 lift :: PartialRenaming -> PartialRenaming
 lift (PRen occ dom cod ren) = PRen occ (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
 
--- skip : PRen Γ Δ → PRen Γ (Δ, x : A)
+-- | @skip : PRen Γ Δ → PRen Γ (Δ, x : A)@
 skip :: PartialRenaming -> PartialRenaming
 skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
--- | invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
---   Optionally returns a pruning of nonlinear spine entries, is there's any.
+-- | @invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ@
+--   Optionally returns a pruning of nonlinear spine entries, if there's any.
 invert :: Dbg => Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
@@ -206,7 +205,7 @@ rename pren t = case force t of
   VPi x i a b -> Pi x i <$> rename pren a <*> rename (lift pren) (b $$ VVar (cod pren))
   VU          -> pure U
 
--- | Wrap a term in Lvl number of metas. We get the domain info from the
+-- | Wrap a term in Lvl number of lambdas. We get the domain info from the
 --   VTy argument.
 lams :: Dbg => Lvl -> VTy -> Tm -> Tm
 lams l a t = go a (0 :: Lvl) where
@@ -310,7 +309,7 @@ unify l t u = do
     _                              -> throwIO UnifyException  -- rigid mismatch error
 
 
--- ELABORATION
+-- Elaboration
 --------------------------------------------------------------------------------
 
 closeVTy :: Cxt -> VTy -> VTy
@@ -361,7 +360,10 @@ insertUntilName cxt name act = go =<< act where
       throwIO $ Error cxt $ NoNamedImplicitArg name
 
 check :: Dbg => Cxt -> P.Tm -> VTy -> IO Tm
-check cxt (P.SrcPos pos t) a = check (cxt {pos = pos}) t a
+check cxt (P.SrcPos pos t) a =
+  -- we handle the SrcPos case here, because we do not want to
+  -- perform debug printing at position annotations.
+  check (cxt {pos = pos}) t a
 check cxt t a = do
 
   debug ["check", show (P.stripPos t), showVal cxt a]
@@ -391,7 +393,7 @@ check cxt t a = do
     (t, VPi x Impl a b) -> do
       Lam x Impl <$> check (newBinder cxt x a) t (b $$ VVar (lvl cxt))
 
-    -- If the checking type if unknown, we postpone checking.
+    -- If the checking type is unknown, we postpone checking.
     (t, topA@(VFlex m sp)) -> do
       placeholder <- newRawMeta mempty (closeVTy cxt topA)
       c <- newCheck cxt t topA placeholder
@@ -418,13 +420,18 @@ check cxt t a = do
       pure t
 
 infer :: Dbg => Cxt -> P.Tm -> IO (Tm, VTy)
-infer cxt (P.SrcPos pos t) = infer (cxt {pos = pos}) t
+infer cxt (P.SrcPos pos t) =
+  -- we handle the SrcPos case here, because we do not want to
+  -- perform debug printing at position annotations.
+  infer (cxt {pos = pos}) t
+
 infer cxt t = do
 
   debug ["infer", show (P.stripPos t)]
 
   res <- case t of
     P.SrcPos pos t -> impossible
+
     P.Var x -> do
       case M.lookup x (srcNames cxt) of
         Just (x', a) -> pure (Var (lvl2Ix (lvl cxt) x'), a)
@@ -437,7 +444,7 @@ infer cxt t = do
 
       let cxt' = bind cxt x a
       (t, b) <- insert cxt' $ infer cxt' t
-      pure (Lam x i t, VPi x i a $ closeVal cxt b)
+      pure (Lam x i t, VPi x i a $ valToClosure cxt b)
 
     P.Lam x Left{} ma t ->
       throwIO $ Error cxt $ InferNamedLam

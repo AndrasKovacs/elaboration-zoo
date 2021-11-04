@@ -432,10 +432,10 @@ because the solution lives in the empty scope.
 
 Hence, the nice and efficient solution is to
 
-  1. Turn spine into variable renaming, which maps the variables in spine to
+  1. Turn spine into a variable renaming, which maps the variables in spine to
      their correct final de Bruijn level in the solution. This operation can
      fail if spine does not consist of distinct bound vars. The resulting
-     renaming only maps the vars which occur So this is a *partial* renaming.
+     renaming only maps the vars which do occur. So this is a *partial* renaming.
 
   2. Quote rhs to a term, while at the same time using the renaming to rename local variables,
      failing if the partial renaming is not defined ("scope error"), and also checking

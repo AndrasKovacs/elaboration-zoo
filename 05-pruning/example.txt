@@ -1,5 +1,5 @@
 
--- Examples for unification with ordered metacontext & pruning
+-- Examples for unification with pruning
 --------------------------------------------------------------------------------
 
 -- we use Eq to test unification

@@ -427,7 +427,7 @@ However, we are working de Bruijn indices and levels, and we can't simply shuffl
 on side to the other!
 
 In the "λ spine. t" solution, if we're thinking about de Bruijn levels, the "λ spine" becomes
-"λ x₀ x₁ x₂ ... xₙ. t", where N is the length of the spine. The counting of levels must start from 0,
+"λ x₀ x₁ x₂ ... xₙ. t", where the length of the spine is n+1. The counting of levels must start from 0,
 because the solution lives in the empty scope.
 
 Hence, the nice and efficient solution is to

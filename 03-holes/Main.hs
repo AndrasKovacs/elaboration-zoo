@@ -404,7 +404,7 @@ nf env t = quote (Lvl (length env)) (eval env t)
 freshMeta :: Cxt -> IO Tm
 freshMeta cxt = do
   m <- readIORef nextMeta
-  writeIORef nextMeta (m + 1)                -- increment nextMeta
+  writeIORef nextMeta $! (m + 1)             -- increment nextMeta
   modifyIORef' mcxt $ IM.insert m Unsolved   -- add a new unsolved metaEntry
   pure $ InsertedMeta (MetaVar m) (bds cxt)  -- as I previously mentioned, we just drop the [BD] here
                                              -- Cxt has a (bds :: Cxt -> [BD]) field

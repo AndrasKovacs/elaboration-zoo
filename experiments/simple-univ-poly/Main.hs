@@ -6,7 +6,7 @@
 Simple universe polymorphism. Features:
 
   - Non-first-class levels: there is a distinct Pi, lambda and application for
-    levels.
+    levels. Levels are distinct from terms in syntax/values.
   - The surface language only allows abstraction over finite levels. Internally,
     the type of level-polymorphic functions is (U omega), but that's not
     accessible to programmers.
@@ -16,6 +16,16 @@ Simple universe polymorphism. Features:
   - Conversion checking for finite levels is complete w.r.t. the obvious
     semantics for the supported operations. For example, (suc (max x (max y z)))
     is convertible to (max (suc y) (max (suc z) (suc x))).
+
+Remark: even if we add metavariables to this system, it should be in fact
+sufficient to *not* thread levels in infer/check, not store levels in binders,
+and to have unification which is heterogeneous in levels, i.e. when unifying
+types, their levels my differ.
+
+The reason is that non-first-class levels have no impact on
+computation. Intuitively, if all levels are erased from the elaborator, we just
+recover elaboration for a type-in-type system, and this elaboration is already
+sound and semidecidable.
 
 -}
 

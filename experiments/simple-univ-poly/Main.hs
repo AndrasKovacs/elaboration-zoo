@@ -29,8 +29,6 @@ sound and semidecidable.
 
 -}
 
-module UnivPoly where
-
 import qualified Data.IntMap.Strict as M
 
 import Data.Foldable
@@ -206,11 +204,15 @@ conv :: Lvl -> Val -> Val -> Bool
 conv l t t' = case (t, t') of
   (VVar x      , VVar x'     ) -> x == x'
   (VApp t u    , VApp t' u'  ) -> conv l t t' && conv l u u'
+  (VPi x a b   , VPi _ a' b' ) -> conv l a a' && conv (l + 1) (b (VVar l)) (b' (VVar l))
+  (VLvlPi x b  , VLvlPi _ b' ) -> conv (l + 1) (b (vFinLevelVar l)) (b' (vFinLevelVar l))
+  (VU i        , VU i'       ) -> i == i'
   (VLam x t    , VLam _ t'   ) -> conv (l + 1) (t (VVar l)) (t' (VVar l))
   (VLam x t    , t'          ) -> conv (l + 1) (t (VVar l)) (VApp t' (VVar l))
   (t           , VLam x t'   ) -> conv (l + 1) (VApp t (VVar l)) (t' (VVar l))
-  (VPi x a b   , VPi _ a' b' ) -> conv l a a' && conv (l + 1) (b (VVar l)) (b' (VVar l))
-  (VU i        , VU i'       ) -> i == i'
+  (VLvlLam x t , VLvlLam _ t') -> conv (l + 1) (t (vFinLevelVar l)) (t' (vFinLevelVar l))
+  (VLvlLam x t , t'          ) -> conv (l + 1) (t (vFinLevelVar l)) (VLvlApp t' (vFinLevelVar l))
+  (t           , VLvlLam x t') -> conv (l + 1) (VLvlApp t (vFinLevelVar l)) (t' (vFinLevelVar l))
   _                            -> False
 
 quoteFinLevel :: Lvl -> VFinLevel -> FinLevel

@@ -5,6 +5,7 @@ import Control.Monad
 import Control.Exception
 import Data.IORef
 import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 
 import Common
 import Errors
@@ -35,17 +36,17 @@ skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
-  let go :: Spine -> IO (Lvl, IM.IntMap Lvl, Pruning, Bool)
-      go []             = pure (0, mempty, [], True)
+  let go :: Spine -> IO (Lvl, IS.IntSet, IM.IntMap Lvl, Pruning, Bool)
+      go []             = pure (0, mempty, mempty, [], True)
       go (sp :> (t, i)) = do
-        (dom, ren, pr, isLinear) <- go sp
+        (dom, domvars, ren, pr, isLinear) <- go sp
         case force t of
-          VVar (Lvl x) -> case IM.member x ren of
-            True  -> pure (dom + 1, IM.delete x ren    , Nothing : pr, False   )
-            False -> pure (dom + 1, IM.insert x dom ren, Just i  : pr, isLinear)
+          VVar (Lvl x) -> case IS.member x domvars of
+            True  -> pure (dom + 1, domvars,             IM.delete x ren,     Nothing : pr, False   )
+            False -> pure (dom + 1, IS.insert x domvars, IM.insert x dom ren, Just i  : pr, isLinear)
           _ -> throwIO UnifyError
 
-  (dom, ren, pr, isLinear) <- go sp
+  (dom, domvars, ren, pr, isLinear) <- go sp
   pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
 
 

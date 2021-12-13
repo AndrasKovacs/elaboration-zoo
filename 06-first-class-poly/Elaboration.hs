@@ -103,20 +103,20 @@ skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 
 -- | @invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ@
 --   Optionally returns a pruning of nonlinear spine entries, if there's any.
-invert :: Dbg => Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
+invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
 
-  let go :: Spine -> IO (Lvl, IM.IntMap Lvl, Pruning, Bool)
-      go []             = pure (0, mempty, [], True)
+  let go :: Spine -> IO (Lvl, IS.IntSet, IM.IntMap Lvl, Pruning, Bool)
+      go []             = pure (0, mempty, mempty, [], True)
       go (sp :> (t, i)) = do
-        (dom, ren, pr, isLinear) <- go sp
+        (dom, domvars, ren, pr, isLinear) <- go sp
         case force t of
-          VVar (Lvl x) -> case IM.member x ren of
-            True  -> pure (dom + 1, IM.delete x ren    , Nothing : pr, False   )
-            False -> pure (dom + 1, IM.insert x dom ren, Just i  : pr, isLinear)
+          VVar (Lvl x) -> case IS.member x domvars of
+            True  -> pure (dom + 1, domvars,             IM.delete x ren,     Nothing : pr, False   )
+            False -> pure (dom + 1, IS.insert x domvars, IM.insert x dom ren, Just i  : pr, isLinear)
           _ -> throwIO UnifyException
 
-  (dom, ren, pr, isLinear) <- go sp
+  (dom, domvars, ren, pr, isLinear) <- go sp
   pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
 
 

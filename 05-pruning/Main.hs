@@ -61,7 +61,7 @@ main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 ex1 :: IO ()
 ex1 = main' "elab" $ unlines [
 
-  "-- Examples for unification with ordered metacontext & pruning",
+  "-- Examples for unification with pruning",
   "--------------------------------------------------------------------------------",
 
   "-- we use Eq to test unification",

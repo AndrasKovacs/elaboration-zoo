@@ -82,9 +82,9 @@ ex1 = main' "elab" $ unlines [
   "-- let m : (A : U)(B : U) → A → B → B = _;",
   "-- let test = λ a b. the (Eq (m a a) (λ x y. y)) refl;",
 
-  "-- 3. Intersection solution: first & second args pruned from m.",
+  "-- 3. Intersection solution: first & third args pruned from m.",
   "let m : U → U → U → U = _;",
-  "let test = λ a b c. the (Eq (m a b a) (m c b c)) refl;",
+  "let test = λ a b c. the (Eq (m a b c) (m c b a)) refl;",
 
   "-- 4. Examples requiring pruning",
   "let pr1 = λ f x. f x;",

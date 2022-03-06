@@ -29,8 +29,6 @@ data CheckEntry
   -- ^ Result of postponed checking. We unfold these when pretty printing terms.
   | Checked Tm
 
-type CCxt = IM.IntMap CheckEntry
-
 type CheckCxt = IM.IntMap CheckEntry
 
 checkCxt :: IORef CheckCxt

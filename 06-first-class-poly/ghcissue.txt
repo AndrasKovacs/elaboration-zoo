@@ -23,23 +23,25 @@ let refl : {A x} → Eq {A} x x
 
 ------------------------------------------------------------
 
-let Iddy : Bool → Type → Type
-  = λ b a. ifThenElse b a a;
+let Iddy : Bool -> Type -> Type
+  = \b a. ifThenElse b a a;
 
 -- unknown Bool value (metavariable)
 let myBool : Bool = _;
 
--- the checking of "λ x. x" is blocked because
--- the checking type is blocked on myBool
-let myId : Iddy myBool ({A:Type} → A → A)
-  = λ x. x;
+-- the checking of "\x. x" is blocked because
+--   1. the checking type is blocked on myBool
+--   2. elaboration behaves differently when the checking type is a canonical `forall` because
+--      in that case it knows that an implicit type lambda has to be inserted.
+let myId : Iddy myBool ({A:Type} -> A -> A)
+  = \x. x;
 
 -- we solve myBool
 let myBoolIsTrue : Eq {Bool} true myBool
   = refl;
 
 -- when myBool is solved, we immediately resume checking myId,
--- and it's elaborated to λ {A:Type}(x:A). x
+-- and it's elaborated to \{A:Type}(x:A). x
 
 let foo : Bool
   = myId true;

@@ -1,0 +1,48 @@
+
+-- https://gitlab.haskell.org/ghc/ghc/-/issues/21925
+-- usage:   cat ghcissue.txt | elabzoo-first-class-poly elab
+
+-- lib (Bool + propositional equality)
+------------------------------------------------------------
+
+let Type = U;
+
+let Bool = (B : U) → B → B → B;
+
+let true  : Bool = λ _ t f. t;
+let false : Bool = λ _ t f. f;
+
+let ifThenElse : {A} → Bool → A → A → A
+  = λ b. b _;
+
+let Eq : {A} → A → A → Type
+  = λ {A} x y. (P : A → Type) → P x → P y;
+
+let refl : {A x} → Eq {A} x x
+  = λ p px. px;
+
+------------------------------------------------------------
+
+let Iddy : Bool → Type → Type
+  = λ b a. ifThenElse b a a;
+
+-- unknown Bool value (metavariable)
+let myBool : Bool = _;
+
+-- the checking of "λ x. x" is blocked because
+-- the checking type is blocked on myBool
+let myId : Iddy myBool ({A:Type} → A → A)
+  = λ x. x;
+
+-- we solve myBool
+let myBoolIsTrue : Eq {Bool} true myBool
+  = refl;
+
+-- when myBool is solved, we immediately resume checking myId,
+-- and it's elaborated to λ {A:Type}(x:A). x
+
+let foo : Bool
+  = myId true;
+
+------------------------------------------------------------
+U

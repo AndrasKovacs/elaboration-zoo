@@ -26,7 +26,7 @@ data Tm
 
 data Env
   = Nil
-  | Define Env ~Val
+  | Define Env ~Val   -- list of lazy value
 
 data Closure
   = Closure Env Tm
@@ -54,7 +54,7 @@ cApp (Closure env t) ~u = eval (Define env u) t
 eval :: Env -> Tm -> Val
 eval env = \case
   Var x   -> lookup env x
-  App t u -> case (eval env t, eval env u) of
+  App t u -> case (eval env t, eval env u) of  -- eval-apply
                (VLam t, u) -> cApp t u
                (t     , u) -> VApp t u
   Lam t   -> VLam (Closure env t)
@@ -66,7 +66,7 @@ eval env = \case
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 
-quote :: Lvl -> Val -> Tm
+quote :: Lvl -> Val -> Tm              -- normalization-by-evaulation
 quote l = \case
   VVar x   -> Var (lvl2Ix l x)
   VApp t u -> App (quote l t) (quote l u)

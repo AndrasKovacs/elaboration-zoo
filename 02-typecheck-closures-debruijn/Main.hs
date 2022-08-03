@@ -65,7 +65,7 @@ type Name = String
 
 data Raw
   = RVar Name              -- x
-  | RLam Name Raw          -- \x. t                            -- let f : A -> B = \x -> ....
+  | RLam Name Raw          -- \x. t
   | RApp Raw Raw           -- t u
   | RU                     -- U
   | RPi Name Raw Raw       -- (x : A) -> B
@@ -90,7 +90,7 @@ data Tm
 -- values
 ------------------------------------------------------------
 
-type Env = [Val]            -- Define | Skip    (Env = flat array)
+type Env = [Val]
 
 data Closure = Closure Env Tm
 
@@ -134,12 +134,7 @@ quote l = \case
 nf :: Env -> Tm -> Tm
 nf env t = quote (Lvl (length env)) (eval env t)
 
--- | Beta-eta conversion checking.
---   Conversion checking works on Val. We do *not* compare Tm for equality!
---   Alternative solution: Val ->(nf)-> Tm , then compare Tm
---      (worse performance, eta conversion checking is difficult)
---
---   Precondition: both values have the same type
+-- | Beta-eta conversion checking. Precondition: both values have the same type.
 conv :: Lvl -> Val -> Val -> Bool
 conv l t u = case (t, u) of
   (VU, VU) -> True

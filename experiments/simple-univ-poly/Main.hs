@@ -396,3 +396,11 @@ p1 =
   "id" $$$ RLSuc (RLSuc RLZero) $$ RU (RLSuc RLZero) $$ RU RLZero
 
 p2 = RLvlPi "i" $ RPi "A" (RU "i") $ "A" ==> "A"
+
+
+u0 = VU (VFinLevel (VFL 0 M.empty))
+u1 = VU (VFinLevel (VFL 1 M.empty))
+
+foo =  check (Cxt ENil BNil 0)
+             (RLam "x" (RVar "x"))
+             (VPi "x" (VPi "y" u1 (const u0)) (const (VPi "y" u0 (const u1))))

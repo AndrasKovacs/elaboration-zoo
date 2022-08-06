@@ -671,7 +671,7 @@ infer cxt = \case
       tty -> do
         a <- eval (env cxt) <$> freshMeta cxt
         b <- Closure (env cxt) <$> freshMeta (bind cxt "x" a)
-        unifyCatch cxt tty (VPi "x" a b)
+        unifyCatch cxt (VPi "x" a b) tty
         pure (a, b)
 
     u <- check cxt u a

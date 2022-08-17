@@ -69,7 +69,7 @@ data Raw
   | RApp Raw Raw           -- t u
   | RU                     -- U
   | RPi Name Raw Raw       -- (x : A) -> B
-  | RLet Name Raw Raw Raw  -- let x : A = t in u
+  | RLet Name Raw Raw Raw  -- let x : A = t; u
   | RSrcPos SourcePos Raw  -- source position for error reporting
   deriving Show
 

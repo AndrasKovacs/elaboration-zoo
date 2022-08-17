@@ -43,7 +43,7 @@ data Tm
   = Var Name           -- x
   | Lam Name Tm        -- \x. t
   | App Tm Tm          -- t u
-  | Let Name Tm Tm     -- let x = t in u
+  | Let Name Tm Tm     -- let x = t; u
 
 
 -- evaluation

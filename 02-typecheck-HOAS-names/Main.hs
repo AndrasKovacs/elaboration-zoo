@@ -60,7 +60,7 @@ data Tm
   | App Tm Tm            -- t u
   | U                    -- U
   | Pi Name Ty Ty        -- (x : A) -> B
-  | Let Name Ty Tm Tm    -- let x : A = t in u
+  | Let Name Ty Tm Tm    -- let x : A = t; u
   | SrcPos SourcePos Tm  -- source position for error reporting
 
 -- type checking

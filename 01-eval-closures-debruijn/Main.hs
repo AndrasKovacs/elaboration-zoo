@@ -76,14 +76,14 @@ nf :: Env -> Tm -> Tm
 nf env t = quote (length env) (eval env t)
 
 -- ("\\" works for lambda as well)
-ex3 = main' "nf" $ unlines [
-  "let λ λ 1 (1 (1 (1 (1 0)))) in",    -- five = λ s z. s (s (s (s (s z))))
-  "let λ λ λ λ 3 1 (2 1 0) in",        -- add  = λ a b s z. a s (b s z)
-  "let λ λ λ λ 3 (2 1) 0 in",          -- mul  = λ a b s z. a (b s) z
-  "let 1 2 2 in",                      -- ten  = add five five
-  "let 1 0 0 in",                      -- hundred = mul ten ten
-  "let 2 1 0 in",                      -- thousand = mul ten hundred
-  "0"                                  -- thousand
+ex = main' "nf" $ unlines [
+  "let λ λ 1 (1 (1 (1 (1 0))));",    -- five = λ s z. s (s (s (s (s z))))
+  "let λ λ λ λ 3 1 (2 1 0);",        -- add  = λ a b s z. a s (b s z)
+  "let λ λ λ λ 3 (2 1) 0;",          -- mul  = λ a b s z. a (b s) z
+  "let 1 2 2;",                      -- ten  = add five five
+  "let 1 0 0;",                      -- hundred = mul ten ten
+  "let 2 1 0;",                      -- thousand = mul ten hundred
+  "0"                                -- thousand
   ]
 
 -- parsing
@@ -115,7 +115,7 @@ pLam = do
 pLet = do
   pKeyword "let"
   t <- pTm
-  pKeyword "in"
+  pKeyword ";"
   u <- pTm
   pure $ Let t u
 

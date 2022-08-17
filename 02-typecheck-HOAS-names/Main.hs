@@ -20,30 +20,30 @@ import qualified Text.Megaparsec.Char.Lexer as L
 
 ex0 = main' "nf" $ unlines [
   "let id : (A : U) -> A -> A",
-  "     = \\A x. x in",
-  "let foo : U = U in",
-  "let bar : U = id id in",
+  "     = \\A x. x;",
+  "let foo : U = U;",
+  "let bar : U = id id;",
   "id"
   ]
 
 -- basic polymorphic functions
 ex1 = main' "nf" $ unlines [
   "let id : (A : U) -> A -> A",
-  "      = \\A x. x in",
+  "      = \\A x. x;",
   "let const : (A B : U) -> A -> B -> A",
-  "      = \\A B x y. x in",
+  "      = \\A B x y. x;",
   "id ((A B : U) -> A -> B -> A) const"
   ]
 
 -- Church-coded natural numbers
 ex2 = main' "nf" $ unlines [
-  "let Nat  : U = (N : U) -> (N -> N) -> N -> N in",
-  "let five : Nat = \\N s z. s (s (s (s (s z)))) in",
-  "let add  : Nat -> Nat -> Nat = \\a b N s z. a N s (b N s z) in",
-  "let mul  : Nat -> Nat -> Nat = \\a b N s z. a N (b N s) z in",
-  "let ten      : Nat = add five five in",
-  "let hundred  : Nat = mul ten ten in",
-  "let thousand : Nat = mul ten hundred in",
+  "let Nat  : U = (N : U) -> (N -> N) -> N -> N;",
+  "let five : Nat = \\N s z. s (s (s (s (s z))));",
+  "let add  : Nat -> Nat -> Nat = \\a b N s z. a N s (b N s z);",
+  "let mul  : Nat -> Nat -> Nat = \\a b N s z. a N (b N s) z;",
+  "let ten      : Nat = add five five;",
+  "let hundred  : Nat = mul ten ten;",
+  "let thousand : Nat = mul ten hundred;",
   "thousand"
   ]
 
@@ -315,7 +315,7 @@ pLet = do
   a <- pTm
   symbol "="
   t <- pTm
-  pKeyword "in"
+  symbol ";"
   u <- pTm
   pure $ Let x a t u
 

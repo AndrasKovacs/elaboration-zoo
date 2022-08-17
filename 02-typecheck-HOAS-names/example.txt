@@ -4,18 +4,18 @@
 
 -- basic polymorphic functions
 let id : (A : U) -> A -> A
-      = \A x. x in
+      = \A x. x;
 let const : (A B : U) -> A -> B -> A
-      = \A B x y. x in
+      = \A B x y. x;
 
 -- Church natural numbers
-let Nat  : U = (N : U) -> (N -> N) -> N -> N in
-let five : Nat = \N s z. s (s (s (s (s z)))) in
-let add  : Nat -> Nat -> Nat = \a b N s z. a N s (b N s z) in
-let mul  : Nat -> Nat -> Nat = \a b N s z. a N (b N s) z in
+let Nat  : U = (N : U) -> (N -> N) -> N -> N;
+let five : Nat = \N s z. s (s (s (s (s z))));
+let add  : Nat -> Nat -> Nat = \a b N s z. a N s (b N s z);
+let mul  : Nat -> Nat -> Nat = \a b N s z. a N (b N s) z;
 
-let ten      : Nat = add five five in
-let hundred  : Nat = mul ten ten in
-let thousand : Nat = mul ten hundred in
+let ten      : Nat = add five five;
+let hundred  : Nat = mul ten ten;
+let thousand : Nat = mul ten hundred;
 
 hundred

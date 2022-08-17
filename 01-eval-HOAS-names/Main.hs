@@ -24,12 +24,12 @@ ex2 = main' "nf" "(\\x.x) (\\x.x)"
 
 -- Church-coded natural numbers, printing normal form of 1000
 ex3 = main' "nf" $ unlines [
-  "let five = \\s z. s (s (s (s (s z)))) in",
-  "let add = \\a b s z. a s (b s z) in",
-  "let mul = \\a b s z. a (b s) z in",
-  "let ten = add five five in",
-  "let hundred = mul ten ten in",
-  "let thousand = mul ten hundred in",
+  "let five = \\s z. s (s (s (s (s z))));",
+  "let add = \\a b s z. a s (b s z);",
+  "let mul = \\a b s z. a (b s) z;",
+  "let ten = add five five;",
+  "let hundred = mul ten ten;",
+  "let thousand = mul ten hundred;",
   "thousand"
   ]
 
@@ -146,7 +146,7 @@ pLet = do
   x <- pBind
   symbol "="
   t <- pTm
-  pKeyword "in"
+  symbol ";"
   u <- pTm
   pure $ Let x t u
 

@@ -13,6 +13,18 @@
   ViewPatterns
   #-}
 
+{-|
+MLTT-lock implementation: https://dl.acm.org/doi/10.1145/3341711 With
+type-in-type and only Pi.
+
+There's also a closed evaluator which interprets the modality as runtime code
+generation.
+
+It seems that we need some kind of contextual modality for codegen purposes,
+mainly because using □ and functions for open terms yields a very large
+number of "administrative" redexes.
+-}
+
 module Main where
 
 import Control.Applicative hiding (many, some)

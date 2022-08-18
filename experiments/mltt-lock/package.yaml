@@ -1,0 +1,24 @@
+
+name:                mltt-lock
+version:             0.1.0.0
+github:              "AndrasKovacs/elaboration-zoo"
+license:             BSD3
+author:              "András Kovács"
+maintainer:          "puttamalac@gmail.com"
+copyright:           "2022 András Kovács"
+category:            Language
+
+description:         "MLTT-lock"
+
+dependencies:
+- base >= 4.7 && < 5
+- containers
+- mtl
+- megaparsec
+
+source-dirs: .
+
+executable:
+  main: Main.hs
+  ghc-options:
+  - -O

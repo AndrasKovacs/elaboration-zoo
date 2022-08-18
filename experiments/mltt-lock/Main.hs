@@ -1,29 +1,26 @@
 
-{-# options_ghc
-  -Wall
-  -Wno-name-shadowing
-  -Wno-missing-signatures
-  -Wno-unused-do-bind
-  -Wno-unused-matches
- #-}
+{-# options_ghc -Wincomplete-patterns #-}
 
 {-# language
-    ImplicitParams
-  , ConstraintKinds
-  , RankNTypes
-  , Strict
-  , EmptyCase
-  , BlockArguments
-  , LambdaCase #-}
+  BlockArguments,
+  ConstraintKinds,
+  EmptyCase,
+  ImplicitParams,
+  LambdaCase,
+  RankNTypes,
+  Strict,
+  TupleSections,
+  ViewPatterns
+  #-}
 
 module Main where
 
 import Control.Applicative hiding (many, some)
 import Control.Monad
 import Data.Char
+import Data.Coerce
 import Data.Maybe
 import Data.Void
-import Data.Coerce
 import System.Environment
 import System.Exit
 import Text.Megaparsec
@@ -34,6 +31,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 
 --------------------------------------------------------------------------------
 
+-- hiding things in derived Show instances
 newtype Hide a = Hide a
 
 instance Show (Hide a) where
@@ -53,7 +51,7 @@ data Tm
   | U                          -- U
   | Pi Name Ty Ty              -- (x : A) -> B
   | Let Name Ty Tm Tm          -- let x : A = t; u
-  | SrcPos (Hide SourcePos) Tm -- source position for error reporting
+  | SrcPos (Hide SourcePos) Tm -- source position for errors
   | Quote Tm                   -- <t>
   | Splice Tm                  -- ~t
   | Box Tm                     -- ◻ A
@@ -70,17 +68,17 @@ data Val
   | VBox Val
   | VU
 
-type Env = [(Name, Val)]
-type EnvArg = (?env :: Env)
+type Env a = [(Name, a)]
+type VEnv = Env Val
 
-extEnv :: Name -> Val -> (EnvArg => a) -> EnvArg => a
+extEnv :: Name -> v -> ((?env :: Env v) => a) -> (?env :: Env v) => a
 extEnv x ~v act = let ?env = (x, v): ?env in act
 
-bindEnv :: Name -> (EnvArg => Val -> a) -> EnvArg => a
+bindEnv :: Name -> ((?env :: VEnv) => Val -> a) -> (?env :: VEnv) => a
 bindEnv (fresh -> x) act =
   let v = VVar x in let ?env = (x,v): ?env in act v
 
-fresh :: EnvArg => Name -> Name
+fresh :: (?env :: Env v) => Name -> Name
 fresh "_" = "_"
 fresh x   = case lookup x ?env of
   Just _  -> fresh (x ++ "'")
@@ -91,7 +89,7 @@ splice = \case
   VQuote t -> t
   t        -> VSplice t
 
-eval :: EnvArg => Tm -> Val
+eval :: (?env :: VEnv) => Tm -> Val
 eval = \case
   Var x       -> fromJust $ lookup x ?env
   App t u     -> case (eval t, eval u) of
@@ -106,7 +104,7 @@ eval = \case
   Splice t    -> splice (eval t)
   Box t       -> VBox (eval t)
 
-quote :: EnvArg => Val -> Tm
+quote :: (?env :: VEnv) => Val -> Tm
 quote = \case
   VVar x     -> Var x
   VApp t u   -> App (quote t) (quote u)
@@ -120,15 +118,69 @@ quote = \case
 quote0 :: Val -> Tm
 quote0 v = let ?env = [] in quote v
 
-
-nf :: EnvArg => Tm -> Tm
+nf :: (?env :: VEnv) => Tm -> Tm
 nf = quote . eval
 
 nf0 :: Tm -> Tm
 nf0 = let ?env = [] in nf
 
+-- Closed evaluation (can be used to test code generation)
+--------------------------------------------------------------------------------
+
+-- closed values (actual runtime values)
+data CVal
+  = CLam Name (CVal -> CVal)
+  | CSomeType  -- types are computationally irrelevant, so they're replaced with a placeholder
+  | CQuote Tm
+
+instance Show CVal where
+  show = \case
+    CLam{}      -> "CLam"
+    CSomeType{} -> "CSomeType"
+    CQuote t    -> show (Quote t)
+
+type CEnv = Env CVal
+
+ceval :: (?env :: CEnv) => Tm -> CVal
+ceval = \case
+  Var x       -> fromJust $ lookup x ?env
+  App t u     -> case (ceval t, ceval u) of
+                   (CLam _ t, u) -> t u
+                   _             -> undefined
+  Lam x t     -> CLam x (\u -> extEnv x u (ceval t))
+  Pi x a b    -> CSomeType
+  Let x _ t u -> extEnv x (ceval t) (ceval u)
+  U           -> CSomeType
+  SrcPos _ t  -> ceval t
+  Quote t     -> CQuote (qeval t)
+  Splice t    -> case ceval t of
+                   CQuote t -> ceval t
+                   _        -> undefined
+  Box t       -> CSomeType
+
+ceval0 :: Tm -> CVal
+ceval0 t = let ?env = [] in ceval t
+
+-- Perform the next-stage splices
+qeval :: (?env :: CEnv) => Tm -> Tm
+qeval = \case
+  Var x       -> Var x
+  App t u     -> App (qeval t) (qeval u)
+  Lam x t     -> Lam x (qeval t)
+  Pi x a b    -> Pi x (qeval a) (qeval b)
+  Let x a t u -> Let x (qeval a) (qeval t) (qeval u)
+  U           -> U
+  SrcPos _ t  -> qeval t
+  Quote t     -> Quote t
+  Splice t    -> case ceval t of
+                   CQuote t -> t
+                   _        -> undefined
+  Box t       -> Box (qeval t)
+
+--------------------------------------------------------------------------------
+
 -- | Beta-eta conversion checking
-conv :: EnvArg => Val -> Val -> Bool
+conv :: (?env :: VEnv) => Val -> Val -> Bool
 conv t u = case (t, u) of
   (VU        , VU           ) -> True
   (VBox t    , VBox t'      ) -> conv t t'
@@ -146,18 +198,18 @@ conv t u = case (t, u) of
 
 type VTy   = Val
 data Types = TNil | TBind Types Name ~VTy | TLock Types
-type Cxt   = (?types :: Types, ?env :: Env)
+type Cxt   = (?types :: Types, ?env :: VEnv)
 
 extCxt :: Name -> VTy -> Val -> (Cxt => a) -> Cxt => a
 extCxt x a v act =
   let ?types = TBind ?types x a; ?env = (x, v): ?env in
   act
 
-lockCxt :: (Cxt => a) -> Cxt => a
-lockCxt act = let ?types = TLock ?types in act
+lock :: (Cxt => a) -> Cxt => a
+lock act = let ?types = TLock ?types in act
 
-unlockCxt :: (Cxt => a) -> Cxt => a
-unlockCxt act =
+unlock :: (Cxt => a) -> Cxt => a
+unlock act =
   let go TNil           = TNil
       go (TBind ts x a) = TBind (go ts) x a
       go (TLock ts)     = go ts in
@@ -172,7 +224,7 @@ type M = Either (String, Maybe SourcePos)
 report :: String -> M a
 report str = Left (str, Nothing)
 
-quoteShow :: EnvArg => Val -> String
+quoteShow :: (?env :: VEnv) => Val -> String
 quoteShow = show . quote
 
 addPos :: SourcePos -> M a -> M a
@@ -189,10 +241,10 @@ check t a = case (t, a) of
     extCxt x a (VVar x') $ check t (b (VVar x'))
 
   (Quote t, VBox a) ->
-    lockCxt $ check t a
+    lock $ check t a
 
   (Splice t, a) ->
-    unlockCxt $ check t (VBox a)
+    unlock $ check t (VBox a)
 
   (Let x a t u, topa) -> do
     check a VU
@@ -241,7 +293,7 @@ infer = \case
   Lam{} ->
     report "Can't infer type for lambda expresion"
 
-  Box t -> lockCxt do
+  Box t -> lock do
     check t VU
     pure VU
 
@@ -250,14 +302,14 @@ infer = \case
     extCxt x (eval a) (VVar x) $ check b VU
     pure VU
 
-  Splice t -> unlockCxt do
+  Splice t -> unlock do
     infer t >>= \case
       VBox a -> pure a
       a      -> report $ "Expected a boxed type, instead inferred:\n\n  "
                        ++ quoteShow a
 
   Quote t ->
-    VBox <$> lockCxt (infer t)
+    VBox <$> lock (infer t)
 
   Let x a t u -> do
     check a VU
@@ -267,9 +319,6 @@ infer = \case
 
 infer0 :: Raw -> M VTy
 infer0 t = let ?env = []; ?types = TNil in infer t
-
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
 
 
 -- printing
@@ -306,7 +355,7 @@ prettyTm prec = go prec where
                      goPi (Pi x a b) | x /= "_" = piBind x a . goPi b
                      goPi b = (" → "++) . go pip b
     Let x a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp a
-                     . ("\n    = "++) . go letp t . ("\nin\n"++) . go letp u
+                     . ("\n    = "++) . go letp t . ("\n;\n"++) . go letp u
     SrcPos _ t  -> go p t
     Quote t     -> ('<':).go letp t.('>':)
     Splice t    -> par p splicep $ ('~':).go atomp t
@@ -410,19 +459,6 @@ parseStdin = do
   pure (tm, file)
 
 
--- Closed evaluation
---------------------------------------------------------------------------------
-
-data QVal
-  = QVar Name
-  | QApp QVal QVal
-  | QLam Name (QVal -> QVal)
-  | QPi Name QVal (QVal -> QVal)
-  | QU
-  | QLet Name QVal QVal (QVal -> QVal)
-
-
-
 -- main
 --------------------------------------------------------------------------------
 
@@ -446,7 +482,8 @@ helpMsg = unlines [
 mainWith :: IO [String] -> IO (Tm, String) -> IO ()
 mainWith getOpt getTm = do
   getOpt >>= \case
-    ["--help"] -> putStrLn helpMsg
+    ["--help"] ->
+      putStrLn helpMsg
     ["nf"]   -> do
       (t, file) <- getTm
       case infer0 t of
@@ -458,7 +495,16 @@ mainWith getOpt getTm = do
     ["type"] -> do
       (t, file) <- getTm
       either (displayError file) (print . quote0) $ infer0 t
-    _          -> putStrLn helpMsg
+    ["run"] -> do
+      (t, file) <- getTm
+      case infer0 t of
+        Left err -> displayError file err
+        Right a  -> do
+          print $ ceval0 t
+          putStrLn "  :"
+          print $ quote0 a
+    _ ->
+      putStrLn helpMsg
 
 main :: IO ()
 main = mainWith getArgs parseStdin
@@ -467,57 +513,33 @@ main = mainWith getArgs parseStdin
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
 
-ex1 = main' "type" $ unlines [
+test = main' "run" $ unlines [
   "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
   "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
 
-  "let Nat : U = (N : U)(z : N)(s : N → N) → N;",
-  "let zero : Nat = λ N z s. z;",
-  "let suc : Nat → Nat = λ n N z s. s (n N z s);",
-
-  "let List : U → U = λ A. (L : U)(cons : A → L → L)(nil : L) → L;",
-  "let nil  : (A : U) → List A = λ A L c n. n;",
-  "let cons : (A : U) → A → List A → List A = λ A a as L c n. c a (as L c n);",
-  "let map  : (A B : U) → (A → B) → List A → List B = λ A B f as L c n. as L (λ a bs. c (f a) bs) n;",
-
-  -- ◻ is idempotent ComonadApply
   "let counit  : (A : ◻ U) → ◻ ~A → ~A = λ A x. ~x;",
   "let dup     : (A : ◻ U) → ◻ ~A → ◻ (◻ ~A) = λ A x. <<~x>>;",
   "let ap      : (A B : ◻ U) → ◻ (~A → ~B) → ◻ ~A → ◻ ~B = λ A B f a. <~f ~a>;",
   "let join    : (A : ◻ U) → ◻ (◻ ~A) → ◻ ~A = λ A x. <~~x>;",
-  "let dupjoin : (A : ◻ U)(x : ◻ ~A) → Eq (◻ ~A) (join A (dup A x)) x = λ A x. refl (◻ ~A) x;",
+  "let dupjoin : (A : ◻ U)(x : ◻ ~A)     → Eq (◻ ~A)     (join A (dup A x)) x = λ A x. refl (◻ ~A) x;",
   "let joindup : (A : ◻ U)(x : ◻ (◻ ~A)) → Eq (◻ (◻ ~A)) (dup A (join A x)) x = λ A x. refl (◻ (◻ ~A)) x;",
 
-  "let inlMap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (List ~A → List ~B) = U;",
+  -- Not much point to Gen here, let-insertion isn't possible
 
-  -- "let unap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (~A → ~B) = λ A B f. <λ a. ~(f <a>)>;
+  -- "let Gen  : U → U = λ A. ((R : ◻ U) → (A → ◻ ~R) → ◻ ~R);",
+  -- "let pure : (A : U) → A → Gen A = λ A x R ret. ret x;",
+  -- "let bind : (A B : U) → Gen A → (A → Gen B) → Gen B = λ A b ma f R ret. ma R (λ a. f a R ret);",
+  -- "let run  : (A : ◻ U) → Gen (◻ ~A) → ◻ ~A = λ A ma. ma A (λ x. x);",
 
+  -- any top-level def that we want to use under ◻ must be boxed
+  -- it'd be preferable for convenience and efficiency to make top defs always accessible (not lockable)
+  "let Nat  : ◻ U = <(N : U)(z : N)(s : N → N) → N>;",
+  "let zero : ◻ ~Nat = <λ N z s. z>;",
+  "let suc  : ◻ (~Nat → ~Nat) = <λ n N z s. s (n N z s)>;",
+  "let three : ~Nat = λ N z s. s (s (s z));",
 
-  "join"
+  "let compSuc : ~Nat → ◻ (~Nat → ~Nat)",
+  "    = λ n. n (◻ (~Nat → ~Nat)) <λ n. n> (λ hyp. <λ n. ~suc (~hyp n)> );",
 
---      λ (A B : ◻ ~A) (f : ◻ ~A → ◻ ~B) → ◻ (~A → ~B)
---          <λ (a : ~A). ~(f <_>>)>
---                          _ :
-
-
+  "compSuc three"
   ]
-
--- ex1 = main' "type" $ unlines [
---   "-- basic polymorphic functions",
---   "let id : (A : U) -> A -> A",
---   "      = \\A x. x;",
---   "let const : (A B : U) -> A -> B -> A",
---   "      = \\A B x y. x;",
---   "",
---   "-- Church natural numbers",
---   "let Nat  : U = (N : U) -> (N -> N) -> N -> N;",
---   "let five : Nat = \\N s z. s (s (s (s (s z))));",
---   "let add  : Nat -> Nat -> Nat = \\a b N s z. a N s (b N s z);",
---   "let mul  : Nat -> Nat -> Nat = \\a b N s z. a N (b N s) z;",
---   "",
---   "let ten      : Nat = add five five;",
---   "let hundred  : Nat = mul ten ten;",
---   "let thousand : Nat = mul ten hundred;",
---   "",
---   "hundred"
---   ]

@@ -150,7 +150,7 @@ prettyTm prec = go (prec /= 0) where
     App (App t u) u' -> showParen p (go False t . (' ':) . goArg u . (' ':) . goArg u')
     App t u          -> showParen p (go True t . (' ':) . goArg u)
     Lam t            -> showParen p (("λ "++) . goLam t)
-    Let t u          -> ("let "++) . go False t . ("\nin\n"++) . go False u
+    Let t u          -> ("let "++) . go False t . ("\n;\n"++) . go False u
 
 instance Show Tm where showsPrec = prettyTm
 

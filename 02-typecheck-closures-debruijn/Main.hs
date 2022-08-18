@@ -314,7 +314,7 @@ prettyTm prec = go prec where
                                      (" → "++) . go pip ns b
 
     Let (fresh ns -> x) a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp ns a
-                                 . ("\n    = "++) . go letp ns t . ("\nin\n"++) . go letp (x:ns) u
+                                 . ("\n    = "++) . go letp ns t . ("\n;\n"++) . go letp (x:ns) u
 
 instance Show Tm where showsPrec p = prettyTm p []
 

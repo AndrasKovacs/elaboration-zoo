@@ -245,7 +245,7 @@ prettyTm prec = go prec where
                      goPi (Pi x a b) | x /= "_" = piBind x a . goPi b
                      goPi b = (" → "++) . go pip b
     Let x a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp a
-                     . ("\n    = "++) . go letp t . ("\nin\n"++) . go letp u
+                     . ("\n    = "++) . go letp t . ("\n;\n"++) . go letp u
     SrcPos _ t  -> go p t
 
 instance Show Tm where showsPrec = prettyTm

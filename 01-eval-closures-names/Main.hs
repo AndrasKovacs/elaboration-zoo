@@ -174,7 +174,7 @@ prettyTm prec = go (prec /= 0) where
     Lam x t  -> showParen p (("λ "++) . goLamBind x . goLam t)
     Let x t u ->
       ("let "++) . (x++) . ("\n    = "++)
-      . go False t  . ("\nin\n"++) . go False  u
+      . go False t  . ("\n;\n"++) . go False  u
 
 instance Show Tm where showsPrec = prettyTm
 

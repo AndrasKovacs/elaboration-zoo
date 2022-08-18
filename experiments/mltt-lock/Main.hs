@@ -13,18 +13,6 @@
   ViewPatterns
   #-}
 
-{-|
-MLTT-lock implementation: https://dl.acm.org/doi/10.1145/3341711 With
-type-in-type and only Pi.
-
-There's also a closed evaluator which interprets the modality as runtime code
-generation.
-
-It seems that we need some kind of contextual modality for codegen purposes,
-mainly because using □ and functions for open terms yields a very large
-number of "administrative" redexes.
--}
-
 module Main where
 
 import Control.Applicative hiding (many, some)
@@ -40,6 +28,39 @@ import Text.Printf
 
 import qualified Text.Megaparsec.Char       as C
 import qualified Text.Megaparsec.Char.Lexer as L
+
+--------------------------------------------------------------------------------
+
+test = main' "run" $ unlines [
+  "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
+  "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
+
+  "let counit  : (A : ◻ U) → ◻ ~A → ~A = λ A x. ~x;",
+  "let dup     : (A : ◻ U) → ◻ ~A → ◻ (◻ ~A) = λ A x. <<~x>>;",
+  "let ap      : (A B : ◻ U) → ◻ (~A → ~B) → ◻ ~A → ◻ ~B = λ A B f a. <~f ~a>;",
+  "let join    : (A : ◻ U) → ◻ (◻ ~A) → ◻ ~A = λ A x. <~~x>;",
+  "let dupjoin : (A : ◻ U)(x : ◻ ~A)     → Eq (◻ ~A)     (join A (dup A x)) x = λ A x. refl (◻ ~A) x;",
+  "let joindup : (A : ◻ U)(x : ◻ (◻ ~A)) → Eq (◻ (◻ ~A)) (dup A (join A x)) x = λ A x. refl (◻ (◻ ~A)) x;",
+
+  -- Not much point to Gen here, let-insertion isn't possible
+
+  -- "let Gen  : U → U = λ A. ((R : ◻ U) → (A → ◻ ~R) → ◻ ~R);",
+  -- "let pure : (A : U) → A → Gen A = λ A x R ret. ret x;",
+  -- "let bind : (A B : U) → Gen A → (A → Gen B) → Gen B = λ A b ma f R ret. ma R (λ a. f a R ret);",
+  -- "let run  : (A : ◻ U) → Gen (◻ ~A) → ◻ ~A = λ A ma. ma A (λ x. x);",
+
+  -- any top-level def that we want to use under ◻ must be boxed
+  -- it'd be preferable for convenience and efficiency to make top defs always accessible (not lockable)
+  "let Nat  : ◻ U = <(N : U)(z : N)(s : N → N) → N>;",
+  "let zero : ◻ ~Nat = <λ N z s. z>;",
+  "let suc  : ◻ (~Nat → ~Nat) = <λ n N z s. s (n N z s)>;",
+  "let three : ~Nat = λ N z s. s (s (s z));",
+
+  "let compSuc : ~Nat → ◻ (~Nat → ~Nat)",
+  "    = λ n. n (◻ (~Nat → ~Nat)) <λ n. n> (λ hyp. <λ n. ~suc (~hyp n)> );",
+
+  "compSuc three"
+  ]
 
 --------------------------------------------------------------------------------
 
@@ -524,34 +545,3 @@ main = mainWith getArgs parseStdin
 -- | Run main with inputs as function arguments.
 main' :: String -> String -> IO ()
 main' mode src = mainWith (pure [mode]) ((,src) <$> parseString src)
-
-test = main' "run" $ unlines [
-  "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
-  "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
-
-  "let counit  : (A : ◻ U) → ◻ ~A → ~A = λ A x. ~x;",
-  "let dup     : (A : ◻ U) → ◻ ~A → ◻ (◻ ~A) = λ A x. <<~x>>;",
-  "let ap      : (A B : ◻ U) → ◻ (~A → ~B) → ◻ ~A → ◻ ~B = λ A B f a. <~f ~a>;",
-  "let join    : (A : ◻ U) → ◻ (◻ ~A) → ◻ ~A = λ A x. <~~x>;",
-  "let dupjoin : (A : ◻ U)(x : ◻ ~A)     → Eq (◻ ~A)     (join A (dup A x)) x = λ A x. refl (◻ ~A) x;",
-  "let joindup : (A : ◻ U)(x : ◻ (◻ ~A)) → Eq (◻ (◻ ~A)) (dup A (join A x)) x = λ A x. refl (◻ (◻ ~A)) x;",
-
-  -- Not much point to Gen here, let-insertion isn't possible
-
-  -- "let Gen  : U → U = λ A. ((R : ◻ U) → (A → ◻ ~R) → ◻ ~R);",
-  -- "let pure : (A : U) → A → Gen A = λ A x R ret. ret x;",
-  -- "let bind : (A B : U) → Gen A → (A → Gen B) → Gen B = λ A b ma f R ret. ma R (λ a. f a R ret);",
-  -- "let run  : (A : ◻ U) → Gen (◻ ~A) → ◻ ~A = λ A ma. ma A (λ x. x);",
-
-  -- any top-level def that we want to use under ◻ must be boxed
-  -- it'd be preferable for convenience and efficiency to make top defs always accessible (not lockable)
-  "let Nat  : ◻ U = <(N : U)(z : N)(s : N → N) → N>;",
-  "let zero : ◻ ~Nat = <λ N z s. z>;",
-  "let suc  : ◻ (~Nat → ~Nat) = <λ n N z s. s (n N z s)>;",
-  "let three : ~Nat = λ N z s. s (s (s z));",
-
-  "let compSuc : ~Nat → ◻ (~Nat → ~Nat)",
-  "    = λ n. n (◻ (~Nat → ~Nat)) <λ n. n> (λ hyp. <λ n. ~suc (~hyp n)> );",
-
-  "compSuc three"
-  ]

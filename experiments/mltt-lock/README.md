@@ -19,4 +19,4 @@ number of "administrative" redexes.
 
 There's Moebius: https://arxiv.org/pdf/2111.08099.pdf But I would like to also
 see a nice version of contextual types in Fitch style, because as far as I see
-the negative eliminator if just far more convenient than the positive one.
+the negative eliminator is just far more convenient than the positive one.

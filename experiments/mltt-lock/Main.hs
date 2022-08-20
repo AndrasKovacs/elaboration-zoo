@@ -507,10 +507,11 @@ displayError file (msg, Just (SourcePos path (unPos -> linum) (unPos -> colnum))
 displayError _ _ = error "displayError: impossible: no available source position"
 
 helpMsg = unlines [
-  "usage: elabzoo-typecheck [--help|nf|type]",
+  "usage: mltt-lock [--help|nf|type|run]",
   "  --help : display this message",
   "  nf     : read & typecheck expression from stdin, print its normal form and type",
-  "  type   : read & typecheck expression from stdin, print its type"]
+  "  type   : read & typecheck expression from stdin, print its type",
+  "  run    : read & typecheck expression from stdin, print its result value"]
 
 mainWith :: IO [String] -> IO (Tm, String) -> IO ()
 mainWith getOpt getTm = do

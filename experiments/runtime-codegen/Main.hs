@@ -11,6 +11,7 @@
   Strict,
   TupleSections,
   ViewPatterns,
+  DerivingVia,
   StandaloneDeriving
   #-}
 
@@ -36,29 +37,48 @@ import qualified Text.Megaparsec.Char.Lexer as L
 --------------------------------------------------------------------------------
 
 test = main' "run" $ unlines [
-  "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
-  "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
 
-  "let Nat   : U   = (N : U)(z : N)(s : N → N) → N;",
-  "let zero  : Nat = λ N z s. z;",
-  "let one   : Nat = λ N z s. s z;",
-  "let suc   : Nat → Nat = λ n N z s. s (n N z s);",
-  "let three : Nat = λ N z s. s (s (s z));",
+  "let foo : U = U;",
+  "let bar : U = U;",
+  "let id : (A : U) → A → A = λ A x. U;",
+  "U"
 
-  "let Q : (A : U) → A → ◻ A = λ A x. <x>;",
+  -- "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
+  -- "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
 
-  "let List  : U → U = λ A. (L : U)(cons : A → L → L)(nil : L) → L;",
-  "let nil   : (A : U) → List A = λ A L c n. n;",
-  "let cons  : (A : U) → A → List A → List A = λ A a as L c n. c a (as L c n);",
-  "let foldr : (A B : U) → (A → B → B) → B → List A → B = λ A B c n as. as B c n;",
+  -- "let Nat   : U   = (N : U)(z : N)(s : N → N) → N;",
+  -- "let zero  : Nat = λ N z s. z;",
+  -- "let suc   : Nat → Nat = λ n N z s. s (n N z s);",
+  -- "let three : Nat = λ N z s. s (s (s z));",
 
-  "let map : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (List ~A) → ◻ (List ~B)",
-  "  = λ A B f as. <foldr ~A (List ~B) (λ a bs. cons ~B ~(f <a>) bs) (nil ~B) ~as>;",
+  -- "let unfold : (A : U) → A → ◻ A = λ A x. <x>;",
 
-  "let mapSucCode : ◻ (List Nat → List Nat)",
-  "  = <λ xs. ~(map <Nat> <Nat> (λ n. <suc ~n>) <xs>)>;",
+  -- "let zero'   : ◻ Nat = <zero>;",
+  -- "let suc'    : ◻ Nat → ◻ Nat = λ n. <suc ~n>;",
+  -- "let three'  : ◻ Nat = <three>;",
+  -- "let three'' : ◻ Nat = unfold Nat three;",
 
-  "Q Nat one"
+  -- "let List  : U → U = λ A. (L : U)(cons : A → L → L)(nil : L) → L;",
+  -- "let nil   : (A : U) → List A = λ A L c n. n;",
+  -- "let cons  : (A : U) → A → List A → List A = λ A a as L c n. c a (as L c n);",
+  -- "let foldr : (A B : U) → (A → B → B) → B → List A → B = λ A B c n as. as B c n;",
+
+  -- "let map : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (List ~A → List ~B)",
+  -- "  = λ A B f. <foldr ~A (List ~B) (λ a bs. cons ~B ~(f <a>) bs) (nil ~B)>;",
+
+  -- "let mapSucCode : ◻ (List Nat → List Nat)",
+  -- "  = map <Nat> <Nat> suc';",
+
+
+  -- "let FList : ◻ U → U = λ A. (L : ◻ U)(cons : ◻ ~A → ◻ ~L → ◻ ~L)(nil : ◻ ~L) → ◻ ~L;",
+
+  -- "let fmap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → FList A → FList B",
+  -- "  = λ A B f as L c n. as L (λ a bs. c (f a) bs) n;",
+
+  -- "let up : (A : ◻ U) → ◻ (List ~A) → FList A",
+  -- "  = λ A as L c n. <foldr ~A ~L (λ a l. ~(c <a> <l>)) ~n ~as>;",
+
+  -- "mapSucCode"
 
   ]
 
@@ -84,8 +104,8 @@ data RTm
   | RLam Name RTm                -- \x. t
   | RApp RTm RTm                 -- t u
   | RU                           -- U
-  | RPi Name RTy RTy               -- (x : A) -> B
-  | RLet Name RTy RTm RTm         -- let x : A = t; u
+  | RPi Name RTy RTy             -- (x : A) -> B
+  | RLet Name RTy RTm RTm        -- let x : A = t; u
   | RSrcPos (Hide SourcePos) RTm -- source position for errors
   | RQuote RTm                   -- <t>
   | RSplice RTm                  -- ~t
@@ -96,25 +116,28 @@ data RTm
 -- syntax
 --------------------------------------------------------------------------------
 
+newtype Ix  = Ix  {unIx  :: Int} deriving (Eq, Show, Num) via Int
+newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Show, Num) via Int
+
 type Name = String
 type Ty   = Tm
 
 data Tm
-  = LocalVar Name
-  | TopVar Name
-  | Lam Name Tm                -- \x. t
-  | App Tm Tm                  -- t u
-  | U                          -- U
-  | Pi Name Ty Ty              -- (x : A) -> B
-  | Let Name Ty Tm Tm          -- let x : A = t; u
-  | Quote Tm                   -- <t>
-  | Splice Tm                  -- ~t
-  | Box Tm                     -- ◻ A
+  = LocalVar Ix
+  | TopVar Lvl
+  | Lam Name Tm       -- \x. t
+  | App Tm Tm         -- t u
+  | U                 -- U
+  | Pi Name Ty Ty     -- (x : A) -> B
+  | Let Name Ty Tm Tm -- let x : A = t; u
+  | Quote Tm          -- <t>
+  | Splice Tm         -- ~t
+  | Box Tm            -- ◻ A
 
 --------------------------------------------------------------------------------
 
 data Val
-  = VVar Name
+  = VVar Lvl
   | VApp Val ~Val
   | VLam Name (Val -> Val)
   | VPi Name Val (Val -> Val)
@@ -123,48 +146,31 @@ data Val
   | VBox Val
   | VU
 
-type Env a = [(Name, a)]
-type VEnv = Env Val
+type VEnv = (?env :: [Val])
 
-extEnv :: Name -> v -> ((?env :: Env v) => a) -> (?env :: Env v) => a
-extEnv x ~v act = let ?env = (x, v): ?env in act
+extVEnv :: Val -> (VEnv => a) -> VEnv => a
+extVEnv ~v act = let ?env = v: ?env in act
 
-fresh :: (?env :: Env v) => Name -> Name
-fresh "_" = "_"
-fresh x   = case lookup x ?env of
-  Just _  -> fresh (x ++ "'")
-  _       -> x
+newVVar :: ((?lvl :: Lvl) => Val -> a) -> (?lvl :: Lvl) => a
+newVVar act = let v = VVar ?lvl in let ?lvl = ?lvl + 1 in act v
 
-bindEnv :: Name -> ((?env :: VEnv) => Val -> a) -> (?env :: VEnv) => a
-bindEnv (fresh -> x) act =
-  let v = VVar x in let ?env = (x,v): ?env in act v
-
-vsplice :: Val -> Val
-vsplice = \case VQuote t -> t; t -> VSplice t
-
-vquote :: Val -> Val
-vquote = \case VSplice t -> t; t -> VQuote t
-
-lookupVar :: Name -> Env v -> v
-lookupVar x env = fromJust $ lookup x env
-
-eval :: (?env :: VEnv) => Tm -> Val
+eval :: VEnv => Tm -> Val
 eval = \case
-  LocalVar x  -> lookupVar x ?env
-  TopVar x    -> lookupVar x ?env
+  LocalVar x  -> ?env !! coerce x
+  TopVar x    -> ?env !! (length ?env - coerce x - 1)
   App t u     -> case (eval t, eval u) of
                    (VLam _ t, u) -> t u
                    (t       , u) -> VApp t u
-  Lam x t     -> VLam x (\u -> extEnv x u (eval t))
-  Pi x a b    -> VPi x (eval a) (\u -> extEnv x u (eval b))
-  Let x _ t u -> extEnv x (eval t) (eval u)
+  Lam x t     -> VLam x (\u -> extVEnv u (eval t))
+  Pi x a b    -> VPi x (eval a) (\u -> extVEnv u (eval b))
+  Let x _ t u -> extVEnv (eval t) (eval u)
   U           -> VU
-  Quote t     -> vquote (eval t)
-  Splice t    -> vsplice (eval t)
+  Quote t     -> case eval t of VSplice t -> t; t -> VQuote t
+  Splice t    -> case eval t of VQuote t -> t; t -> VSplice t
   Box t       -> VBox (eval t)
 
 -- | Beta-eta conversion checking
-conv :: (?env :: VEnv) => Val -> Val -> Bool
+conv :: (?lvl :: Lvl) => Val -> Val -> Bool
 conv t u = case (t, u) of
   (VVar x    , VVar x'      ) -> x == x'
   (VApp t u  , VApp t' u'   ) -> conv t t' && conv u u'
@@ -172,150 +178,129 @@ conv t u = case (t, u) of
   (VBox t    , VBox t'      ) -> conv t t'
   (VQuote t  , VQuote t'    ) -> conv t t'
   (VSplice t , VSplice t'   ) -> conv t t'
-  (VPi x a b , VPi x' a' b' ) -> conv a a' && bindEnv x \x -> conv (b x) (b' x)
-  (VLam x t  , VLam x' t'   ) -> bindEnv x \x -> conv (t x) (t' x)
-  (VLam x t  , u            ) -> bindEnv x \x -> conv (t x) (VApp u x)
-  (t         , VLam x u     ) -> bindEnv x \x -> conv (VApp t x) (u x)
+  (VPi x a b , VPi x' a' b' ) -> conv a a' && newVVar \x -> conv (b x) (b' x)
+  (VLam x t  , VLam x' t'   ) -> newVVar \x -> conv (t x) (t' x)
+  (VLam x t  , u            ) -> newVVar \x -> conv (t x) (VApp u x)
+  (t         , VLam x u     ) -> newVVar \x -> conv (VApp t x) (u x)
   _                           -> False
 
-quote :: (?env :: VEnv) => Val -> Tm
+lvlToIx :: (?lvl :: Lvl) => Lvl -> Ix
+lvlToIx x = coerce (?lvl - x - 1)
+
+ixToLvl :: (?lvl :: Lvl) => Ix -> Lvl
+ixToLvl x = ?lvl - coerce x - 1
+
+quote :: (?lvl :: Lvl) => Val -> Tm
 quote = \case
-  VVar x     -> LocalVar x
+  VVar x     -> LocalVar (lvlToIx x)
   VApp t u   -> App (quote t) (quote u)
-  VLam x t   -> Lam x $ bindEnv x \x -> quote (t x)
-  VPi  x a b -> Pi x (quote a) $ bindEnv x \x -> quote (b x)
+  VLam x t   -> Lam x $ newVVar \x -> quote (t x)
+  VPi  x a b -> Pi x (quote a) $ newVVar \x -> quote (b x)
   VU         -> U
   VQuote t   -> Quote (quote t)
   VSplice t  -> Splice (quote t)
   VBox t     -> Box (quote t)
 
 quote0 :: Val -> Tm
-quote0 = let ?env = [] in quote
+quote0 = let ?lvl = 0 in quote
 
 nf0 :: Tm -> Tm
-nf0 t = let ?env = [] in quote (eval t)
+nf0 t = let ?env = []; ?lvl = 0 in quote (eval t)
 
--- Evaluation
+
+-- Multi-stage evaluation
 --------------------------------------------------------------------------------
 
-type Stage = Int
-type SEnv = Env SVal
+type Stage   = Int
+data Closure = Cl Stage [SVal] Tm
 
 data SVal
-  = SLocalVar Name
-  | STopVar Name
+  = SLocalVar Lvl
+  | STopVar Lvl
   | SApp SVal SVal
-  | SLam Name (SVal -> SVal)
-  | SPi Name SVal (SVal -> SVal)
-  | SLet Name SVal SVal (SVal -> SVal)
+  | SLam Name Closure
+  | SPi Name SVal Closure
+  | SLet Name SVal SVal Closure
   | SQuote SVal
   | SSplice SVal
   | SBox SVal
   | SU
 
-showCVal :: SVal -> String
-showCVal = \case
-  SLocalVar{} -> impossible
-  STopVar{}   -> impossible
-  SApp{}      -> impossible
-  SLam{}      -> "SLam"
-  SPi{}       -> "SPi"
-  SLet{}      -> impossible
-  SQuote t    -> let ?env = [] in show (Quote (gen t))
-  SSplice{}   -> impossible
-  SBox{}      -> "SBox"
-  SU          -> "SU"
+infixl 7 $$
+($$) :: (?lvl :: Lvl) => Closure -> SVal -> SVal
+($$) (Cl s e t) u = let ?env = u : e; ?stage = s in seval t
 
-sapp :: SVal -> SVal -> SVal
-sapp (SLam _ t) u = t u
-sapp t          u = SApp t u
-
-ifStage0 :: (?stage :: Stage) => a -> a -> a
-ifStage0 ~x ~y = if ?stage == 0 then x else y
-
-localStage :: (Stage -> Stage) -> ((?stage :: Stage) => a) -> ((?stage :: Stage) => a)
-localStage f act = let ?stage = f ?stage in act
-
-sQuote :: SVal -> SVal
-sQuote (SSplice t) = t
-sQuote t           = SQuote t
-
-sSplice :: SVal -> SVal
-sSplice (SQuote t) = t
-sSplice t          = SSplice t
-
-sSplice0 :: (?env :: SEnv) => (?stage :: Stage) => SVal -> SVal
-sSplice0 (SQuote t) = seval (gen t)
-sSplice0 t          = SSplice t
-
-seval :: (?env :: SEnv) => (?stage :: Stage) => Tm -> SVal
+seval :: (?env :: [SVal], ?lvl :: Lvl, ?stage :: Int) => Tm -> SVal
 seval = \case
-  LocalVar x  -> lookupVar x ?env
-  TopVar x    -> ifStage0 (lookupVar x ?env) (STopVar x)
-  Lam x t     -> SLam x \u -> extEnv x u (seval t)
-  App t u     -> ifStage0 sapp SApp (seval t) (seval u)
-  U           -> SU
-  Pi x a b    -> SPi x (seval a) \u -> extEnv x u (seval b)
-  Let x a t u -> ifStage0 (extEnv x (seval t) (seval u))
-                          (SLet x (seval a) (seval t) \v -> extEnv x v (seval u))
-  Quote t     -> sQuote (localStage succ (seval t))
-  Splice t    -> ifStage0 (sSplice0 (seval t))
-                          (sSplice (localStage pred (seval t)))
-  Box t       -> SBox (seval t)
+  Lam x t    -> SLam x (Cl ?stage ?env t)
+  Pi x a b   -> SPi x (seval a) (Cl ?stage ?env b)
+  Quote t    -> let ?stage = ?stage + 1 in case seval t of
+                  SSplice t -> t
+                  t         -> SQuote t
+  Box t      -> SBox (seval t)
+  U          -> SU
+  LocalVar x -> ?env !! coerce x
 
-gBind :: Name -> ((?env :: SEnv) => Name -> SVal -> a) -> (?env :: SEnv) => a
-gBind (fresh -> x) act =
-  let v = SLocalVar x in let ?env = (x,v): ?env in act x v
+  t -> case ?stage of
+    0 -> case t of
+      TopVar x    -> ?env !! (length ?env - coerce x - 1)
+      App t u     -> case (seval t, seval u) of
+                       (SLam _ t, u) -> t $$ u
+                       (t, u)        -> SApp t u
+      Let x a t u -> let ?env = seval t : ?env in seval u
+      Splice t    -> case seval t of
+                       SQuote t -> seval (gen t)
+                       t        -> SSplice t
+    _ -> case t of
+      TopVar x    -> STopVar x
+      App t u     -> SApp (seval t) (seval u)
+      Let x a t u -> SLet x (seval a) (seval t) (Cl ?stage ?env u)
+      Splice t    -> let ?stage = ?stage - 1 in case seval t of
+                       SQuote t -> t
+                       t        -> SSplice t
 
-gen :: (?env :: SEnv) => SVal -> Tm
+newSVar :: ((?lvl :: Lvl) => SVal -> a) -> ((?lvl :: Lvl) => a)
+newSVar act =
+  let v = SLocalVar ?lvl in
+  let ?lvl = ?lvl + 1 in
+  act v
+
+gen :: (?lvl :: Lvl) => SVal -> Tm
 gen = \case
-  SLocalVar x  -> LocalVar x
+  SLocalVar x  -> LocalVar (lvlToIx x)
   STopVar x    -> TopVar x
   SApp t u     -> App (gen t) (gen u)
-  SLam x t     -> gBind x \x var -> Lam x (gen (t var))
-  SPi x a b    -> let a' = gen a in gBind x \x var -> Pi x a' (gen (b var))
-  SLet x a t u -> let a' = gen a; t' = gen t in gBind x \x var ->
-                  Let x a' t' (gen (u var))
+  SLam x t     -> newSVar \var -> Lam x (gen (t $$ var))
+  SPi x a b    -> let a' = gen a in newSVar \var -> Pi x a' (gen (b $$ var))
+  SLet x a t u -> let a' = gen a; t' = gen t in newSVar \var ->
+                  Let x a' t' (gen (u $$ var))
   SQuote t     -> Quote (gen t)
   SSplice t    -> Splice (gen t)
   SBox t       -> Box (gen t)
   SU           -> U
 
-ceval :: (?env :: SEnv) => Tm -> SVal
-ceval = \case
-  LocalVar x  -> lookupVar x ?env
-  TopVar x    -> lookupVar x ?env
-  Lam x t     -> SLam x \u -> extEnv x u (ceval t)
-  App t u     -> case ceval t of
-                   SLam _ t -> t (ceval u)
-                   -- _        -> impossible
-                   t        -> error $ show $ gen t
-  U           -> SU
-  Pi x a b    -> SPi x (ceval a) \u -> extEnv x u (ceval b)
-  Let x a t u -> extEnv x (ceval t) (ceval u)
-  Quote t     -> let ?stage = 1 in SQuote (seval t)
-  Splice t    -> case ceval t of
-                   SQuote t -> ceval (gen t)
-                   _        -> impossible
-  Box t       -> SBox (ceval t)
 
-ceval0 :: Tm -> SVal
-ceval0 = let ?env = [] in ceval
 
 --------------------------------------------------------------------------------
 
 type VTy    = Val
-type TopCxt = (?top :: Env VTy, ?env :: VEnv)
-type Cxt    = (?top :: Env VTy, ?local :: Env VTy, ?env :: VEnv)
+type TopCxt = (?top :: [(Name, VTy)], VEnv)
+type Cxt    = (?top :: [(Name, VTy)], ?local :: [(Name, VTy)], VEnv, ?lvl :: Lvl)
 
-extCxt :: Name -> VTy -> Val -> (Cxt => a) -> Cxt => a
-extCxt x a v act =
-  let ?local = (x, a) : ?local; ?env = (x, v): ?env in
+bind :: Name -> VTy -> (Cxt => Val -> a) -> Cxt => a
+bind x a act =
+  let v = VVar ?lvl in
+  let ?local = (x, a) : ?local; ?env = v: ?env; ?lvl = ?lvl + 1 in
+  act v
+
+define :: Name -> VTy -> Val -> (Cxt => a) -> Cxt => a
+define x a ~v act =
+  let ?local = (x, a) : ?local; ?env = v: ?env; ?lvl = ?lvl + 1 in
   act
 
-extTopCxt :: Name -> VTy -> Val -> (Cxt => a) -> Cxt => a
-extTopCxt x a v act =
-  let ?top = (x, a) : ?top; ?env = (x, v): ?env in
+defineTop :: Name -> VTy -> Val -> (Cxt => a) -> Cxt => a
+defineTop x a ~v act =
+  let ?top = (x, a) : ?top; ?env = v: ?env; ?lvl = ?lvl + 1 in
   act
 
 -- | Typechecking monad. After we throw an error, we annotate it at the innermost
@@ -326,8 +311,13 @@ type M = Either (String, Maybe SourcePos)
 report :: String -> M a
 report str = Left (str, Nothing)
 
-quoteShow :: (?env :: VEnv) => Val -> String
-quoteShow = show . quote
+cxtNames :: Cxt => [Name]
+cxtNames = map fst $ ?local ++ ?top
+
+quoteShow :: Cxt => Val -> String
+quoteShow t =
+  -- show (quote t)
+  showTm cxtNames (quote t)
 
 addPos :: SourcePos -> M a -> M a
 addPos pos ma = case ma of
@@ -339,8 +329,8 @@ check t a = case (t, a) of
   (RSrcPos pos t, _) ->
     addPos (coerce pos) (check t a)
 
-  (RLam x t, VPi (fresh -> x') a b) ->
-    Lam x <$> extCxt x a (VVar x') (check t (b (VVar x')))
+  (RLam x t, VPi x' a b) ->
+    Lam x <$> (bind x a \x -> check t (b x))
 
   (RQuote t, VBox a) -> Quote <$> check t a
   (RSplice t, a)     -> Splice <$> check t (VBox a)
@@ -349,7 +339,7 @@ check t a = case (t, a) of
     a <- check a VU
     let va = eval a
     t <- check t va
-    u <- extCxt x va (eval t) $ check u topa
+    u <- define x va (eval t) $ check u topa
     pure $ Let x a t u
 
   _ -> do
@@ -360,6 +350,12 @@ check t a = case (t, a) of
         (quoteShow a) (quoteShow tty))
     pure t
 
+lookupVar :: Name -> [(Name, VTy)] -> Maybe (Ix, VTy)
+lookupVar x xs = go 0 xs where
+  go i [] = Nothing
+  go i ((x', a):xs) | x == x' = Just (i, a)
+                    | True    = go (i + 1) xs
+
 infer :: Cxt => RTm -> M (Tm, VTy)
 infer = \case
 
@@ -367,10 +363,12 @@ infer = \case
     addPos (coerce pos) (infer t)
 
   RVar x -> do
-    case lookup x ?local of
-      Just a -> pure (LocalVar x, a)
-      Nothing -> case lookup x ?top of
-        Just a -> pure (TopVar x, a)
+    case lookupVar x ?local of
+      Just (i, a) -> pure (LocalVar i, a)
+      Nothing -> case lookupVar x ?top of
+        Just (i, a) -> do
+          let ?lvl = Lvl (length ?top)
+          pure (TopVar (ixToLvl i), a)
         Nothing -> report $ "variable " ++ show x ++ " is not in scope"
 
   RU -> pure (U, VU)
@@ -394,7 +392,7 @@ infer = \case
 
   RPi x a b -> do
     a <- check a VU
-    b <- extCxt x (eval a) (VVar x) $ check b VU
+    b <- bind x (eval a) \_ -> check b VU
     pure (Pi x a b, VU)
 
   RSplice t -> do
@@ -412,28 +410,30 @@ infer = \case
     a <- check a VU
     let va = eval a
     t <- check t va
-    (u, uty) <- extCxt x va (eval t) $ infer u
+    (u, uty) <- define x va (eval t) $ infer u
     pure (Let x a t u, uty)
 
-inferTop :: TopCxt => RTm -> M (Tm, VTy)
+inferTop :: TopCxt => RTm -> M (Tm, VTy, [Name])
 inferTop = \case
   RSrcPos pos t ->
     addPos (coerce pos) (inferTop t)
 
   RLet x a t u -> do
-    let ?local = []
+    let ?local = []; ?lvl = 0
     a <- check a VU
     let va = eval a
     t <- check t va
-    (u, uty) <- extTopCxt x va (eval t) $ inferTop u
-    pure (Let x a t u, uty)
+    (u, uty, ns) <- defineTop x va (eval t) $ inferTop u
+    pure (Let x a t u, uty, ns)
 
   t -> do
-    let ?local = []
-    infer t
+    let ?local = []; ?lvl = 0
+    (t, tty) <- infer t
+    pure (t, tty, cxtNames)
 
-inferTop0 :: RTm -> M (Tm, VTy)
+inferTop0 :: RTm -> M (Tm, VTy, [Name])
 inferTop0 = let ?top = []; ?env = [] in inferTop
+
 
 -- printing
 --------------------------------------------------------------------------------
@@ -450,33 +450,59 @@ letp    = 0  :: Int -- let, lambda
 par :: Int -> Int -> ShowS -> ShowS
 par p p' = showParen (p' < p)
 
-prettyTm :: Int -> Tm -> ShowS
-prettyTm prec = go prec where
+fresh :: [Name] -> Name -> Name
+fresh ns "_" = "_"
+fresh ns x   = case elem x ns of
+  True -> fresh ns (x ++ "'")
+  _    -> x
 
-  piBind x a =
-    showParen True ((x++) . (" : "++) . go letp a)
+prettyTm :: [Name] -> Int -> Tm -> ShowS
+prettyTm ns prec = go ns prec where
 
-  go :: Int -> Tm -> ShowS
-  go p = \case
-    LocalVar x  -> (x++)
-    TopVar x    -> (x++)
-    App t u     -> par p appp $ go appp t . (' ':) . go splicep u
-    Lam x t     -> par p letp $ ("λ "++) . (x++) . goLam t where
-                     goLam (Lam x t) = (' ':) . (x++) . goLam t
-                     goLam t         = (". "++) . go letp t
-    U           -> ("U"++)
-    Pi "_" a b  -> par p pip $ go appp a . (" → "++) . go pip b
-    Pi x a b    -> par p pip $ piBind x a . goPi b where
-                     goPi (Pi x a b) | x /= "_" = piBind x a . goPi b
-                     goPi b = (" → "++) . go pip b
-    Let x a t u -> par p letp $ ("let "++) . (x++) . (" : "++) . go letp a
-                     . ("\n    = "++) . go letp t . (";\n\n"++) . go letp u
-    Quote t     -> ('<':).go letp t.('>':)
-    Splice t    -> par p splicep $ ('~':).go atomp t
-    Box    t    -> par p appp $ ("◻ "++).go splicep t
+  localvar ns x acc = ns !! unIx x ++ acc
 
-instance Show Tm where showsPrec = prettyTm
--- deriving instance Show Tm
+  topvar ns x acc =
+    let ?lvl = Lvl $ length ns in
+    localvar ns (lvlToIx x) acc
+
+  piBind ns x a =
+    showParen True ((x++) . (" : "++) . go ns letp a)
+
+  go :: [Name] -> Int -> Tm -> ShowS
+  go ns p = \case
+    LocalVar x  -> localvar ns x
+    TopVar x    -> topvar ns x
+
+    App t u     -> par p appp $ go ns appp t . (' ':) . go ns splicep u
+
+    Lam (fresh ns -> x) t -> par p letp $ ("λ "++) . (x++) . goLam (x:ns) t where
+      goLam ns (Lam (fresh ns -> x) t) = (' ':) . (x++) . goLam (x:ns) t
+      goLam ns t                       = (". "++) . go ns letp t
+
+    U  -> ("U"++)
+
+    Pi "_" a b ->
+      par p pip $ go ns appp a . (" → "++) . go ("_":ns) pip b
+
+    Pi (fresh ns -> x) a b -> par p pip $ piBind ns x a . goPi (x:ns) b where
+      goPi ns (Pi (fresh ns -> x) a b) | x /= "_" = piBind ns x a . goPi (x:ns) b
+      goPi ns b = (" → "++) . go ns pip b
+
+    Let (fresh ns -> x) a t u ->
+      par p letp $ ("let "++) . (x++) . (" : "++) . go ns letp a
+      . ("\n    = "++) . go ns letp t . (";\n\n"++) . go (x:ns) letp u
+
+    Quote t     -> ('<':).go ns letp t.('>':)
+    Splice t    -> par p splicep $ ('~':).go ns atomp t
+    Box    t    -> par p appp $ ("◻ "++).go ns splicep t
+
+deriving instance Show Tm
+
+showTm :: [Name] -> Tm -> String
+showTm ns t = prettyTm ns 0 t []
+
+showTm0 :: Tm -> String
+showTm0 = showTm []
 
 -- parsing
 --------------------------------------------------------------------------------
@@ -500,7 +526,7 @@ keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
 
 pIdent :: Parser Name
 pIdent = try $ do
-  x <- takeWhile1P Nothing isAlphaNum
+  x <- takeWhile1P Nothing (\c -> isAlphaNum c || c == '\'')
   guard (not (keyword x))
   x <$ ws
 
@@ -596,27 +622,28 @@ helpMsg = unlines [
 
 mainWith :: IO [String] -> IO (RTm, String) -> IO ()
 mainWith getOpt getTm = do
-  let get :: IO (Tm, VTy)
+  let get :: IO (Tm, VTy, [Name])
       get = do
         (t, file) <- getTm
         case inferTop0 t of
-          Left err     -> displayError file err >> exitSuccess
-          Right (t, a) -> pure (t, a)
+          Left err -> displayError file err >> exitSuccess
+          Right x  -> pure x
 
   getOpt >>= \case
     ["--help"] ->
       putStrLn helpMsg
     ["nf"] -> do
-      (t, a) <- get
-      print $ nf0 t
+      (t, a, _) <- get
+      putStrLn $ showTm0 $ nf0 t
       putStrLn "  :"
-      print $ quote0 a
+      putStrLn $ showTm0 $ quote0 a
     ["elab"] -> do
-      (t, a) <- get
-      print t
+      (t, a, _) <- get
+      putStrLn $ showTm0 t
     ["run"] -> do
-      (t, a) <- get
-      putStrLn $ showCVal $ ceval0 t
+      (t, a, ns) <- get
+      let ?env = []; ?stage = 0; ?lvl = 0
+      putStrLn $ showTm ns $ gen $ seval t
     _ ->
       putStrLn helpMsg
 

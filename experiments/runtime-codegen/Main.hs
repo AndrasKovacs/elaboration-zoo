@@ -116,8 +116,8 @@ data RTm
 -- syntax
 --------------------------------------------------------------------------------
 
-newtype Ix  = Ix  {unIx  :: Int} deriving (Eq, Show, Num) via Int
-newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Show, Num) via Int
+newtype Ix  = Ix  {unIx  :: Int} deriving (Eq, Show, Enum, Num) via Int
+newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Show, Enum, Num) via Int
 
 type Name = String
 type Ty   = Tm
@@ -227,34 +227,47 @@ data SVal
   | SU
 
 infixl 7 $$
-($$) :: (?lvl :: Lvl) => Closure -> SVal -> SVal
-($$) (Cl s e t) u = let ?env = u : e; ?stage = s in seval t
+($$) :: (?top :: [SVal], ?lvl :: Lvl) => Closure -> SVal -> SVal
+($$) (Cl s e t) u = let ?local = u : e; ?stage = s in seval t
 
-seval :: (?env :: [SVal], ?lvl :: Lvl, ?stage :: Int) => Tm -> SVal
+runtop :: (?top :: [SVal]) => Tm -> Tm
+runtop t =
+  let ?lvl = 0; ?stage = 0; ?local = [] in
+  case t of
+    Let x a t u -> let ?top = seval t : ?top in runtop u
+    t           -> gen (seval t)
+
+-- map each local var to itself
+idEnv :: Lvl -> [SVal]
+idEnv l = map SLocalVar [l-1,l-2..0]
+
+seval :: (?top :: [SVal], ?local :: [SVal], ?lvl :: Lvl, ?stage :: Int) => Tm -> SVal
 seval = \case
-  Lam x t    -> SLam x (Cl ?stage ?env t)
-  Pi x a b   -> SPi x (seval a) (Cl ?stage ?env b)
+  Lam x t    -> SLam x (Cl ?stage ?local t)
+  Pi x a b   -> SPi x (seval a) (Cl ?stage ?local b)
   Quote t    -> let ?stage = ?stage + 1 in case seval t of
                   SSplice t -> t
                   t         -> SQuote t
   Box t      -> SBox (seval t)
   U          -> SU
-  LocalVar x -> ?env !! coerce x
+  LocalVar x -> ?local !! coerce x
 
   t -> case ?stage of
     0 -> case t of
-      TopVar x    -> ?env !! (length ?env - coerce x - 1)
+      TopVar x    -> ?top !! (length ?top - coerce x - 1)
       App t u     -> case (seval t, seval u) of
                        (SLam _ t, u) -> t $$ u
                        (t, u)        -> SApp t u
-      Let x a t u -> let ?env = seval t : ?env in seval u
+      Let x a t u -> let ?env = seval t : ?local in seval u
       Splice t    -> case seval t of
-                       SQuote t -> seval (gen t)
-                       t        -> SSplice t
+                       SQuote t ->
+                         let ?local = idEnv ?lvl in
+                         seval (gen t)
+                       t -> SSplice t
     _ -> case t of
       TopVar x    -> STopVar x
       App t u     -> SApp (seval t) (seval u)
-      Let x a t u -> SLet x (seval a) (seval t) (Cl ?stage ?env u)
+      Let x a t u -> SLet x (seval a) (seval t) (Cl ?stage ?local u)
       Splice t    -> let ?stage = ?stage - 1 in case seval t of
                        SQuote t -> t
                        t        -> SSplice t
@@ -265,7 +278,7 @@ newSVar act =
   let ?lvl = ?lvl + 1 in
   act v
 
-gen :: (?lvl :: Lvl) => SVal -> Tm
+gen :: (?top :: [SVal], ?lvl :: Lvl) => SVal -> Tm
 gen = \case
   SLocalVar x  -> LocalVar (lvlToIx x)
   STopVar x    -> TopVar x
@@ -642,8 +655,8 @@ mainWith getOpt getTm = do
       putStrLn $ showTm0 t
     ["run"] -> do
       (t, a, ns) <- get
-      let ?env = []; ?stage = 0; ?lvl = 0
-      putStrLn $ showTm ns $ gen $ seval t
+      let ?top = []
+      putStrLn $ showTm ns $ runtop t
     _ ->
       putStrLn helpMsg
 

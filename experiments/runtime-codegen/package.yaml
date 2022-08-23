@@ -21,4 +21,4 @@ source-dirs: .
 executable:
   main: Main.hs
   ghc-options:
-  - -O
+  - -O0

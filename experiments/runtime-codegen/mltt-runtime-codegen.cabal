@@ -26,7 +26,7 @@ executable mltt-runtime-codegen
       Paths_mltt_runtime_codegen
   hs-source-dirs:
       ./
-  ghc-options: -O
+  ghc-options: -O1
   build-depends:
       base >=4.7 && <5
     , containers

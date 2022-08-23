@@ -1,0 +1,155 @@
+
+let id   : (A : U) → A → A = λ A x. x;
+
+let comp : (A B C : U) → (B → C) → (A → B) → A → C
+  = λ A B C f g x. f (g x);
+
+let Eq   : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;
+let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;
+
+let five : Nat = suc (suc (suc (suc (suc zero))));
+
+let iter : (A : U) → Nat → (A → A) → A → A
+  = λ A n s z. ind (λ _. A) (λ _. s) z n;
+
+let add : Nat → Nat → Nat
+  = λ a b. iter Nat a suc b;
+
+let unfold : (A : U) → A → ◻ A = λ A x. <x>;
+
+-- code generator versions
+let Nat'    : U    = ◻ Nat;
+let zero'   : Nat' = <zero>;
+let suc'    : Nat' → Nat' = λ n. <suc ~n>;
+let add'    : Nat' → Nat' → Nat' = λ a b. <add ~a ~b>;
+
+-- quoted top-level identifier as code
+let five'   : Nat' = <five>;
+
+-- the normal form of "five" as code
+let five''  : Nat' = unfold Nat five;
+
+let List  : U → U = λ A. (L : U)(cons : A → L → L)(nil : L) → L;
+let nil   : (A : U) → List A = λ A L c n. n;
+let cons  : (A : U) → A → List A → List A = λ A a as L c n. c a (as L c n);
+let foldr : (A B : U) → (A → B → B) → B → List A → B = λ A B c n as. as B c n;
+
+let List' : ◻ U → U
+  = λ A. ◻ (List ~A);
+
+let nil' : (A : ◻ U) → List' A
+  = λ A. <nil ~A>;
+
+let cons' : (A : ◻ U) → ◻ ~A → List' A → List' A
+  = λ A a as. <cons ~A ~a ~as>;
+
+let inlinedMap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (List ~A → List ~B)
+  = λ A B f. <foldr ~A (List ~B) (λ a bs. cons ~B ~(f <a>) bs) (nil ~B)>;
+
+let mapSucCode : ◻ (List Nat → List Nat)
+  = inlinedMap <Nat> <Nat> suc';
+
+
+-- -- list fusion
+-- --------------------------------------------------------------------------------
+
+let FList : ◻ U → U = λ A. (L : ◻ U)(cons : ◻ ~A → ◻ ~L → ◻ ~L)(nil : ◻ ~L) → ◻ ~L;
+
+let fnil : (A : ◻ U) → FList A
+  = λ A L c n. n;
+
+let fmap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → FList A → FList B
+  = λ A B f as L c n. as L (λ a bs. c (f a) bs) n;
+
+let up : (A : ◻ U) → List' A → FList A
+  = λ A as L c n. <foldr ~A ~L (λ a l. ~(c <a> <l>)) ~n ~as>;
+
+let down : (A : ◻ U) → FList A → List' A
+  = λ A as. as <List ~A> (cons' A) (nil' A);
+
+let f1code : ◻ (List Nat → List Nat)
+  = <λ ns. ~(down <Nat>
+            (fmap <Nat> <Nat> suc'
+            (fmap <Nat> <Nat> suc'
+            (fmap <Nat> <Nat> suc'
+            (up <Nat> <ns>)))))>;
+
+let f1 : List Nat → List Nat
+  = ~f1code;
+
+-- codegen from Nat
+--------------------------------------------------------------------------------
+
+let compSuc : Nat → ◻ Nat → ◻ Nat
+  = λ n x. iter (◻ Nat) n suc' x ;
+
+let fiveTimesSucCode : ◻ (Nat → Nat)
+  = <λ n. ~(compSuc five <n>)>;
+
+let fiveTimesSuc : Nat → Nat
+  = ~fiveTimesSucCode;
+
+
+-- monadic let-insertion
+--------------------------------------------------------------------------------
+
+let Gen : U → U
+  = λ A. (R : ◻ U) → (A → ◻ ~R) → ◻ ~R;
+
+let pure : (A : U) → A → Gen A
+  = λ A x R ret. ret x;
+
+let bind : (A B : U) → Gen A → (A → Gen B) → Gen B
+  = λ A B ma f R ret. ma R (λ a. f a R ret);
+
+let ilet : (A : ◻ U) → ◻ ~A → Gen (◻ ~A)
+  = λ A a R ret. <let x : ~A = ~a; ~(ret <x>)>;
+
+let run : (A : ◻ U) → Gen (◻ ~A) → ◻ ~A
+  = λ A ma. ma A (λ x. x);
+
+let run' : (A : U) → Gen A → A
+  = λ A ma. ~(ma <A> (λ x. <x>));
+
+-- let-bind all expressions in a list
+let ilets : (A : ◻ U) → List (◻ ~A) → Gen (List (◻ ~A))
+  = λ A as. as (Gen (List (◻ ~A)))
+               (λ a rec. bind (◻ ~A)        (List (◻ ~A)) (ilet A a) (λ a.
+                         bind (List (◻ ~A)) (List (◻ ~A)) rec        (λ as.
+                         pure (List (◻ ~A)) (cons (◻ ~A)  a as)
+
+            )))
+            (pure (List (◻ ~A)) (nil (◻ ~A)));
+
+let list : List (◻ Nat)
+  = λ L c n. c <zero> (c <suc zero> (c <suc (suc zero)> n));
+
+let sumList : List (◻ Nat) → ◻ Nat
+  = λ ns. ns (◻ Nat) add' zero';
+
+let sumList' : List (◻ Nat) → ◻ Nat
+  = λ ns. run <Nat> (
+       bind (List (◻ Nat)) (◻ Nat) (ilets <Nat> ns) (λ ns.
+       pure (◻ Nat) (sumList ns)
+       ));
+
+-- let sumList'' : List Nat → Nat
+--   = λ ns. ns Nat add zero;
+
+let seqList : List (◻ Nat) → List Nat
+  = λ ns. ns (List Nat) (λ a as. cons Nat ~a as) (nil Nat);
+
+-- let sumCode : ◻ Nat = sumList' list;
+
+
+-- -- generating code-generating code
+-- --------------------------------------------------------------------------------
+
+-- -- generate inlined code for the function which runs all expressions in a list
+-- let seqListCode : ◻ (List (◻ Nat) → List Nat)
+--   = inlinedMap <◻ Nat> <Nat> (λ x. ~x);
+
+-- let seqList : List (◻ Nat) → List Nat
+--   = ~seqListCode;
+
+U -- sumCode

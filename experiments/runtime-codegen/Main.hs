@@ -11,6 +11,7 @@
   Strict,
   TupleSections,
   ViewPatterns,
+  PatternSynonyms,
   DerivingVia,
   StandaloneDeriving
   #-}
@@ -37,51 +38,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 --------------------------------------------------------------------------------
 
 test = main' "run" $ unlines [
-
-  "let foo : U = U;",
-  "let bar : U = U;",
-  "let id : (A : U) → A → A = λ A x. U;",
-  "U"
-
-  -- "let Eq : (A : U) → A → A → U = λ A x y. (P : A → U) → P x → P y;",
-  -- "let refl : (A : U)(x : A) → Eq A x x = λ A x P px. px;",
-
-  -- "let Nat   : U   = (N : U)(z : N)(s : N → N) → N;",
-  -- "let zero  : Nat = λ N z s. z;",
-  -- "let suc   : Nat → Nat = λ n N z s. s (n N z s);",
-  -- "let three : Nat = λ N z s. s (s (s z));",
-
-  -- "let unfold : (A : U) → A → ◻ A = λ A x. <x>;",
-
-  -- "let zero'   : ◻ Nat = <zero>;",
-  -- "let suc'    : ◻ Nat → ◻ Nat = λ n. <suc ~n>;",
-  -- "let three'  : ◻ Nat = <three>;",
-  -- "let three'' : ◻ Nat = unfold Nat three;",
-
-  -- "let List  : U → U = λ A. (L : U)(cons : A → L → L)(nil : L) → L;",
-  -- "let nil   : (A : U) → List A = λ A L c n. n;",
-  -- "let cons  : (A : U) → A → List A → List A = λ A a as L c n. c a (as L c n);",
-  -- "let foldr : (A B : U) → (A → B → B) → B → List A → B = λ A B c n as. as B c n;",
-
-  -- "let map : (A B : ◻ U) → (◻ ~A → ◻ ~B) → ◻ (List ~A → List ~B)",
-  -- "  = λ A B f. <foldr ~A (List ~B) (λ a bs. cons ~B ~(f <a>) bs) (nil ~B)>;",
-
-  -- "let mapSucCode : ◻ (List Nat → List Nat)",
-  -- "  = map <Nat> <Nat> suc';",
-
-
-  -- "let FList : ◻ U → U = λ A. (L : ◻ U)(cons : ◻ ~A → ◻ ~L → ◻ ~L)(nil : ◻ ~L) → ◻ ~L;",
-
-  -- "let fmap : (A B : ◻ U) → (◻ ~A → ◻ ~B) → FList A → FList B",
-  -- "  = λ A B f as L c n. as L (λ a bs. c (f a) bs) n;",
-
-  -- "let up : (A : ◻ U) → ◻ (List ~A) → FList A",
-  -- "  = λ A as L c n. <foldr ~A ~L (λ a l. ~(c <a> <l>)) ~n ~as>;",
-
-  -- "mapSucCode"
-
   ]
-
 
 --------------------------------------------------------------------------------
 
@@ -110,6 +67,12 @@ data RTm
   | RQuote RTm                   -- <t>
   | RSplice RTm                  -- ~t
   | RBox RTm                     -- ◻ A
+
+  | RNat
+  | RZero
+  | RSuc
+  | RInd
+
   deriving Show
 
 
@@ -134,6 +97,11 @@ data Tm
   | Splice Tm         -- ~t
   | Box Tm            -- ◻ A
 
+  | Nat
+  | Zero
+  | Suc
+  | Ind
+
 --------------------------------------------------------------------------------
 
 data Val
@@ -146,6 +114,12 @@ data Val
   | VBox Val
   | VU
 
+  | VNat
+  | VZero
+  | VSuc Val
+  | VInd Val Val Val Val
+
+
 type VEnv = (?env :: [Val])
 
 extVEnv :: Val -> (VEnv => a) -> VEnv => a
@@ -154,13 +128,22 @@ extVEnv ~v act = let ?env = v: ?env in act
 newVVar :: ((?lvl :: Lvl) => Val -> a) -> (?lvl :: Lvl) => a
 newVVar act = let v = VVar ?lvl in let ?lvl = ?lvl + 1 in act v
 
+vapp :: Val -> Val -> Val
+vapp t ~u = case t of
+  VLam _ t -> t u
+  t        -> VApp t u
+
+vind :: Val -> Val -> Val -> Val -> Val
+vind p s z n = case n of
+  VZero  -> z
+  VSuc n -> s `vapp` n `vapp` vind p s z n
+  n      -> VInd p s z n
+
 eval :: VEnv => Tm -> Val
 eval = \case
   LocalVar x  -> ?env !! coerce x
   TopVar x    -> ?env !! (length ?env - coerce x - 1)
-  App t u     -> case (eval t, eval u) of
-                   (VLam _ t, u) -> t u
-                   (t       , u) -> VApp t u
+  App t u     -> vapp (eval t) (eval u)
   Lam x t     -> VLam x (\u -> extVEnv u (eval t))
   Pi x a b    -> VPi x (eval a) (\u -> extVEnv u (eval b))
   Let x _ t u -> extVEnv (eval t) (eval u)
@@ -169,20 +152,30 @@ eval = \case
   Splice t    -> case eval t of VQuote t -> t; t -> VSplice t
   Box t       -> VBox (eval t)
 
+  Nat         -> VNat
+  Zero        -> VZero
+  Suc         -> VLam "n" VSuc
+  Ind         -> VLam "p" \p -> VLam "s" \s -> VLam "z" \z -> VLam "n" \n ->
+                 vind p s z n
+
 -- | Beta-eta conversion checking
 conv :: (?lvl :: Lvl) => Val -> Val -> Bool
 conv t u = case (t, u) of
-  (VVar x    , VVar x'      ) -> x == x'
-  (VApp t u  , VApp t' u'   ) -> conv t t' && conv u u'
-  (VU        , VU           ) -> True
-  (VBox t    , VBox t'      ) -> conv t t'
-  (VQuote t  , VQuote t'    ) -> conv t t'
-  (VSplice t , VSplice t'   ) -> conv t t'
-  (VPi x a b , VPi x' a' b' ) -> conv a a' && newVVar \x -> conv (b x) (b' x)
-  (VLam x t  , VLam x' t'   ) -> newVVar \x -> conv (t x) (t' x)
-  (VLam x t  , u            ) -> newVVar \x -> conv (t x) (VApp u x)
-  (t         , VLam x u     ) -> newVVar \x -> conv (VApp t x) (u x)
-  _                           -> False
+  (VVar x       , VVar x'          ) -> x == x'
+  (VApp t u     , VApp t' u'       ) -> conv t t' && conv u u'
+  (VU           , VU               ) -> True
+  (VBox t       , VBox t'          ) -> conv t t'
+  (VQuote t     , VQuote t'        ) -> conv t t'
+  (VSplice t    , VSplice t'       ) -> conv t t'
+  (VPi x a b    , VPi x' a' b'     ) -> conv a a' && newVVar \x -> conv (b x) (b' x)
+  (VNat         , VNat             ) -> True
+  (VZero        , VZero            ) -> True
+  (VSuc n       , VSuc n'          ) -> conv n n'
+  (VInd p s z n , VInd p' s' z' n' ) -> conv p p' && conv s s' && conv z z' && conv n n'
+  (VLam x t     , VLam x' t'       ) -> newVVar \x -> conv (t x) (t' x)
+  (VLam x t     , u                ) -> newVVar \x -> conv (t x) (VApp u x)
+  (t            , VLam x u         ) -> newVVar \x -> conv (VApp t x) (u x)
+  _                                  -> False
 
 lvlToIx :: (?lvl :: Lvl) => Lvl -> Ix
 lvlToIx x = coerce (?lvl - x - 1)
@@ -192,14 +185,18 @@ ixToLvl x = ?lvl - coerce x - 1
 
 quote :: (?lvl :: Lvl) => Val -> Tm
 quote = \case
-  VVar x     -> LocalVar (lvlToIx x)
-  VApp t u   -> App (quote t) (quote u)
-  VLam x t   -> Lam x $ newVVar \x -> quote (t x)
-  VPi  x a b -> Pi x (quote a) $ newVVar \x -> quote (b x)
-  VU         -> U
-  VQuote t   -> Quote (quote t)
-  VSplice t  -> Splice (quote t)
-  VBox t     -> Box (quote t)
+  VVar x       -> LocalVar (lvlToIx x)
+  VApp t u     -> App (quote t) (quote u)
+  VLam x t     -> Lam x $ newVVar \x -> quote (t x)
+  VPi  x a b   -> Pi x (quote a) $ newVVar \x -> quote (b x)
+  VU           -> U
+  VQuote t     -> Quote (quote t)
+  VSplice t    -> Splice (quote t)
+  VBox t       -> Box (quote t)
+  VNat         -> Nat
+  VZero        -> Zero
+  VSuc t       -> Suc `App` quote t
+  VInd p s z n -> Ind  `App` quote p `App` quote s `App` quote z `App` quote n
 
 quote0 :: Val -> Tm
 quote0 = let ?lvl = 0 in quote
@@ -212,7 +209,7 @@ nf0 t = let ?env = []; ?lvl = 0 in quote (eval t)
 --------------------------------------------------------------------------------
 
 type Stage   = Int
-data Closure = Cl Stage [SVal] Tm
+type Closure = (?top :: [SVal]) => (?lvl :: Lvl) => SVal -> SVal
 
 data SVal
   = SLocalVar Lvl
@@ -225,52 +222,77 @@ data SVal
   | SSplice SVal
   | SBox SVal
   | SU
+  | SNat
+  | SZero
+  | SSucSym
+  | SIndSym
 
-infixl 7 $$
-($$) :: (?top :: [SVal], ?lvl :: Lvl) => Closure -> SVal -> SVal
-($$) (Cl s e t) u = let ?local = u : e; ?stage = s in seval t
+pattern SSuc n = SApp SSucSym n
+pattern SInd p s z n = SIndSym `SApp` p `SApp` s `SApp` z `SApp` n
 
-runtop :: (?top :: [SVal]) => Tm -> Tm
+runtop :: (?top :: [SVal], ?names :: [Name]) => Tm -> Tm
 runtop t =
   let ?lvl = 0; ?stage = 0; ?local = [] in
   case t of
-    Let x a t u -> let ?top = seval t : ?top in runtop u
+    Let x a t u -> let vt = seval t in let ?top = vt : ?top; ?names = x: ?names in runtop u
     t           -> gen (seval t)
 
 -- map each local var to itself
 idEnv :: Lvl -> [SVal]
 idEnv l = map SLocalVar [l-1,l-2..0]
 
-seval :: (?top :: [SVal], ?local :: [SVal], ?lvl :: Lvl, ?stage :: Int) => Tm -> SVal
+sapp0 :: (?top :: [SVal], ?lvl :: Lvl) => SVal -> SVal -> SVal
+sapp0 t u = case t of
+  SLam _ t -> t u
+  t        -> SApp t u
+
+sind0 :: (?top :: [SVal], ?lvl :: Lvl) => SVal -> SVal -> SVal -> SVal -> SVal
+sind0 p s z n = case n of
+  SZero  -> z
+  SSuc n -> s `sapp0` n `sapp0` sind0 p s z n
+  n      -> SInd p s z n
+
+extSEnv :: Name -> SVal -> ((?local :: [SVal], ?names :: [Name]) => a)
+                        -> ((?local :: [SVal], ?names :: [Name]) => a)
+extSEnv x ~v act = let ?local = v : ?local; ?names = x : ?names  in act
+
+seval :: (?top :: [SVal], ?local :: [SVal], ?lvl :: Lvl, ?stage :: Int, ?names :: [Name])
+         => Tm -> SVal
 seval = \case
-  Lam x t    -> SLam x (Cl ?stage ?local t)
-  Pi x a b   -> SPi x (seval a) (Cl ?stage ?local b)
+  Lam x t    -> SLam x (\u -> extSEnv x u (seval t))
+  Pi x a b   -> SPi x (seval a) (\u -> extSEnv x u (seval b))
   Quote t    -> let ?stage = ?stage + 1 in case seval t of
                   SSplice t -> t
                   t         -> SQuote t
   Box t      -> SBox (seval t)
   U          -> SU
   LocalVar x -> ?local !! coerce x
+  Nat        -> SNat
+  Zero       -> SZero
+  Suc        -> SSucSym
 
   t -> case ?stage of
     0 -> case t of
       TopVar x    -> ?top !! (length ?top - coerce x - 1)
-      App t u     -> case (seval t, seval u) of
-                       (SLam _ t, u) -> t $$ u
-                       (t, u)        -> SApp t u
-      Let x a t u -> let ?env = seval t : ?local in seval u
+      App t u     -> sapp0 (seval t) (seval u)
+      Let x a t u -> let vt = seval t in let ?local = vt : ?local in seval u
       Splice t    -> case seval t of
                        SQuote t ->
                          let ?local = idEnv ?lvl in
-                         seval (gen t)
+                         let gt = gen t in
+                         trace ("CODE GENERATED:\n" ++ showTm ?names gt ++ "\n") $ seval gt
                        t -> SSplice t
+      Ind         -> SLam "p" \p -> SLam "s" \s -> SLam "z" \z -> SLam "n" \n ->
+                     sind0 p s z n
     _ -> case t of
       TopVar x    -> STopVar x
       App t u     -> SApp (seval t) (seval u)
-      Let x a t u -> SLet x (seval a) (seval t) (Cl ?stage ?local u)
+      Let x a t u -> SLet x (seval a) (seval t) (\t -> extSEnv x t (seval u))
       Splice t    -> let ?stage = ?stage - 1 in case seval t of
                        SQuote t -> t
                        t        -> SSplice t
+      Ind         -> SIndSym
+
 
 newSVar :: ((?lvl :: Lvl) => SVal -> a) -> ((?lvl :: Lvl) => a)
 newSVar act =
@@ -283,16 +305,19 @@ gen = \case
   SLocalVar x  -> LocalVar (lvlToIx x)
   STopVar x    -> TopVar x
   SApp t u     -> App (gen t) (gen u)
-  SLam x t     -> newSVar \var -> Lam x (gen (t $$ var))
-  SPi x a b    -> let a' = gen a in newSVar \var -> Pi x a' (gen (b $$ var))
+  SLam x t     -> newSVar \var -> Lam x (gen (t var))
+  SPi x a b    -> let a' = gen a in newSVar \var -> Pi x a' (gen (b var))
   SLet x a t u -> let a' = gen a; t' = gen t in newSVar \var ->
-                  Let x a' t' (gen (u $$ var))
+                  Let x a' t' (gen (u var))
   SQuote t     -> Quote (gen t)
   SSplice t    -> Splice (gen t)
   SBox t       -> Box (gen t)
   SU           -> U
 
-
+  SNat         -> Nat
+  SZero        -> Zero
+  SSucSym      -> Suc
+  SIndSym      -> Ind
 
 --------------------------------------------------------------------------------
 
@@ -426,6 +451,24 @@ infer = \case
     (u, uty) <- define x va (eval t) $ infer u
     pure (Let x a t u, uty)
 
+  RNat ->
+    pure (Nat, VU)
+
+  RZero ->
+    pure (Zero, VNat)
+
+  RSuc -> do
+    pure (Suc, VPi "_" VNat \_ -> VNat)
+
+  RInd -> do
+    let a = VPi "p" (VPi "_" VNat \_ -> VU) \p ->
+            VPi "s" (VPi "n" VNat \n -> VPi "_" (vapp p n) \_-> vapp p (VSuc n)) \_ ->
+            VPi "z" (vapp p VZero) \_ ->
+            VPi "n" VNat \n ->
+            vapp p n
+    pure (Ind, a)
+
+
 inferTop :: TopCxt => RTm -> M (Tm, VTy, [Name])
 inferTop = \case
   RSrcPos pos t ->
@@ -505,9 +548,15 @@ prettyTm ns prec = go ns prec where
       par p letp $ ("let "++) . (x++) . (" : "++) . go ns letp a
       . ("\n    = "++) . go ns letp t . (";\n\n"++) . go (x:ns) letp u
 
-    Quote t     -> ('<':).go ns letp t.('>':)
-    Splice t    -> par p splicep $ ('~':).go ns atomp t
-    Box    t    -> par p appp $ ("◻ "++).go ns splicep t
+    Quote t      -> ('<':).go ns letp t.('>':)
+    Splice t     -> par p splicep $ ('~':).go ns atomp t
+    Box    t     -> par p appp $ ("◻ "++).go ns splicep t
+
+    Nat          -> ("Nat"++)
+    Zero         -> ("zero"++)
+    Suc          -> ("suc"++)
+    Ind          -> ("ind"++)
+
 
 deriving instance Show Tm
 
@@ -535,7 +584,8 @@ parens p = char '(' *> p <* char ')'
 pArrow   = symbol "→" <|> symbol "->"
 
 keyword :: String -> Bool
-keyword x = x == "let" || x == "in" || x == "λ" || x == "U"
+keyword x = x == "let" || x == "in" || x == "λ" || x == "U" || x == "zero"
+          || x == "suc" || x == "Nat" || x == "ind"
 
 pIdent :: Parser Name
 pIdent = try $ do
@@ -554,6 +604,10 @@ pAtom =
       withPos ((RVar <$> pIdent) <|> (RU <$ symbol "U"))
   <|> parens pTm
   <|> (RQuote <$> (char '<' *> pTm <* char '>'))
+  <|> (RZero <$ pKeyword "zero")
+  <|> (RNat <$ pKeyword "Nat")
+  <|> (RSuc <$ pKeyword "suc")
+  <|> (RInd <$ pKeyword "ind")
 
 pSplice =
       (RSplice <$> (char '~' *> pSplice))
@@ -655,8 +709,10 @@ mainWith getOpt getTm = do
       putStrLn $ showTm0 t
     ["run"] -> do
       (t, a, ns) <- get
-      let ?top = []
-      putStrLn $ showTm ns $ runtop t
+      let ?top = []; ?names = []
+      let res = runtop t
+      putStrLn "----------------------------------------"
+      putStrLn $ showTm ns res
     _ ->
       putStrLn helpMsg
 

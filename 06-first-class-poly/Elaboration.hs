@@ -117,7 +117,7 @@ invert gamma sp = do
           _ -> throwIO UnifyException
 
   (dom, domvars, ren, pr, isLinear) <- go sp
-  pure (PRen Nothing dom gamma ren, pr <$ guard isLinear)
+  pure (PRen Nothing dom gamma ren, pr <$ guard (not isLinear))
 
 
 -- | Remove some arguments from a closed iterated Pi type.

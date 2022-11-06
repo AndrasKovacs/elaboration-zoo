@@ -17,15 +17,15 @@ Simple universe polymorphism. Features:
     semantics for the supported operations. For example, (suc (max x (max y z)))
     is convertible to (max (suc y) (max (suc z) (suc x))).
 
-Remark: even if we add metavariables to this system, it should be in fact
-sufficient to *not* thread levels in infer/check, not store levels in binders,
-and to have unification which is heterogeneous in levels, i.e. when unifying
-types, their levels my differ.
+This implementation uses a simplification, where it does not thread levels in infer/check,
+and uses a heterogeneous conversion function where sides can differ in levels; concretely,
+if sides are types, their levels may differ. This works because whenever heterogeneous
+conversion checking succeeds, it is implied that the levels of sides are equal.
 
-The reason is that non-first-class levels have no impact on
-computation. Intuitively, if all levels are erased from the elaborator, we just
-recover elaboration for a type-in-type system, and this elaboration is already
-sound and semidecidable.
+This trick does not work anymore if we add general metavariables to the system.
+Here, we should pass a level to `check` and return one from `infer`, and in 
+the conversion checking case in `check` we should first unify expected & inferred levels,
+and then unify expected & inferred types.
 
 -}
 

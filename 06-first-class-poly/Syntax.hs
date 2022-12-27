@@ -19,18 +19,19 @@ newtype RevPruning = RevPruning Pruning
 revPruning :: Pruning -> RevPruning
 revPruning = RevPruning . reverse
 
--- | A "context zipper", used for efficiently creating types for fresh metas.
-data Path
+-- | Information about the local binders, used for efficiently creating types for
+--   fresh metas.
+data Locals
   = Here
-  | Define Path Name ~Ty ~Tm
-  | Bind Path Name ~Ty
+  | Define Locals Name ~Ty ~Tm
+  | Bind Locals Name ~Ty
   deriving Show
 
--- | Convert a type in a context to a closed iterated Pi type. Note: we need `Tm`
---   and `Ty` in path in order to make this operation efficient. With this, we
---   can simply move things over from `Path` without having to rename or quote
+-- | Convert type in context to a closed iterated Pi type.  Note: we need `Tm`
+--   and `Ty` in `Locals` in order to make this operation efficient. With this, we
+--   can simply move things over from `Locals` without having to rename or quote
 --   anything.
-closeTy :: Path -> Ty -> Ty
+closeTy :: Locals -> Ty -> Ty
 closeTy mcl b = case mcl of
   Here             -> b
   Bind mcl x a     -> closeTy mcl (Pi x Expl a b)
@@ -38,7 +39,7 @@ closeTy mcl b = case mcl of
 
 -- | Convert a term in context to a closed term by wrapping it in lambdas and
 --   let-definitions. The type of the result is given by `closeTy`.
-closeTm :: Path -> Tm -> Tm
+closeTm :: Locals -> Tm -> Tm
 closeTm mcl t = case mcl of
   Here             -> t
   Bind mcl x a     -> closeTm mcl (Lam x Expl t)

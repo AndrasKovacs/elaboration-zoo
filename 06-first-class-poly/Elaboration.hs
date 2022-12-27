@@ -30,10 +30,10 @@ unifyPlaceholder cxt t m = case lookupMeta m of
   -- If the placeholder meta is unsolved, we can solve it efficiently here,
   -- without any possibility of failure.
   Unsolved bs a -> do
-    debug ["solve unconstrained placeholder", show m, showTm0 (closeTm (path cxt) t)]
+    debug ["solve unconstrained placeholder", show m, showTm0 (closeTm (locals cxt) t)]
 
     -- we can simply close the checked term, to get the solution
-    let solution = closeTm (path cxt) t
+    let solution = closeTm (locals cxt) t
     writeMeta m (Solved (eval [] solution) a)
     forM_ (IS.toList bs) (retryCheck . CheckVar)
 
@@ -308,7 +308,7 @@ unify l t u = do
 --------------------------------------------------------------------------------
 
 closeVTy :: Cxt -> VTy -> VTy
-closeVTy cxt a = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
+closeVTy cxt a = eval [] $ closeTy (locals cxt) (quote (lvl cxt) a)
 
 freshMeta :: Dbg => Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
@@ -364,7 +364,6 @@ check cxt t a = do
   debug ["check", show (P.stripPos t), showVal cxt a]
 
   case (t, force a) of
-    (P.SrcPos pos t, a) -> impossible
 
     -- If the icitness of the lambda matches the Pi type, check as usual
     (P.Lam x i ma t, VPi x' i' a' b') | either (\x -> x == x' && i' == Impl) (==i') i -> do
@@ -425,7 +424,6 @@ infer cxt t = do
   debug ["infer", show (P.stripPos t)]
 
   res <- case t of
-    P.SrcPos pos t -> impossible
 
     P.Var x -> do
       case M.lookup x (srcNames cxt) of

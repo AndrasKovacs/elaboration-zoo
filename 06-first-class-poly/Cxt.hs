@@ -26,10 +26,10 @@ emptyCxt = Cxt [] 0 Here [] mempty
 
 -- | Extend Cxt with a bound variable.
 bind :: Cxt -> Name -> VTy -> Cxt
-bind (Cxt env l path pr ns pos) x ~a =
+bind (Cxt env l ls pr ns pos) x ~a =
   Cxt (env :> VVar l)
       (l + 1)
-      (Bind path x (quote l a))
+      (Bind ls x (quote l a))
       (pr :> Just Expl)
       (M.insert x (l, a) ns)
       pos
@@ -37,10 +37,10 @@ bind (Cxt env l path pr ns pos) x ~a =
 -- | Insert a new binding. This is used when we insert a new implicit lambda in
 --   checking.
 newBinder :: Cxt -> Name -> VTy -> Cxt
-newBinder (Cxt env l path pr ns pos) x ~a =
+newBinder (Cxt env l ls pr ns pos) x ~a =
   Cxt (env :> VVar l)
       (l + 1)
-      (Bind path x (quote l a))
+      (Bind ls x (quote l a))
       (pr :> Just Expl)
       ns                        -- Unchanged! An inserted binder cannot be accessed from
       pos                       -- source syntax
@@ -49,10 +49,10 @@ newBinder (Cxt env l path pr ns pos) x ~a =
 --   because when we elaborate let-definitions, we usually already have terms
 --   for the definition and its type.
 define :: Cxt -> Name -> Tm -> Val -> Ty -> VTy -> Cxt
-define (Cxt env l path pr ns pos) x ~t ~vt ~a ~va  =
+define (Cxt env l ls pr ns pos) x ~t ~vt ~a ~va  =
   Cxt (env :> vt)
       (l + 1)
-      (Define path x a t)
+      (Define ls x a t)
       (pr :> Nothing)
       (M.insert x (l, va) ns)
       pos

@@ -21,7 +21,7 @@ import qualified Presyntax as P
 
 freshMeta :: Cxt -> VTy -> IO Tm
 freshMeta cxt a = do
-  let ~closed = eval [] $ closeTy (path cxt) (quote (lvl cxt) a)
+  let ~closed = eval [] $ closeTy (locals cxt) (quote (lvl cxt) a)
   m <- newMeta closed
   pure $ AppPruning (Meta m) (pruning cxt)
 

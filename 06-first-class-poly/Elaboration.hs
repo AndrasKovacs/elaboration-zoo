@@ -105,20 +105,24 @@ skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 --   Optionally returns a pruning of nonlinear spine entries, if there's any.
 invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
+  let go :: Spine -> IO (Lvl, IM.IntMap Lvl, IS.IntSet, [(Lvl, Icit)])
+      go []                                 = pure (0, mempty, mempty, [])
+      go (sp :> (force -> VVar (Lvl x), i)) = do 
+        (dom, ren, nlvars, fsp) <- go sp
+        case IM.member x ren || IS.member x nlvars of
+          True  -> pure (dom + 1, IM.delete x ren,     IS.insert x nlvars, fsp :> (Lvl x, i))
+          False -> pure (dom + 1, IM.insert x dom ren, nlvars,             fsp :> (Lvl x, i))
+      go _                                  = throwIO UnifyException
 
-  let go :: Spine -> IO (Lvl, IS.IntSet, IM.IntMap Lvl, Pruning, Bool)
-      go []             = pure (0, mempty, mempty, [], True)
-      go (sp :> (t, i)) = do
-        (dom, domvars, ren, pr, isLinear) <- go sp
-        case force t of
-          VVar (Lvl x) -> case IS.member x domvars of
-            True  -> pure (dom + 1, domvars,             IM.delete x ren,     Nothing : pr, False   )
-            False -> pure (dom + 1, IS.insert x domvars, IM.insert x dom ren, Just i  : pr, isLinear)
-          _ -> throwIO UnifyException
+  (dom, ren, nlvars, fsp) <- go sp
 
-  (dom, domvars, ren, pr, isLinear) <- go sp
-  pure (PRen Nothing dom gamma ren, pr <$ guard (not isLinear))
+  let mask :: [(Lvl, Icit)] -> Pruning 
+      mask []                  = []
+      mask (fsp :> (Lvl x, i)) 
+        | IS.member x nlvars   = Nothing : mask fsp
+        | otherwise            = Just i  : mask fsp
 
+  pure (PRen Nothing dom gamma ren, mask fsp <$ guard (not $ IS.null nlvars))
 
 -- | Remove some arguments from a closed iterated Pi type.
 pruneTy :: Dbg => RevPruning -> VTy -> IO Ty

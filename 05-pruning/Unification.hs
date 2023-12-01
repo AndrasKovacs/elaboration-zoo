@@ -37,7 +37,7 @@ invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
   let go :: Spine -> IO (Lvl, IS.IntSet, IM.IntMap Lvl, IS.IntSet, Spine)
       go []                                        = pure (0, mempty, mempty, mempty, [])
-      go (sp :> (force -> ft @ (VVar (Lvl x)), i)) = do 
+      go (sp :> (force -> ft@(VVar (Lvl x)), i)) = do 
         (dom, domvars, ren, nlvars, fsp) <- go sp
         case IS.member x domvars of
           True  -> pure (dom + 1, domvars,             IM.delete x ren,     IS.insert x nlvars, fsp :> (ft, i))

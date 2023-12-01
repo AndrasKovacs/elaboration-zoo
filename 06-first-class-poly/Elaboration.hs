@@ -105,23 +105,22 @@ skip (PRen occ dom cod ren) = PRen occ dom (cod + 1) ren
 --   Optionally returns a pruning of nonlinear spine entries, if there's any.
 invert :: Lvl -> Spine -> IO (PartialRenaming, Maybe Pruning)
 invert gamma sp = do
-  let go :: Spine -> IO (Lvl, IS.IntSet, IM.IntMap Lvl, IS.IntSet, Spine)
-      go []                                        = pure (0, mempty, mempty, mempty, [])
-      go (sp :> (force -> ft@(VVar (Lvl x)), i)) = do 
-        (dom, domvars, ren, nlvars, fsp) <- go sp
-        case IS.member x domvars of
-          True  -> pure (dom + 1, domvars,             IM.delete x ren,     IS.insert x nlvars, fsp :> (ft, i))
-          False -> pure (dom + 1, IS.insert x domvars, IM.insert x dom ren, nlvars,             fsp :> (ft, i))
-      go _                                         = throwIO UnifyException
+  let go :: Spine -> IO (Lvl, IM.IntMap Lvl, IS.IntSet, [(Lvl, Icit)])
+      go []                                 = pure (0, mempty, mempty, [])
+      go (sp :> (force -> VVar (Lvl x), i)) = do 
+        (dom, ren, nlvars, fsp) <- go sp
+        case IM.member x ren || IS.member x nlvars of
+          True  -> pure (dom + 1, IM.delete x ren,     IS.insert x nlvars, fsp :> (Lvl x, i))
+          False -> pure (dom + 1, IM.insert x dom ren, nlvars,             fsp :> (Lvl x, i))
+      go _                                  = throwIO UnifyException
 
-  (dom, domvars, ren, nlvars, fsp) <- go sp
+  (dom, ren, nlvars, fsp) <- go sp
 
-  let mask :: Spine -> Pruning 
-      mask []                         = []
-      mask (fsp :> (VVar (Lvl x), i)) 
-        | IS.member x nlvars          = Nothing : mask fsp
-        | otherwise                   = Just i : mask fsp
-      mask _                          = impossible
+  let mask :: [(Lvl, Icit)] -> Pruning 
+      mask []                  = []
+      mask (fsp :> (Lvl x, i)) 
+        | IS.member x nlvars   = Nothing : mask fsp
+        | otherwise            = Just i  : mask fsp
 
   pure (PRen Nothing dom gamma ren, mask fsp <$ guard (not $ IS.null nlvars))
 

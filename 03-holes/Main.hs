@@ -73,7 +73,7 @@ Also note that ?α abstracts over "A" and "x", but not over "id". This is becaus
 defined variables are not a "true" dependency, as the dependency can be always
 removed by unfolding the definition. This means that in this project, meta
 solutions cannot refer to definitions, and are fully unfolded (in fact,
-normalized).  This can lead to a problematic size explosion, so smarter
+normalized). This can lead to a problematic size explosion, so smarter
 implementations allow meta solutions to refer to other definitions. Here we only
 have the simplest & dumbest implementation.
 
@@ -424,7 +424,7 @@ should be
   λ spine. t
 
 However, we are working de Bruijn indices and levels, and we can't simply shuffle variables from
-on side to the other!
+one side to the other!
 
 In the "λ spine. t" solution, if we're thinking about de Bruijn levels, the "λ spine" becomes
 "λ x₀ x₁ x₂ ... xₙ. t", where the length of the spine is n+1. The counting of levels must start from 0,

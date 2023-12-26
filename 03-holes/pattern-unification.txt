@@ -26,10 +26,9 @@ We refine the usual categorical definition of epimorphisms:
   σ : Sub Γ Δ is epi iff
     - δ ∘ σ = δ' ∘ σ  implies δ = δ'
     - A[σ] = A'[σ]    implies A = A'
-    - t[σ] = t'[σ]    implies t = t'
 
-For monomorphisms, the usual definition suffices.
-
+The condition on terms, saying that t[σ] = t'[σ] implies t = t', is derivable from
+the above. For monomorphisms, the usual definition suffices.
 
 -- Renamings
 --------------------------------------------------------------------------------

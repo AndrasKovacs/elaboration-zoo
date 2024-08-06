@@ -1,0 +1,50 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.36.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           elabzoo-holes-unit-eta
+version:        0.1.0.0
+description:    Small implementations of elaborators for type theories, with varying complexity and feature set
+category:       Language
+homepage:       https://github.com/AndrasKovacs/elaboration-zoo#readme
+bug-reports:    https://github.com/AndrasKovacs/elaboration-zoo/issues
+author:         András Kovács
+maintainer:     puttamalac@gmail.com
+copyright:      2024 András Kovács
+license:        BSD3
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/AndrasKovacs/elaboration-zoo
+
+executable elabzoo-holes-unit-eta
+  main-is: Main.hs
+  other-modules:
+      Paths_elabzoo_holes_unit_eta
+  hs-source-dirs:
+      ./
+  default-extensions:
+      DeriveAnyClass
+      DeriveFoldable
+      DeriveFunctor
+      DeriveTraversable
+      DerivingVia
+      FlexibleContexts
+      GeneralizedNewtypeDeriving
+      LambdaCase
+      OverloadedStrings
+      PatternSynonyms
+      ScopedTypeVariables
+      StandaloneDeriving
+      Strict
+      TupleSections
+      ViewPatterns
+  ghc-options: -Wall -Wno-name-shadowing -Wno-missing-signatures -Wno-unused-do-bind -Wno-unused-matches -Wno-missing-pattern-synonym-signatures
+  build-depends:
+      base >=4.7 && <5
+    , containers
+    , megaparsec
+  default-language: Haskell2010

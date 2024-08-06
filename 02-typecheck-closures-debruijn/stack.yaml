@@ -1,5 +1,2 @@
 
-resolver: lts-19.19
-
-ghc-options:
-    "$everything": -split-sections
+resolver: lts-22.31

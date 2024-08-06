@@ -1,10 +1,8 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.36.0.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 55a2d425c3aa19be1e03f859873f9a3f976ccba4a3902bc5edc301861c788568
 
 name:           elabzoo-eval-closures-debruijn
 version:        0.1.0.0

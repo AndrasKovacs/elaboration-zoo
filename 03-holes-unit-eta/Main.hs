@@ -403,9 +403,6 @@ check cxt t a = case (t, force a) of
     u <- check (define cxt x t vt a va) u a'
     pure (Let x a t u)
 
-  (t, VTop) ->
-    pure Tt
-
   (RHole, a) ->
     freshMeta cxt a
 

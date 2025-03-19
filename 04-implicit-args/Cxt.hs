@@ -1,6 +1,8 @@
 
 module Cxt where
 
+import Data.Functor.Identity
+
 import Common
 import Evaluation
 import Pretty
@@ -27,7 +29,7 @@ cxtNames = fmap (\(x, _, _) -> x) . types
 
 showVal :: Cxt -> Val -> String
 showVal cxt v =
-  prettyTm 0 (cxtNames cxt) (quote (lvl cxt) v) []
+  prettyTm 0 (cxtNames cxt) (runIdentity $ quote (lvl cxt) v) []
 
 showTm :: Cxt -> Tm -> String
 showTm cxt t = prettyTm 0 (cxtNames cxt) t []
@@ -55,4 +57,4 @@ define (Cxt env l types bds pos) x ~t ~a  =
 
 -- | closeVal : (Γ : Con) → Val (Γ, x : A) B → Closure Γ A B
 closeVal :: Cxt -> Val -> Closure
-closeVal cxt t = Closure (env cxt) (quote (lvl cxt + 1) t)
+closeVal cxt t = Closure (env cxt) (runIdentity $ quote (lvl cxt + 1) t)

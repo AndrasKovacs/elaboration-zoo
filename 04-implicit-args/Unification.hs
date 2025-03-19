@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Unification (unify) where
 
@@ -18,19 +19,14 @@ import Value
 
 -- | partial renaming from Γ to Δ
 data PartialRenaming = PRen {
-    dom :: Lvl             -- ^ size of Γ
+    meta   :: MetaVar      -- ^ metavariable to be solved
+  , dom :: Lvl             -- ^ size of Γ
   , cod :: Lvl             -- ^ size of Δ
   , ren :: IM.IntMap Lvl}  -- ^ mapping from Δ vars to Γ vars
 
--- | Lifting a partial renaming over an extra bound variable.
---   Given (σ : PRen Γ Δ), (lift σ : PRen (Γ, x : A[σ]) (Δ, x : A))
-lift :: PartialRenaming -> PartialRenaming
-lift (PRen dom cod ren) =
-  PRen (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
-
 -- | @invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ@
-invert :: Lvl -> Spine -> IO PartialRenaming
-invert gamma sp = do
+invert :: MetaVar -> Lvl -> Spine -> IO PartialRenaming
+invert m gamma sp = do
 
   let go :: Spine -> IO (Lvl, IM.IntMap Lvl)
       go []             = pure (0, mempty)
@@ -41,28 +37,24 @@ invert gamma sp = do
           _                                 -> throwIO UnifyError
 
   (dom, ren) <- go sp
-  pure $ PRen dom gamma ren
+  pure $ PRen m dom gamma ren
 
--- | Perform the partial renaming on rhs, while also checking for "m" occurrences.
-rename :: MetaVar -> PartialRenaming -> Val -> IO Tm
-rename m pren v = go pren v where
+-- | Perform the partial renaming, while also checking for "m" occurrences.
+instance QuoteContext PartialRenaming IO where
+  neutral pren = VVar $ cod pren
 
-  goSp :: PartialRenaming -> Tm -> Spine -> IO Tm
-  goSp pren t []             = pure t
-  goSp pren t (sp :> (u, i)) = App <$> goSp pren t sp <*> go pren u <*> pure i
+  -- | Lifting a partial renaming over an extra bound variable.
+  --   Given (σ : PRen Γ Δ), (lift σ : PRen (Γ, x : A[σ]) (Δ, x : A))
+  lift (PRen m dom cod ren) =
+    PRen m (dom + 1) (cod + 1) (IM.insert (unLvl cod) dom ren)
 
-  go :: PartialRenaming -> Val -> IO Tm
-  go pren t = case force t of
-    VFlex m' sp | m == m'   -> throwIO UnifyError -- occurs check
-                | otherwise -> goSp pren (Meta m') sp
+  quoteMeta pren m' =
+    if meta pren == m' then throwIO UnifyError -- occurs check
+    else pure $ Meta m'
 
-    VRigid (Lvl x) sp -> case IM.lookup x (ren pren) of
-      Nothing -> throwIO UnifyError  -- scope error ("escaping variable" error)
-      Just x' -> goSp pren (Var $ lvl2Ix (dom pren) x') sp
-
-    VLam x i t  -> Lam x i <$> go (lift pren) (t $$ VVar (cod pren))
-    VPi x i a b -> Pi x i <$> go pren a <*> go (lift pren) (b $$ VVar (cod pren))
-    VU          -> pure U
+  quoteVar pren (Lvl x) = case IM.lookup x (ren pren) of
+    Nothing -> throwIO UnifyError -- scope error ("escaping variable" error)
+    Just x' -> pure $ Var $ lvl2Ix (dom pren) x'
 
 -- | Wrap a term in lambdas. We need an extra list of Icit-s to
 --   match the type of the to-be-solved meta.
@@ -74,8 +66,8 @@ lams = go (0 :: Int) where
 --       Γ      ?α         sp       rhs
 solve :: Lvl -> MetaVar -> Spine -> Val -> IO ()
 solve gamma m sp rhs = do
-  pren <- invert gamma sp
-  rhs  <- rename m pren rhs
+  pren <- invert m gamma sp
+  rhs  <- quote pren rhs
   let solution = eval [] $ lams (reverse $ map snd sp) rhs
   modifyIORef' mcxt $ IM.insert (unMetaVar m) (Solved solution)
 
@@ -84,7 +76,7 @@ unifySp l sp sp' = case (sp, sp') of
   ([]          , []            ) -> pure ()
 
   -- Note: we don't have to compare Icit-s, since we know from the recursive
--- call that sp and sp' have the same type.
+  -- call that sp and sp' have the same type.
   (sp :> (t, _), sp' :> (t', _)) -> unifySp l sp sp' >> unify l t t'
 
   _                              -> throwIO UnifyError -- rigid mismatch error

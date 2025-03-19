@@ -17,6 +17,7 @@ import Unification
 import Value
 
 import qualified Presyntax as P
+import Data.Functor.Identity (Identity(runIdentity))
 
 
 -- Elaboration
@@ -33,7 +34,7 @@ unifyCatch :: Cxt -> Val -> Val -> IO ()
 unifyCatch cxt t t' =
   unify (lvl cxt) t t'
   `catch` \UnifyError ->
-    throwIO $ Error cxt $ CantUnify (quote (lvl cxt) t) (quote (lvl cxt) t')
+    throwIO $ Error cxt $ CantUnify (runIdentity $ quote (lvl cxt) t) (runIdentity $ quote (lvl cxt) t')
 
 -- | Insert fresh implicit applications.
 insert' :: Cxt -> IO (Tm, VTy) -> IO (Tm, VTy)

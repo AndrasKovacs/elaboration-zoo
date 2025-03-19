@@ -1,5 +1,8 @@
+{-# LANGUAGE FunctionalDependencies #-}
 
-module Evaluation (($$), quote, eval, nf, force, lvl2Ix, vApp) where
+module Evaluation (($$), quote, eval, nf, force, lvl2Ix, vApp, QuoteContext(..)) where
+
+import Data.Functor.Identity
 
 import Common
 import Metacontext
@@ -53,18 +56,30 @@ force = \case
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 
-quoteSp :: Lvl -> Tm -> Spine -> Tm
-quoteSp l t = \case
-  []           -> t
-  sp :> (u, i) -> App (quoteSp l t sp) (quote l u) i
+class (Monad m) => QuoteContext cxt m | cxt -> m where
+  neutral :: cxt -> Val
+  lift :: cxt -> cxt
+  quoteMeta :: cxt -> MetaVar -> m Tm
+  quoteVar :: cxt -> Lvl -> m Tm
 
-quote :: Lvl -> Val -> Tm
-quote l t = case force t of
-  VFlex m sp  -> quoteSp l (Meta m) sp
-  VRigid x sp -> quoteSp l (Var (lvl2Ix l x)) sp
-  VLam x i t  -> Lam x i (quote (l + 1) (t $$ VVar l))
-  VPi x i a b -> Pi x i (quote l a) (quote (l + 1) (b $$ VVar l))
-  VU          -> U
+instance QuoteContext Lvl Identity where
+  neutral = VVar
+  lift l = l + 1
+  quoteMeta l m = pure $ Meta m
+  quoteVar l x = pure $ Var (lvl2Ix l x)
+
+quoteSp :: (QuoteContext cxt m) => cxt -> Tm -> Spine -> m Tm
+quoteSp cxt t = \case
+  []           -> pure t
+  sp :> (u, i) -> App <$> quoteSp cxt t sp <*> quote cxt u <*> pure i
+
+quote :: (QuoteContext cxt m) => cxt -> Val -> m Tm
+quote cxt t = case force t of
+  VFlex m sp  -> quoteMeta cxt m >>= \t -> quoteSp cxt t sp
+  VRigid m sp -> quoteVar cxt m >>= \t -> quoteSp cxt t sp
+  VLam x i t  -> Lam x i <$> quote (lift cxt) (t $$ neutral cxt)
+  VPi x i a b -> Pi x i <$> quote cxt a <*> quote (lift cxt) (b $$ neutral cxt)
+  VU          -> pure U
 
 nf :: Env -> Tm -> Tm
-nf env t = quote (Lvl (length env)) (eval env t)
+nf env t = runIdentity $ quote (Lvl (length env)) (eval env t)

@@ -15,6 +15,7 @@ import Pretty
 import Elaboration
 
 import qualified Presyntax as P
+import Data.Functor.Identity (Identity(runIdentity))
 
 --------------------------------------------------------------------------------
 
@@ -40,10 +41,10 @@ mainWith getOpt getRaw = do
       (t, a) <- elab
       putStrLn $ showTm0 $ nf [] t
       putStrLn "  :"
-      putStrLn $ showTm0 $ quote 0 a
+      putStrLn $ showTm0 $ runIdentity $ quote (Lvl 0) a
     ["type"] -> do
       (t, a) <- elab
-      putStrLn $ showTm0 $ quote 0 a
+      putStrLn $ showTm0 $ runIdentity $ quote (Lvl 0) a
     ["elab"] -> do
       (t, a) <- elab
       displayMetas

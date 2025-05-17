@@ -1,0 +1,7 @@
+cradle:
+  cabal:
+    - path: "./Main.hs"
+      component: "elabzoo-eval-closures-debruijn:exe:elabzoo-eval-closures-debruijn"
+
+    - path: "./Paths_elabzoo_eval_closures_debruijn.hs"
+      component: "elabzoo-eval-closures-debruijn:exe:elabzoo-eval-closures-debruijn"

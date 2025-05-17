@@ -1,0 +1,43 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Common.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Cxt.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Elaboration.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Errors.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Evaluation.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Metacontext.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Parser.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Presyntax.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Pretty.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Syntax.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Unification.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Value.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"
+
+    - path: "././Paths_elabzoo_pruning.hs"
+      component: "elabzoo-pruning:exe:elabzoo-pruning"

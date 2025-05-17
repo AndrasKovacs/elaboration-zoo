@@ -1,0 +1,43 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Common.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Cxt.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Cxt/Type.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Elaboration.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Errors.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Evaluation.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Metacontext.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Parser.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Presyntax.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Pretty.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Syntax.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Value.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"
+
+    - path: "././Paths_elabzoo_first_class_poly.hs"
+      component: "elabzoo-first-class-poly:exe:elabzoo-first-class-poly"

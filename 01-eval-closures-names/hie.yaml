@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-eval-closures-names:exe:elabzoo-eval-closures-names"
+
+    - path: "././Paths_elabzoo_eval_closures_names.hs"
+      component: "elabzoo-eval-closures-names:exe:elabzoo-eval-closures-names"

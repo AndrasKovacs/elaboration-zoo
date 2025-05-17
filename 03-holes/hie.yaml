@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-holes:exe:elabzoo-holes"
+
+    - path: "././Paths_elabzoo_holes.hs"
+      component: "elabzoo-holes:exe:elabzoo-holes"

@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-eval-HOAS-names:exe:elabzoo-eval-HOAS-names"
+
+    - path: "././Paths_elabzoo_eval_HOAS_names.hs"
+      component: "elabzoo-eval-HOAS-names:exe:elabzoo-eval-HOAS-names"

@@ -6,3 +6,5 @@
 TAGS
 .stack-work/
 *.lock
+
+dist-newstyle

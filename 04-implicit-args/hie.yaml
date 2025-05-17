@@ -1,0 +1,43 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Common.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Cxt.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Elaboration.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Errors.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Evaluation.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Metacontext.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Parser.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Presyntax.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Pretty.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Syntax.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Unification.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Value.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"
+
+    - path: "././Paths_elabzoo_implicit_args.hs"
+      component: "elabzoo-implicit-args:exe:elabzoo-implicit-args"

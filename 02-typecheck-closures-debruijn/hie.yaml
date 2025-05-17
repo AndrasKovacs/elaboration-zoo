@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-typecheck-closures-debruijn:exe:elabzoo-typecheck-closures-debruijn"
+
+    - path: "././Paths_elabzoo_typecheck_closures_debruijn.hs"
+      component: "elabzoo-typecheck-closures-debruijn:exe:elabzoo-typecheck-closures-debruijn"

@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "././Main.hs"
+      component: "elabzoo-typecheck-HOAS-names:exe:elabzoo-typecheck-HOAS-names"
+
+    - path: "././Paths_elabzoo_typecheck_HOAS_names.hs"
+      component: "elabzoo-typecheck-HOAS-names:exe:elabzoo-typecheck-HOAS-names"

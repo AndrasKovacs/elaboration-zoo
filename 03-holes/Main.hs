@@ -89,8 +89,8 @@ the following:
 
    ?α spine =? rhs
 
-Where "spine" is a list of values, and "?α spine" is notation for ?α being
-applied multiple values.
+Where "spine" is a list of variable, and "?α spine" is notation for ?α being
+applied multiple variables.
 
 A problem is a pattern unification problem if the following hold:
 
@@ -276,14 +276,20 @@ InsertedMeta when we elaborate a hole.
 newtype Lvl = Lvl {unLvl :: Int} deriving (Eq, Ord, Show, Num) via Int
 
 type Env     = [Val]
+
+{- `Spine` is a snoc list of variable. 
+
+   all `Val` in snoc list should be `VVal`,
+   otherwise would throw UnifyError in `invert` fucntion. -}
 type Spine   = [Val]
+
 data Closure = Closure Env Tm
 type VTy     = Val
 
 data Val
 
   {- A flexible neutral value is a meta applied to zero or more arguments, represent as a Spine,
-     a snoc-list of values. -}
+     a snoc-list of variables. -}
   = VFlex MetaVar Spine
 
   {- A rigid neutral value is a bound variable applied to zero or more arguments -}
@@ -314,7 +320,7 @@ vApp t ~u = case t of
   VRigid x sp -> VRigid x (sp :> u) -- add the argument to the spine
   _           -> error "impossible"
 
--- Apply single value to multiple values
+-- Apply single value to multiple variables
 vAppSp :: Val -> Spine -> Val
 vAppSp t = \case
   []      -> t

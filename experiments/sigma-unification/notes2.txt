@@ -156,7 +156,7 @@ Examples:
     - lots of new metas
     - compute all the new types of new metas
     - transport everything along isos between old/new meta types
-    - not obvious how to minmize amount of work done
+    - not obvious how to minimize amount of work done
     - we have to do eta-reduction (not efficient in the presence of Σ types)
         (t.1, t.2) --> t   (requires conversion checking)
 	(λ x. f x) --> f   (this can be done OK)

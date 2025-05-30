@@ -200,7 +200,7 @@ General idea:
    Γ, f, x ⊢ f x ↦ a f x
 
   Actual rules:  Γᵤ|Γₛ|Γₚ ⊢ t ↦ rhs
-     Γᵤ : "unsolvable" (irrelvant to to problem)
+     Γᵤ : "unsolvable" (irrelevant to to problem)
      Γₛ : "solvable"   (variables to be mapped)
      Γₚ : "parameter"  (variables which solvable vars can be applied to)
 

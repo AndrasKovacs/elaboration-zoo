@@ -422,7 +422,7 @@ infer = \case
         ++ quoteShow tty
 
   RLam{} ->
-    report "Can't infer type for lambda expresion"
+    report "Can't infer type for lambda expression"
 
   RBox t -> do
     t <- check t VU

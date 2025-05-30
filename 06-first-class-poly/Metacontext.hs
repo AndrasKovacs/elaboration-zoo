@@ -21,7 +21,7 @@ import Syntax
 
 data CheckEntry
   -- ^ In (Unchecked Γ t A m), we postpone checking t with A in Γ and create m
-  --   as a fresh meta, which is a "placedholder" for the eventual checking
+  --   as a fresh meta, which is a "placeholder" for the eventual checking
   --   result. After we actually perform the checking, we have to unify the
   --   result with the placeholder.
   = Unchecked Cxt P.Tm VTy MetaVar

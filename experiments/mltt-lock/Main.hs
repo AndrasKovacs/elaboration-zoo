@@ -324,7 +324,7 @@ infer = \case
         ++ quoteShow tty
 
   Lam{} ->
-    report "Can't infer type for lambda expresion"
+    report "Can't infer type for lambda expression"
 
   Box t -> lock do
     check t VU

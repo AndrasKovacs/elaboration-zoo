@@ -28,7 +28,7 @@ lazy non-deterministic choice in the semantic domain. We extend values with
     ... | VTop Name Spine ~Val
 
 where Name and Spine constitute a neutral expression whose head is a top-level
-definition name, and ~Val is the lazy result of evaluating the same netural
+definition name, and ~Val is the lazy result of evaluating the same neutral
 expression, but with the top definition unfolded.
 
 Hence, when we hit VTop during processing Val-s, we can choose between

@@ -194,7 +194,7 @@ infer env cxt = \case
         "Expected a function type, instead inferred:\n\n  "
         ++ quoteShow env tty
 
-  Lam{} -> report "Can't infer type for lambda expresion"
+  Lam{} -> report "Can't infer type for lambda expression"
 
   Pi x a b -> do
     check env cxt a VU

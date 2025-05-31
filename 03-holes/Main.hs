@@ -280,7 +280,7 @@ type Env     = [Val]
 {- `Spine` is a snoc list of variable. 
 
    all `Val` in snoc list should be `VVal`,
-   otherwise would throw UnifyError in `invert` fucntion. -}
+   otherwise would throw UnifyError in `invert` function. -}
 type Spine   = [Val]
 
 data Closure = Closure Env Tm
@@ -375,7 +375,7 @@ do no such update here. It is possible here to use destructive forcing update, b
 we'd have to use explicit mutable references. And unfortunately those references stay with
 us forever as indirections, unlike thunks which are eventually removed by GHC garbage collection.
 
-Ideally, we'd have a runtime system which natively supports simulatenous forcing of thunks
+Ideally, we'd have a runtime system which natively supports simultaneous forcing of thunks
 and flexible values, with value update as well. That's a lot of work to implement, so we
 stick with a less efficient shallow embedding in Haskell.
 -}

@@ -66,7 +66,7 @@ eval env = \case
 lvl2Ix :: Lvl -> Lvl -> Ix
 lvl2Ix (Lvl l) (Lvl x) = Ix (l - x - 1)
 
-quote :: Lvl -> Val -> Tm              -- normalization-by-evaulation
+quote :: Lvl -> Val -> Tm              -- normalization-by-evaluation
 quote l = \case
   VVar x   -> Var (lvl2Ix l x)
   VApp t u -> App (quote l t) (quote l u)

@@ -11,8 +11,6 @@ let const : {A B} -> A -> B -> A = \x y. x;
 let group1 : {A B : U}(x y z : A) -> B -> B = \x y z b. b;
 let group2 : {A B}(x y z : A) -> B -> B = \x y z b. b;
 
--- explicit id function used for annotation as in Idris
-let the : (A : _) -> A -> A = \_ x. x;
 
 -- implicit args can be explicitly given
 let argTest1 = const {U}{U} U;
@@ -49,6 +47,11 @@ Implicit lambda insertion rules:
 -- Here the output rhs is \{A}. id {A}. First, we insert \{A}, then we apply id to {?n},
 -- and ?n is solved to A a bit later.
 let insert : {A} -> A -> A = id;
+
+-- explicit id function used for annotation as in Idris and Pie lang
+-- https://www.idris-lang.org/docs/idris2/current/prelude_docs/docs/Prelude.Basics.html#Prelude.Basics.the
+-- https://docs.racket-lang.org/pie/index.html#%28form._%28%28lib._pie%2Fmain..rkt%29._the%29%29
+let the : (A : _) -> A -> A = \_ x. x;
 
 -- Here we don't insert, because rhs is already an implicit lambda.
 let noinsert = \{A} x. the A x;

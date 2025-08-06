@@ -19,7 +19,7 @@ import qualified Presyntax as P
 --------------------------------------------------------------------------------
 
 helpMsg = unlines [
-  "usage: elabzoo-first-class-poly [--help|nf|type]",
+  "usage: elabzoo-first-class-poly [--help|elab|nf|type]",
   "  --help : display this message",
   "  elab   : read & elaborate expression from stdin",
   "  nf     : read & typecheck expression from stdin, print its normal form and type",

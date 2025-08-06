@@ -910,7 +910,7 @@ parseStdin = do
 --------------------------------------------------------------------------------
 
 helpMsg = unlines [
-  "usage: elabzoo-holes [--help|nf|type]",
+  "usage: elabzoo-holes [--help|elab|nf|type]",
   "  --help : display this message",
   "  elab   : read & elaborate expression from stdin",
   "  nf     : read & typecheck expression from stdin, print its normal form and type",

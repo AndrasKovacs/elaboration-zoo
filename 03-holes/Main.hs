@@ -483,7 +483,7 @@ In the problem
 
   ?α spine =? rhs
 
-We can view spine as a parallel substitution from some Δ to Γ, so that we have
+We can view spine as a parallel substitution from some Γ to Δ, so that we have
 
   - ?α has closed iterated function type from Δ to A, let's note it as ∙ ⊢ ?α : Δ ⇒ A
   - Γ ⊢ rhs : A[spine]
@@ -502,7 +502,7 @@ As I mentioned before, this spine⁻¹ is only a *partial* inverse, so performin
 can fail.
 -}
 
---  invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
+--  invert : (Γ : Cxt) → (spine : Sub Γ Δ) → PRen Δ Γ
 invert :: Lvl -> Spine -> IO PartialRenaming
 invert gamma sp = do
 

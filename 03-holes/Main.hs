@@ -502,7 +502,7 @@ As I mentioned before, this spine⁻¹ is only a *partial* inverse, so performin
 can fail.
 -}
 
---  invert : (Γ : Cxt) → (spine : Sub Δ Γ) → PRen Γ Δ
+--  invert : (Γ : Cxt) → (spine : Sub Γ Δ) → PRen Δ Γ
 invert :: Lvl -> Spine -> IO PartialRenaming
 invert gamma sp = do
 
